@@ -28,7 +28,6 @@ class AppConfig:
     redis_key_prefix: str
     request_timeout_seconds: float
     max_retries: int
-    error_notify_cooldown_minutes: float
     log_level: str
 
 
@@ -94,10 +93,6 @@ def load_config(
             runtime.get("request_timeout_seconds", 15), "runtime.request_timeout_seconds"
         ),
         max_retries=_positive_int(runtime.get("max_retries", 3), "runtime.max_retries"),
-        error_notify_cooldown_minutes=_positive_float(
-            runtime.get("error_notify_cooldown_minutes", 360),
-            "runtime.error_notify_cooldown_minutes",
-        ),
         log_level=_parse_log_level(runtime.get("log_level", "INFO")),
     )
 

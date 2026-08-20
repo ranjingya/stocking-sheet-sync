@@ -30,7 +30,6 @@ key_prefix = "stocking-sheet-sync-test"
 poll_interval_minutes = 5
 request_timeout_seconds = 20
 max_retries = 4
-error_notify_cooldown_minutes = 120
 log_level = "WARNING"
 """
 

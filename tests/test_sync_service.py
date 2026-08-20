@@ -71,7 +71,6 @@ def make_config(tmp_path: Path) -> AppConfig:
         redis_key_prefix="stocking-sheet-sync-test",
         request_timeout_seconds=15,
         max_retries=3,
-        error_notify_cooldown_minutes=360,
         log_level="INFO",
     )
 

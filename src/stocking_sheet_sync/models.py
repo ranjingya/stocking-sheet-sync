@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 
@@ -35,25 +35,17 @@ class CopyResult:
     url: str
 
 
-SyncStatus = Literal["success", "error", "baseline"]
-
-
-@dataclass(slots=True)
-class SyncState:
+@dataclass(frozen=True, slots=True)
+class SyncedRecord:
     record_id: str
     source_token: str
     source_revision: int
-    original_name: str
+    source_name: str
+    source_url: str
     record_url: str
-    target_token: str | None = None
-    target_name: str | None = None
-    target_url: str | None = None
-    copied_at: str | None = None
-    status: SyncStatus = "error"
-    pending_notify_open_ids: list[str] = field(default_factory=list)
-    last_error: str | None = None
-    last_error_notified_at: str | None = None
-    updated_at: str = ""
+    target_name: str
+    target_url: str
+    synced_at: str
 
 
 @dataclass(slots=True)
@@ -63,4 +55,3 @@ class SyncSummary:
     unchanged: int = 0
     baselined: int = 0
     failed: int = 0
-    notifications_retried: int = 0

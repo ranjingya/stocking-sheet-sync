@@ -11,7 +11,7 @@
 3. 获取真实电子表格的 `revision`。
 4. 将 `record_id + sheet_token + revision` 与 Redis 状态比较。
 5. 首次发现或 revision 变化时，将电子表格复制到共享文件夹。
-6. 先保存复制结果，再逐人发送飞书卡片；消息失败只重试消息，不会重复复制。
+6. 保存复制结果，再逐人发送飞书卡片。
 
 同一 revision 最多复制一次。源表内容发生变化并产生新 revision 后，会再次创建一个副本；程序不会自动删除历史副本。
 
@@ -72,7 +72,7 @@ cp config.example.toml config.toml
 uv run stocking-sheet-sync --baseline
 ```
 
-基线命令只处理本地尚无状态的记录，不覆盖已经同步成功的状态。
+基线命令只记录 Redis 中尚不存在的表格版本。
 
 如果需要让程序首次启动时搬运所有符合条件的记录，跳过基线命令即可。
 
@@ -98,21 +98,26 @@ uv run python main.py --once
 
 ## Redis 状态
 
-每条同步记录保存为一个 Redis Hash：
+所有已同步表格版本保存在一个 Redis Hash：
 
 ```text
-stocking-sheet-sync:state:<record_id>
+stocking-sheet-sync:synced
 ```
 
-Hash 中保存：
+Hash field 是同步版本唯一标识：
 
-- 多维表记录 ID
-- 源电子表格 token 和最后成功处理的 revision
-- 原记录链接
-- 目标副本名称、token 和链接
-- UTC+8 搬运时间
-- 待重试通知人员
-- 最近错误和通知时间
+```text
+<record_id>:<source_token>:<revision>
+```
+
+Hash value 是 JSON，只保存：
+
+- 源表格名称和链接
+- 原多维表记录链接
+- 目标副本名称和链接
+- UTC+8 同步时间
+
+复制失败时不写 Redis，下次扫描会继续尝试。通知失败只写日志，不额外保存通知状态。
 
 扫描锁保存为带自动过期时间的 Redis String：
 
@@ -123,8 +128,7 @@ stocking-sheet-sync:lock:scan
 可以通过以下命令查看同步记录：
 
 ```bash
-redis-cli -u "$REDIS_URL" --scan --pattern 'stocking-sheet-sync:state:*'
-redis-cli -u "$REDIS_URL" HGETALL 'stocking-sheet-sync:state:<record_id>'
+redis-cli -u "$REDIS_URL" HGETALL 'stocking-sheet-sync:synced'
 ```
 
 Redis 需要开启持久化或使用可靠的托管实例。清空这些键会让程序失去历史去重依据。

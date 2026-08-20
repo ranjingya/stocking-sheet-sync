@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from .card import build_sync_card
 from .config import AppConfig
-from .models import BaseRecord, CopyResult, ResolvedSheet, SourceSheet, SyncState, SyncSummary
+from .models import (
+    BaseRecord,
+    CopyResult,
+    ResolvedSheet,
+    SourceSheet,
+    SyncedRecord,
+    SyncSummary,
+)
 
 
 class SyncClient(Protocol):
@@ -22,26 +29,16 @@ class SyncClient(Protocol):
     def send_card(self, open_id: str, card: dict[str, Any]) -> None: ...
 
 
-class SyncStateStore(Protocol):
+class SyncedStore(Protocol):
     def acquire_run_lock(self, ttl_minutes: float) -> bool: ...
 
     def release_run_lock(self) -> None: ...
 
-    def get(self, record_id: str) -> SyncState | None: ...
+    def is_synced(
+        self, record_id: str, source_token: str, source_revision: int
+    ) -> bool: ...
 
-    def save_baseline(
-        self,
-        *,
-        record_id: str,
-        source_token: str,
-        source_revision: int,
-        original_name: str,
-        record_url: str,
-    ) -> None: ...
-
-    def save(self, state: SyncState) -> None: ...
-
-    def update_pending_notifications(self, record_id: str, open_ids: list[str]) -> None: ...
+    def save_synced(self, record: SyncedRecord) -> None: ...
 
 
 class SyncService:
@@ -49,7 +46,7 @@ class SyncService:
         self,
         config: AppConfig,
         client: SyncClient,
-        store: SyncStateStore,
+        store: SyncedStore,
         logger: logging.Logger | None = None,
     ) -> None:
         self.config = config
@@ -62,10 +59,10 @@ class SyncService:
         功能说明：扫描多维表记录，检测源表 revision 并按需复制和通知。
 
         参数：
-            baseline：是否仅为尚未接管的记录建立当前 revision 基线。
+            baseline：是否只将当前表格版本记为已同步，不执行复制和通知。
 
         返回值：
-            本轮扫描、复制、跳过、失败和通知重试数量。
+            本轮扫描、复制、跳过、基线和失败数量。
         """
         summary = SyncSummary()
         lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
@@ -82,13 +79,12 @@ class SyncService:
                 self._process_record(record, baseline, summary)
             self.logger.info(
                 "产品下单同步扫描完成：scanned=%d copied=%d unchanged=%d "
-                "baselined=%d failed=%d notifications_retried=%d",
+                "baselined=%d failed=%d",
                 summary.scanned,
                 summary.copied,
                 summary.unchanged,
                 summary.baselined,
                 summary.failed,
-                summary.notifications_retried,
             )
             return summary
         finally:
@@ -99,8 +95,7 @@ class SyncService:
     ) -> None:
         source: SourceSheet | None = None
         resolved: ResolvedSheet | None = None
-        previous = self.store.get(record.record_id)
-        record_url = record.shared_url.strip() or (previous.record_url if previous else "")
+        record_url = record.shared_url.strip()
 
         try:
             source = parse_source_sheet(record.fields.get(self.config.link_field_name))
@@ -114,78 +109,74 @@ class SyncService:
                 raise RuntimeError("多维表接口未返回原始记录链接 shared_url")
 
             resolved = self._resolve_source(source)
+            if self.store.is_synced(
+                record.record_id,
+                resolved.token,
+                resolved.revision,
+            ):
+                summary.unchanged += 1
+                self.logger.info(
+                    "源表格版本已同步：record_id=%s revision=%d",
+                    record.record_id,
+                    resolved.revision,
+                )
+                return
+
+            synced_at = format_shanghai_time(datetime.now(timezone.utc))
             if baseline:
-                if previous is None:
-                    self.store.save_baseline(
+                self.store.save_synced(
+                    SyncedRecord(
                         record_id=record.record_id,
                         source_token=resolved.token,
                         source_revision=resolved.revision,
-                        original_name=resolved.title,
+                        source_name=resolved.title,
+                        source_url=resolved.source_url,
                         record_url=record_url,
+                        target_name="",
+                        target_url="",
+                        synced_at=synced_at,
                     )
-                    summary.baselined += 1
-                    self.logger.info(
-                        "已建立源表格 revision 基线：record_id=%s revision=%d",
-                        record.record_id,
-                        resolved.revision,
-                    )
-                else:
-                    summary.unchanged += 1
-                    self.logger.info(
-                        "记录已有状态，基线模式不覆盖：record_id=%s", record.record_id
-                    )
-                return
-
-            if _is_same_synced_revision(previous, resolved):
-                if previous and previous.pending_notify_open_ids:
-                    self._retry_pending_notifications(previous)
-                    summary.notifications_retried += 1
-                else:
-                    summary.unchanged += 1
-                    self.logger.info(
-                        "源表格 revision 未变化：record_id=%s revision=%d",
-                        record.record_id,
-                        resolved.revision,
-                    )
+                )
+                summary.baselined += 1
+                self.logger.info(
+                    "已将源表格版本记为同步基线：record_id=%s revision=%d",
+                    record.record_id,
+                    resolved.revision,
+                )
                 return
 
             copy_name = f"{self.config.copy_name_prefix}{resolved.title}"
             self.logger.info(
-                "检测到未同步版本，开始复制：record_id=%s previous_revision=%s "
-                "current_revision=%d copy_name=%s",
+                "检测到未同步版本，开始复制：record_id=%s revision=%d copy_name=%s",
                 record.record_id,
-                previous.source_revision if previous else None,
                 resolved.revision,
                 copy_name,
             )
             copied = self.client.copy_spreadsheet(resolved.token, copy_name)
-            now = datetime.now(UTC)
-            state = SyncState(
-                record_id=record.record_id,
-                source_token=resolved.token,
-                source_revision=resolved.revision,
-                original_name=resolved.title,
-                record_url=record_url,
-                target_token=copied.token,
-                target_name=copied.name or copy_name,
-                target_url=copied.url,
-                copied_at=format_shanghai_time(now),
-                status="success",
-                pending_notify_open_ids=list(self.config.notify_open_ids),
-                updated_at=now.isoformat(),
+            target_name = copied.name or copy_name
+
+            self.store.save_synced(
+                SyncedRecord(
+                    record_id=record.record_id,
+                    source_token=resolved.token,
+                    source_revision=resolved.revision,
+                    source_name=resolved.title,
+                    source_url=resolved.source_url,
+                    record_url=record_url,
+                    target_name=target_name,
+                    target_url=copied.url,
+                    synced_at=synced_at,
+                )
             )
 
-            # 先保存复制结果，消息失败时只重试消息，避免重复复制同一 revision。
-            self.store.save(state)
             card = build_sync_card(
                 original_name=resolved.title,
                 record_url=record_url,
-                target_name=copied.name or copy_name,
+                target_name=target_name,
                 target_url=copied.url,
                 status="success",
             )
-            failed_open_ids = self._notify(list(self.config.notify_open_ids), card)
-            self.store.update_pending_notifications(record.record_id, failed_open_ids)
+            failed_count = self._notify(list(self.config.notify_open_ids), card)
             summary.copied += 1
             self.logger.info(
                 "电子表格复制完成：record_id=%s revision=%d target_url=%s "
@@ -193,20 +184,26 @@ class SyncService:
                 record.record_id,
                 resolved.revision,
                 copied.url,
-                len(failed_open_ids),
+                failed_count,
             )
         except Exception as error:
             summary.failed += 1
             message = str(error)
             self.logger.exception("处理记录失败：record_id=%s", record.record_id)
-            self._handle_failure(
-                record=record,
-                source=source,
-                resolved=resolved,
-                previous=previous,
-                record_url=record_url,
-                message=message,
-            )
+            if record_url and self.config.notify_open_ids:
+                card = build_sync_card(
+                    original_name=(
+                        resolved.title
+                        if resolved
+                        else source.title
+                        if source
+                        else "未知表格"
+                    ),
+                    record_url=record_url,
+                    status="failure",
+                    reason=message,
+                )
+                self._notify(list(self.config.notify_open_ids), card)
 
     def _resolve_source(self, source: SourceSheet) -> ResolvedSheet:
         token = source.token
@@ -227,113 +224,16 @@ class SyncService:
             source_url=source.source_url,
         )
 
-    def _retry_pending_notifications(self, state: SyncState) -> None:
-        if not state.target_name or not state.target_url:
-            return
-        card = build_sync_card(
-            original_name=state.original_name,
-            record_url=state.record_url,
-            target_name=state.target_name,
-            target_url=state.target_url,
-            status="success",
-        )
-        failed = self._notify(state.pending_notify_open_ids, card)
-        self.store.update_pending_notifications(state.record_id, failed)
-
-    def _handle_failure(
-        self,
-        *,
-        record: BaseRecord,
-        source: SourceSheet | None,
-        resolved: ResolvedSheet | None,
-        previous: SyncState | None,
-        record_url: str,
-        message: str,
-    ) -> None:
-        now = datetime.now(UTC)
-        should_notify = (
-            bool(record_url)
-            and bool(self.config.notify_open_ids)
-            and _should_notify_error(
-                previous,
-                message,
-                now,
-                self.config.error_notify_cooldown_minutes,
-            )
-        )
-        notified_at = previous.last_error_notified_at if previous else None
-        if should_notify:
-            card = build_sync_card(
-                original_name=(
-                    resolved.title
-                    if resolved
-                    else source.title
-                    if source
-                    else previous.original_name
-                    if previous
-                    else "未知表格"
-                ),
-                record_url=record_url,
-                status="failure",
-                reason=message,
-            )
-            self._notify(list(self.config.notify_open_ids), card)
-            notified_at = now.isoformat()
-
-        # 保留上一次成功 revision；临时故障恢复后不会误复制同一版本。
-        self.store.save(
-            SyncState(
-                record_id=record.record_id,
-                source_token=(
-                    previous.source_token
-                    if previous
-                    else resolved.token
-                    if resolved
-                    else source.token
-                    if source
-                    else "unknown"
-                ),
-                source_revision=(
-                    previous.source_revision
-                    if previous
-                    else resolved.revision
-                    if resolved
-                    else -1
-                ),
-                original_name=(
-                    resolved.title
-                    if resolved
-                    else source.title
-                    if source
-                    else previous.original_name
-                    if previous
-                    else "未知表格"
-                ),
-                record_url=record_url or (previous.record_url if previous else ""),
-                target_token=previous.target_token if previous else None,
-                target_name=previous.target_name if previous else None,
-                target_url=previous.target_url if previous else None,
-                copied_at=previous.copied_at if previous else None,
-                status=previous.status if previous else "error",
-                pending_notify_open_ids=(
-                    list(previous.pending_notify_open_ids) if previous else []
-                ),
-                last_error=message,
-                last_error_notified_at=notified_at,
-                updated_at=now.isoformat(),
-            )
-        )
-
-    def _notify(self, open_ids: list[str], card: dict[str, Any]) -> list[str]:
-        failed: list[str] = []
+    def _notify(self, open_ids: list[str], card: dict[str, Any]) -> int:
+        failed_count = 0
         for open_id in open_ids:
             try:
                 self.client.send_card(open_id, card)
                 self.logger.info("同步通知发送成功：open_id=%s", open_id)
             except Exception:
-                failed.append(open_id)
+                failed_count += 1
                 self.logger.exception("同步通知发送失败：open_id=%s", open_id)
-        return failed
+        return failed_count
 
 
 def parse_source_sheet(value: Any) -> SourceSheet | None:
@@ -411,29 +311,3 @@ def _normalize_comparable(value: Any) -> Any:
     if "value" in value:
         return _normalize_comparable(value["value"])
     return value
-
-
-def _is_same_synced_revision(state: SyncState | None, sheet: ResolvedSheet) -> bool:
-    return bool(
-        state
-        and state.status in {"success", "baseline"}
-        and state.source_token == sheet.token
-        and state.source_revision == sheet.revision
-    )
-
-
-def _should_notify_error(
-    previous: SyncState | None,
-    message: str,
-    now: datetime,
-    cooldown_minutes: float,
-) -> bool:
-    if not previous or not previous.last_error_notified_at or previous.last_error != message:
-        return True
-    try:
-        previous_time = datetime.fromisoformat(previous.last_error_notified_at)
-    except ValueError:
-        return True
-    if previous_time.tzinfo is None:
-        previous_time = previous_time.replace(tzinfo=UTC)
-    return now - previous_time >= timedelta(minutes=cooldown_minutes)

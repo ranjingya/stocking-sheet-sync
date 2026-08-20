@@ -4,12 +4,11 @@ import json
 import logging
 import math
 import uuid
-from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from redis import Redis
 
-from .models import SyncState, SyncStatus
+from .models import SyncedRecord
 
 
 _RELEASE_LOCK_SCRIPT = """
@@ -69,60 +68,70 @@ class RedisStateStore:
         if token:
             self._redis.eval(_RELEASE_LOCK_SCRIPT, 1, self._lock_key, token)
 
-    def get(self, record_id: str) -> SyncState | None:
-        values = self._redis.hgetall(self._state_key(record_id))
-        if not values:
-            return None
-        return _map_hash(values)
-
-    def save_baseline(
-        self,
-        *,
-        record_id: str,
-        source_token: str,
-        source_revision: int,
-        original_name: str,
-        record_url: str,
-    ) -> None:
+    def is_synced(self, record_id: str, source_token: str, source_revision: int) -> bool:
         """
-        功能说明：保存初次接管时的 revision 基线，不复制也不通知。
+        功能说明：判断指定记录的源表格版本是否已经同步成功。
 
         参数：
             record_id：多维表记录 ID。
             source_token：真实电子表格 token。
-            source_revision：当前 revision。
-            original_name：源表格名称。
-            record_url：多维表记录链接。
+            source_revision：电子表格 revision。
 
-        返回值：无。
+        返回值：
+            Redis Hash 中是否存在对应同步标识。
         """
-        self.save(
-            SyncState(
-                record_id=record_id,
-                source_token=source_token,
-                source_revision=source_revision,
-                original_name=original_name,
-                record_url=record_url,
-                status="baseline",
-                updated_at=datetime.now(UTC).isoformat(),
+        return bool(
+            self._redis.hexists(
+                self._synced_key,
+                make_sync_id(record_id, source_token, source_revision),
             )
         )
 
-    def save(self, state: SyncState) -> None:
-        self._redis.hset(self._state_key(state.record_id), mapping=_state_mapping(state))
+    def save_synced(self, record: SyncedRecord) -> None:
+        """
+        功能说明：记录一个已经同步完成的源表格版本。
 
-    def update_pending_notifications(self, record_id: str, open_ids: list[str]) -> None:
-        key = self._state_key(record_id)
-        if not self._redis.exists(key):
-            self._logger.warning("待通知状态不存在，无法更新：record_id=%s", record_id)
-            return
-        self._redis.hset(
-            key,
-            mapping={
-                "pending_notify_open_ids": json.dumps(open_ids, ensure_ascii=False),
-                "updated_at": datetime.now(UTC).isoformat(),
-            },
+        参数：
+            record：源表格、原记录、目标链接和同步时间。
+
+        返回值：无。
+        """
+        sync_id = make_sync_id(
+            record.record_id,
+            record.source_token,
+            record.source_revision,
         )
+        value = {
+            "source_name": record.source_name,
+            "source_url": record.source_url,
+            "record_url": record.record_url,
+            "target_name": record.target_name,
+            "target_url": record.target_url,
+            "synced_at": record.synced_at,
+        }
+        self._redis.hset(
+            self._synced_key,
+            sync_id,
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")),
+        )
+
+    def get_synced(
+        self, record_id: str, source_token: str, source_revision: int
+    ) -> dict[str, str] | None:
+        raw = self._redis.hget(
+            self._synced_key,
+            make_sync_id(record_id, source_token, source_revision),
+        )
+        if not raw:
+            return None
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError("Redis 中的同步记录不是 JSON 对象")
+        return {
+            str(key): str(item)
+            for key, item in value.items()
+            if isinstance(key, str) and isinstance(item, str)
+        }
 
     def close(self) -> None:
         self._redis.close()
@@ -131,60 +140,10 @@ class RedisStateStore:
     def _lock_key(self) -> str:
         return f"{self._key_prefix}:lock:scan"
 
-    def _state_key(self, record_id: str) -> str:
-        return f"{self._key_prefix}:state:{record_id}"
+    @property
+    def _synced_key(self) -> str:
+        return f"{self._key_prefix}:synced"
 
 
-def _state_mapping(state: SyncState) -> dict[str, str]:
-    return {
-        "record_id": state.record_id,
-        "source_token": state.source_token,
-        "source_revision": str(state.source_revision),
-        "original_name": state.original_name,
-        "record_url": state.record_url,
-        "target_token": state.target_token or "",
-        "target_name": state.target_name or "",
-        "target_url": state.target_url or "",
-        "copied_at": state.copied_at or "",
-        "status": state.status,
-        "pending_notify_open_ids": json.dumps(
-            state.pending_notify_open_ids, ensure_ascii=False
-        ),
-        "last_error": state.last_error or "",
-        "last_error_notified_at": state.last_error_notified_at or "",
-        "updated_at": state.updated_at,
-    }
-
-
-def _map_hash(values: dict[str, str]) -> SyncState:
-    status = values.get("status", "error")
-    if status not in {"success", "error", "baseline"}:
-        raise ValueError(f"Redis 中存在不支持的同步状态：{status}")
-    try:
-        pending = json.loads(values.get("pending_notify_open_ids", "[]"))
-    except json.JSONDecodeError:
-        pending = []
-    if not isinstance(pending, list):
-        pending = []
-
-    try:
-        source_revision = int(values.get("source_revision", "-1"))
-    except ValueError as error:
-        raise ValueError("Redis 中的 source_revision 不是整数") from error
-
-    return SyncState(
-        record_id=values.get("record_id", ""),
-        source_token=values.get("source_token", ""),
-        source_revision=source_revision,
-        original_name=values.get("original_name", ""),
-        record_url=values.get("record_url", ""),
-        target_token=values.get("target_token") or None,
-        target_name=values.get("target_name") or None,
-        target_url=values.get("target_url") or None,
-        copied_at=values.get("copied_at") or None,
-        status=cast(SyncStatus, status),
-        pending_notify_open_ids=[item for item in pending if isinstance(item, str)],
-        last_error=values.get("last_error") or None,
-        last_error_notified_at=values.get("last_error_notified_at") or None,
-        updated_at=values.get("updated_at", ""),
-    )
+def make_sync_id(record_id: str, source_token: str, source_revision: int) -> str:
+    return f"{record_id}:{source_token}:{source_revision}"

@@ -24,7 +24,7 @@ open_ids = [
   "ou_yyyyyyyyyyyyyyyy",
 ]
 
-# Redis 键命名空间；每条记录保存为 stocking-sheet-sync:state:<record_id>
+# Redis 键命名空间；已同步版本保存在 stocking-sheet-sync:synced
 [redis]
 key_prefix = "stocking-sheet-sync"
 
@@ -33,5 +33,4 @@ key_prefix = "stocking-sheet-sync"
 poll_interval_minutes = 10
 request_timeout_seconds = 15
 max_retries = 3
-error_notify_cooldown_minutes = 360
 log_level = "INFO"
