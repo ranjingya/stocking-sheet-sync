@@ -48,8 +48,7 @@ def build_sync_card(
     result_text = "同步成功" if success else "同步失败"
     if success:
         detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n"
-            f"同步表格： [{target_name}]({target_url})"
+            f"原始记录： [{original_name}]({record_url})\n同步表格： [{target_name}]({target_url})"
         )
         action_text = "查看同步表格"
         action_url = target_url

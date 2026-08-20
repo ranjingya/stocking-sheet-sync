@@ -63,18 +63,9 @@ class FeishuClient:
             if not isinstance(items, list):
                 raise RuntimeError("多维表接口返回的 records.items 不是列表")
             for item in items:
-                if not isinstance(item, dict):
-                    continue
-                record_id = str(item.get("record_id", "")).strip()
-                fields = item.get("fields", {})
-                if record_id and isinstance(fields, dict):
-                    records.append(
-                        BaseRecord(
-                            record_id=record_id,
-                            fields=fields,
-                            shared_url=str(item.get("shared_url", "")).strip(),
-                        )
-                    )
+                record = _parse_base_record(item)
+                if record is not None:
+                    records.append(record)
 
             has_more = bool(data.get("has_more"))
             page_token = str(data.get("page_token", "")).strip() if has_more else ""
@@ -83,6 +74,34 @@ class FeishuClient:
 
         self.logger.info("已读取多维表格候选记录：record_count=%d", len(records))
         return records
+
+    def get_base_record(self, record_id: str) -> BaseRecord:
+        """
+        功能说明：根据记录 ID 读取一条多维表记录，供 Webhook 精确触发同步。
+
+        参数：
+            record_id：多维表记录 ID。
+
+        返回值：标准化后的单条多维表记录。
+        """
+        path = (
+            f"/open-apis/bitable/v1/apps/{quote(self.config.base_app_token, safe='')}"
+            f"/tables/{quote(self.config.base_table_id, safe='')}"
+            f"/records/{quote(record_id, safe='')}"
+        )
+        data = self._request(
+            "GET",
+            path,
+            params={
+                "automatic_fields": "true",
+                "user_id_type": "open_id",
+            },
+        )
+        record = _parse_base_record(data.get("record"))
+        if record is None:
+            raise RuntimeError(f"多维表接口未返回有效记录：{record_id}")
+        self.logger.info("已读取 Webhook 触发记录：record_id=%s", record.record_id)
+        return record
 
     def resolve_wiki_node(self, wiki_token: str) -> tuple[str, str, str]:
         """
@@ -290,3 +309,17 @@ class FeishuClient:
 
 def _should_retry(status: int, code: int) -> bool:
     return status == 429 or status >= 500 or code in {99991400, 99991401}
+
+
+def _parse_base_record(value: object) -> BaseRecord | None:
+    if not isinstance(value, dict):
+        return None
+    record_id = str(value.get("record_id", "")).strip()
+    fields = value.get("fields", {})
+    if not record_id or not isinstance(fields, dict):
+        return None
+    return BaseRecord(
+        record_id=record_id,
+        fields=fields,
+        shared_url=str(value.get("shared_url", "")).strip(),
+    )

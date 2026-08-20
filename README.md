@@ -63,6 +63,77 @@ cp config.example.toml config.toml
 - `[notifications]`：逐人通知使用的 `open_id` 数组。
 - `[redis]`：Redis 键命名空间。
 - `[runtime]`：扫描间隔、超时、重试和日志级别。
+- `[web]`：Webhook 对外 HTTPS 地址。
+
+生成 Webhook 密钥并写入 `.env`：
+
+```bash
+openssl rand -hex 32
+```
+
+```dotenv
+WEBHOOK_SECRET=上一步生成的随机字符串
+```
+
+## 多维表自动化 Webhook
+
+项目使用 Flask 接收多维表自动化请求，线上由 Gunicorn 运行：
+
+```bash
+uv run gunicorn \
+  --bind 127.0.0.1:8000 \
+  --workers 2 \
+  --threads 2 \
+  --timeout 120 \
+  --access-logfile - \
+  --error-logfile - \
+  'stocking_sheet_sync.web:create_app()'
+```
+
+当前服务地址和接口为：
+
+```text
+https://stock-sync.kktree.cn/webhooks/base-record
+```
+
+多维表自动化中的“发送 HTTP 请求”节点填写：
+
+```text
+请求方式：POST
+请求地址：https://stock-sync.kktree.cn/webhooks/base-record
+请求头：Authorization: Bearer <WEBHOOK_SECRET>
+请求头：Content-Type: application/json
+```
+
+请求体中的 `record_id` 选择触发记录的“记录 ID”变量：
+
+```json
+{
+  "record_id": "recxxxxxxxxxxxx"
+}
+```
+
+Webhook 只读取并处理指定记录。以下地址用于负载均衡器或部署平台健康检查：
+
+```text
+GET https://stock-sync.kktree.cn/healthz
+```
+
+本机测试 Webhook：
+
+```bash
+set -a
+source .env
+set +a
+
+curl --request POST 'http://127.0.0.1:8000/webhooks/base-record' \
+  --header "Authorization: Bearer $WEBHOOK_SECRET" \
+  --header 'Content-Type: application/json' \
+  --data '{"record_id":"recxxxxxxxxxxxx"}'
+```
+
+Gunicorn 负责即时接收新增或修改记录。现有常驻轮询进程继续检测链接内电子表格
+`revision` 的变化；两种入口共享 Redis 锁和同步状态，不会重复搬运同一版本。
 
 ## 首次接管
 

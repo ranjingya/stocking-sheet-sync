@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from .card import build_sync_card
@@ -20,6 +20,8 @@ from .models import (
 class SyncClient(Protocol):
     def list_base_records(self) -> list[BaseRecord]: ...
 
+    def get_base_record(self, record_id: str) -> BaseRecord: ...
+
     def resolve_wiki_node(self, wiki_token: str) -> tuple[str, str, str]: ...
 
     def get_spreadsheet_revision(self, spreadsheet_token: str) -> tuple[int, str]: ...
@@ -34,11 +36,13 @@ class SyncedStore(Protocol):
 
     def release_run_lock(self) -> None: ...
 
-    def is_synced(
-        self, record_id: str, source_token: str, source_revision: int
-    ) -> bool: ...
+    def is_synced(self, record_id: str, source_token: str, source_revision: int) -> bool: ...
 
     def save_synced(self, record: SyncedRecord) -> None: ...
+
+
+class SyncBusyError(RuntimeError):
+    """同步任务已经在其他进程中运行。"""
 
 
 class SyncService:
@@ -78,8 +82,7 @@ class SyncService:
                 summary.scanned += 1
                 self._process_record(record, baseline, summary)
             self.logger.info(
-                "产品下单同步扫描完成：scanned=%d copied=%d unchanged=%d "
-                "baselined=%d failed=%d",
+                "产品下单同步扫描完成：scanned=%d copied=%d unchanged=%d baselined=%d failed=%d",
                 summary.scanned,
                 summary.copied,
                 summary.unchanged,
@@ -90,9 +93,45 @@ class SyncService:
         finally:
             self.store.release_run_lock()
 
-    def _process_record(
-        self, record: BaseRecord, baseline: bool, summary: SyncSummary
-    ) -> None:
+    def run_record(self, record_id: str) -> SyncSummary:
+        """
+        功能说明：读取并同步 Webhook 指定的一条多维表记录。
+
+        参数：
+            record_id：多维表自动化传入的记录 ID。
+
+        返回值：本次单记录处理的扫描、复制、跳过和失败数量。
+        """
+        summary = SyncSummary()
+        lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
+        if not self.store.acquire_run_lock(lock_ttl):
+            raise SyncBusyError("已有同步任务正在运行")
+
+        self.logger.info("开始处理 Webhook 触发记录：record_id=%s", record_id)
+        try:
+            record = self.client.get_base_record(record_id)
+            if not matches_required_fields(record.fields, self.config.required_fields):
+                summary.unchanged += 1
+                self.logger.info(
+                    "Webhook 触发记录不符合筛选条件：record_id=%s",
+                    record.record_id,
+                )
+                return summary
+
+            summary.scanned += 1
+            self._process_record(record, False, summary)
+            self.logger.info(
+                "Webhook 触发记录处理完成：record_id=%s copied=%d unchanged=%d failed=%d",
+                record.record_id,
+                summary.copied,
+                summary.unchanged,
+                summary.failed,
+            )
+            return summary
+        finally:
+            self.store.release_run_lock()
+
+    def _process_record(self, record: BaseRecord, baseline: bool, summary: SyncSummary) -> None:
         source: SourceSheet | None = None
         resolved: ResolvedSheet | None = None
         record_url = record.shared_url.strip()
@@ -101,9 +140,7 @@ class SyncService:
             source = parse_source_sheet(record.fields.get(self.config.link_field_name))
             if source is None:
                 summary.unchanged += 1
-                self.logger.info(
-                    "记录没有可同步的表格链接：record_id=%s", record.record_id
-                )
+                self.logger.info("记录没有可同步的表格链接：record_id=%s", record.record_id)
                 return
             if not record_url:
                 raise RuntimeError("多维表接口未返回原始记录链接 shared_url")
@@ -122,7 +159,7 @@ class SyncService:
                 )
                 return
 
-            synced_at = format_shanghai_time(datetime.now(timezone.utc))
+            synced_at = format_shanghai_time(datetime.now(UTC))
             if baseline:
                 self.store.save_synced(
                     SyncedRecord(
@@ -193,11 +230,7 @@ class SyncService:
             if record_url and self.config.notify_open_ids:
                 card = build_sync_card(
                     original_name=(
-                        resolved.title
-                        if resolved
-                        else source.title
-                        if source
-                        else "未知表格"
+                        resolved.title if resolved else source.title if source else "未知表格"
                     ),
                     record_url=record_url,
                     status="failure",
@@ -211,9 +244,7 @@ class SyncService:
         if source.mention_type == "Wiki":
             token, document_type, wiki_title = self.client.resolve_wiki_node(source.token)
             if document_type != "sheet":
-                raise RuntimeError(
-                    f"链接对应的文档不是电子表格，而是 {document_type}"
-                )
+                raise RuntimeError(f"链接对应的文档不是电子表格，而是 {document_type}")
             title = wiki_title or title
 
         revision, metadata_title = self.client.get_spreadsheet_revision(token)

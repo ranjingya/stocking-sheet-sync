@@ -33,6 +33,12 @@ class FakeClient:
             )
         ]
 
+    def get_base_record(self, record_id: str) -> BaseRecord:
+        record = self.list_base_records()[0]
+        if record.record_id != record_id:
+            raise RuntimeError(f"记录不存在：{record_id}")
+        return record
+
     def resolve_wiki_node(self, wiki_token: str) -> tuple[str, str, str]:
         return "source-token", "sheet", "备货测试表"
 
@@ -72,6 +78,8 @@ def make_config(tmp_path: Path) -> AppConfig:
         request_timeout_seconds=15,
         max_retries=3,
         log_level="INFO",
+        public_base_url="https://stock-sync.example.com",
+        webhook_secret="webhook-secret",
     )
 
 
@@ -102,9 +110,7 @@ def test_parse_direct_sheet_and_wiki() -> None:
 def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = FakeClient()
-    store = RedisStateStore(
-        config.redis_url, config.redis_key_prefix, client=FakeRedis()
-    )
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     service = SyncService(config, client, store)
     try:
         first = service.run_once()
@@ -124,9 +130,7 @@ def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) ->
 def test_baseline_only_seeds_new_record(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     client = FakeClient()
-    store = RedisStateStore(
-        config.redis_url, config.redis_key_prefix, client=FakeRedis()
-    )
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     service = SyncService(config, client, store)
     try:
         baseline = service.run_once(baseline=True)
@@ -139,4 +143,21 @@ def test_baseline_only_seeds_new_record(tmp_path: Path) -> None:
     assert baseline.baselined == 1
     assert unchanged.unchanged == 1
     assert changed.copied == 1
+    assert client.copy_count == 1
+
+
+def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, client, store)
+    try:
+        first = service.run_record("rec_test")
+        second = service.run_record("rec_test")
+    finally:
+        store.close()
+
+    assert first.scanned == 1
+    assert first.copied == 1
+    assert second.unchanged == 1
     assert client.copy_count == 1

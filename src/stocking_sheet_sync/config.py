@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -29,6 +30,8 @@ class AppConfig:
     request_timeout_seconds: float
     max_retries: int
     log_level: str
+    public_base_url: str
+    webhook_secret: str
 
 
 def load_config(
@@ -63,6 +66,7 @@ def load_config(
     notifications = _table(document, "notifications")
     redis = _table(document, "redis")
     runtime = _table(document, "runtime")
+    web = _table(document, "web")
 
     required_fields = source.get("required_fields", {})
     if not isinstance(required_fields, dict):
@@ -71,9 +75,7 @@ def load_config(
     return AppConfig(
         feishu_app_id=_require_env(environment, "FEISHU_APP_ID"),
         feishu_app_secret=_require_env(environment, "FEISHU_APP_SECRET"),
-        feishu_api_base_url=_text(
-            feishu.get("api_base_url", "https://open.feishu.cn")
-        ).rstrip("/"),
+        feishu_api_base_url=_text(feishu.get("api_base_url", "https://open.feishu.cn")).rstrip("/"),
         base_app_token=_required_text(source, "app_token", "source.app_token"),
         base_table_id=_required_text(source, "table_id", "source.table_id"),
         base_view_id=_optional_text(source.get("view_id")),
@@ -85,15 +87,15 @@ def load_config(
         poll_interval_minutes=_positive_float(
             runtime.get("poll_interval_minutes", 10), "runtime.poll_interval_minutes"
         ),
-        redis_url=(
-            environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"
-        ),
+        redis_url=(environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"),
         redis_key_prefix=_parse_key_prefix(redis.get("key_prefix")),
         request_timeout_seconds=_positive_float(
             runtime.get("request_timeout_seconds", 15), "runtime.request_timeout_seconds"
         ),
         max_retries=_positive_int(runtime.get("max_retries", 3), "runtime.max_retries"),
         log_level=_parse_log_level(runtime.get("log_level", "INFO")),
+        public_base_url=_parse_public_base_url(web.get("public_base_url")),
+        webhook_secret=environment.get("WEBHOOK_SECRET", "").strip(),
     )
 
 
@@ -164,9 +166,7 @@ def _parse_open_ids(value: object) -> tuple[str, ...]:
     open_ids = tuple(dict.fromkeys(item.strip() for item in value if item.strip()))
     invalid = [item for item in open_ids if not re.fullmatch(r"ou_[A-Za-z0-9_-]+", item)]
     if invalid:
-        raise ValueError(
-            f"notifications.open_ids 中存在格式错误的 open_id：{', '.join(invalid)}"
-        )
+        raise ValueError(f"notifications.open_ids 中存在格式错误的 open_id：{', '.join(invalid)}")
     return open_ids
 
 
@@ -185,3 +185,14 @@ def _parse_key_prefix(value: object) -> str:
     if not prefix:
         raise ValueError("redis.key_prefix 不能只包含冒号")
     return prefix
+
+
+def _parse_public_base_url(value: object) -> str:
+    url = _required_text(
+        {"public_base_url": value},
+        "public_base_url",
+        "web.public_base_url",
+    ).rstrip("/")
+    if not re.fullmatch(r"https://[^\s/]+(?:/[^\s]*)?", url):
+        raise ValueError("web.public_base_url 必须是有效的 HTTPS 地址")
+    return url

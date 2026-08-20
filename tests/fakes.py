@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 
 class FakeRedis:
     def __init__(self) -> None:

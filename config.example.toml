@@ -28,6 +28,10 @@ open_ids = [
 [redis]
 key_prefix = "stocking-sheet-sync"
 
+# Webhook 对外服务地址
+[web]
+public_base_url = "https://stock-sync.example.com"
+
 # 程序运行参数
 [runtime]
 poll_interval_minutes = 10

@@ -4,7 +4,6 @@ import pytest
 
 from stocking_sheet_sync.config import load_config
 
-
 CONFIG_TEXT = """
 [feishu]
 api_base_url = "https://open.feishu.cn"
@@ -26,6 +25,9 @@ open_ids = ["ou_first", "ou_second", "ou_first"]
 [redis]
 key_prefix = "stocking-sheet-sync-test"
 
+[web]
+public_base_url = "https://stock-sync.example.com"
+
 [runtime]
 poll_interval_minutes = 5
 request_timeout_seconds = 20
@@ -43,6 +45,7 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
             "FEISHU_APP_ID": "cli_test",
             "FEISHU_APP_SECRET": "secret",
             "REDIS_URL": "redis://redis.example:6379/2",
+            "WEBHOOK_SECRET": "webhook-secret",
         },
         config_path=config_path,
     )
@@ -54,6 +57,8 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
     assert config.redis_url == "redis://redis.example:6379/2"
     assert config.redis_key_prefix == "stocking-sheet-sync-test"
     assert config.log_level == "WARNING"
+    assert config.public_base_url == "https://stock-sync.example.com"
+    assert config.webhook_secret == "webhook-secret"
 
 
 def test_load_config_rejects_invalid_open_id(tmp_path: Path) -> None:
@@ -65,6 +70,10 @@ def test_load_config_rejects_invalid_open_id(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="格式错误"):
         load_config(
-            env={"FEISHU_APP_ID": "cli_test", "FEISHU_APP_SECRET": "secret"},
+            env={
+                "FEISHU_APP_ID": "cli_test",
+                "FEISHU_APP_SECRET": "secret",
+                "WEBHOOK_SECRET": "webhook-secret",
+            },
             config_path=config_path,
         )

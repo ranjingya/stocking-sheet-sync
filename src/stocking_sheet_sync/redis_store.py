@@ -10,7 +10,6 @@ from redis import Redis
 
 from .models import SyncedRecord
 
-
 _RELEASE_LOCK_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
@@ -56,9 +55,7 @@ class RedisStateStore:
         """
         token = uuid.uuid4().hex
         ttl_seconds = max(1, math.ceil(ttl_minutes * 60))
-        acquired = bool(
-            self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds)
-        )
+        acquired = bool(self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds))
         self._lock_token = token if acquired else None
         return acquired
 
