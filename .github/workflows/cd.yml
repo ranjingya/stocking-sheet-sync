@@ -12,23 +12,18 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  SERVICE_NAME: ${{ vars.SERVICE_NAME || 'backend' }}
 
 jobs:
 
   build-and-push:
-    name: Build and push ${{ matrix.service }}
+    name: Build and push to ghcr
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      matrix:
-        include:
-          - service: app
-            context: .
-            image: stocking-sheet-sync
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set image tag
         id: image-tag
@@ -52,11 +47,11 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context }}
+          context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:latest
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.image-tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ github.repository }}:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.image-tag.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -68,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Copy compose file to server
         uses: appleboy/scp-action@v1.0.0
@@ -77,27 +72,19 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          passphrase: ${{ secrets.SSH_PRIVATE_KEY_PASSPHRASE }}
           source: docker-compose.yaml
           target: ${{ vars.DEPLOY_DIR }}
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.5
-        env:
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          passphrase: ${{ secrets.SSH_PRIVATE_KEY_PASSPHRASE }}
-          envs: GHCR_USERNAME,GHCR_TOKEN
           script: |
             set -e
-            echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
-            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
             cd "${{ vars.DEPLOY_DIR }}"
-            docker compose pull stocking-sheet-sync
-            docker compose up -d --remove-orphans stocking-sheet-sync
+            docker compose pull ${{ env.SERVICE_NAME }}
+            docker compose up -d --remove-orphans ${{ env.SERVICE_NAME }}
             docker image prune -f

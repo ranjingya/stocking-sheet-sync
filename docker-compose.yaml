@@ -18,11 +18,8 @@ services:
     volumes:
       - ./config.toml:/app/config.toml:ro
     networks:
-      - kocotree-skills
       - traefik-network
 
 networks:
-  kocotree-skills:
-    external: true
   traefik-network:
     external: true
