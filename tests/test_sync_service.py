@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from stocking_sheet_sync.config import AppConfig
+from stocking_sheet_sync.lark_client import _parse_base_record
 from stocking_sheet_sync.models import BaseRecord, CopyResult
 from stocking_sheet_sync.redis_store import RedisStateStore
 from stocking_sheet_sync.sync_service import SyncService, parse_source_sheet
@@ -107,6 +108,19 @@ def test_parse_direct_sheet_and_wiki() -> None:
     assert sheet.token == "sheet-token"
     assert wiki is not None and wiki.mention_type == "Wiki"
     assert wiki.token == "wiki-token"
+
+
+def test_parse_base_record_supports_record_url() -> None:
+    record = _parse_base_record(
+        {
+            "record_id": "rec_test",
+            "fields": {"状态": "需求收集"},
+            "record_url": "https://example.feishu.cn/record/record-token",
+        }
+    )
+
+    assert record is not None
+    assert record.shared_url == "https://example.feishu.cn/record/record-token"
 
 
 def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) -> None:

@@ -117,6 +117,7 @@ class FeishuClient:
             params={
                 "automatic_fields": "true",
                 "user_id_type": "open_id",
+                "with_shared_url": "true",
             },
         )
         record = _parse_base_record(data.get("record"))
@@ -346,5 +347,5 @@ def _parse_base_record(value: object) -> BaseRecord | None:
     return BaseRecord(
         record_id=record_id,
         fields=fields,
-        shared_url=str(value.get("shared_url", "")).strip(),
+        shared_url=str(value.get("shared_url") or value.get("record_url") or "").strip(),
     )
