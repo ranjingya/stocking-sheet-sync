@@ -1,0 +1,28 @@
+services:
+  stocking-sheet-sync:
+    image: ghcr.io/ranjingya/stocking-sheet-sync:latest
+    container_name: stocking-sheet-sync
+    restart: unless-stopped
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-network
+      traefik.http.routers.stocking-sheet-sync.rule: "Host(`stock-sync.kktree.cn`)"
+      traefik.http.routers.stocking-sheet-sync.entrypoints: websecure
+      traefik.http.routers.stocking-sheet-sync.tls: "true"
+      traefik.http.routers.stocking-sheet-sync.tls.certresolver: myresolver
+      traefik.http.services.stocking-sheet-sync.loadbalancer.server.port: 5000
+    env_file:
+      - .env
+    environment:
+      CONFIG_PATH: /app/config.toml
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+    networks:
+      - kocotree-skills
+      - traefik-network
+
+networks:
+  kocotree-skills:
+    external: true
+  traefik-network:
+    external: true
