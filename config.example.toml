@@ -1,0 +1,37 @@
+# 飞书开放平台
+[feishu]
+api_base_url = "https://open.feishu.cn"
+
+# 源多维表
+[source]
+app_token = "xxxxxxxxxxxxxxxx"
+table_id = "tblxxxxxxxxxxxxxx"
+view_id = ""
+link_field_name = "下单表格"
+
+# 只处理符合这些条件的记录；不需要过滤时填写空对象 {}
+required_fields = { "状态" = "需求收集", "下单状态" = "未完成" }
+
+# 目标共享文件夹
+[target]
+folder_token = "xxxxxxxxxxxxxxxx"
+copy_name_prefix = "市场部-"
+
+# 通知接收人，必须是当前自建应用体系下的 open_id
+[notifications]
+open_ids = [
+  "ou_xxxxxxxxxxxxxxxx",
+  "ou_yyyyyyyyyyyyyyyy",
+]
+
+# Redis 键命名空间；每条记录保存为 stocking-sheet-sync:state:<record_id>
+[redis]
+key_prefix = "stocking-sheet-sync"
+
+# 程序运行参数
+[runtime]
+poll_interval_minutes = 10
+request_timeout_seconds = 15
+max_retries = 3
+error_notify_cooldown_minutes = 360
+log_level = "INFO"

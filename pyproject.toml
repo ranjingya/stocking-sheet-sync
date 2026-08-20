@@ -1,0 +1,40 @@
+[project]
+name = "stocking-sheet-sync"
+version = "0.1.0"
+description = "将飞书多维表中的备货电子表格按版本同步到共享文件夹"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1,<1",
+    "python-dotenv>=1.1.1,<2",
+    "redis>=6.4.0,<7",
+]
+
+[project.scripts]
+stocking-sheet-sync = "stocking_sheet_sync.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1,<9",
+]
+lint = [
+    "ruff>=0.12.10,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stocking_sheet_sync"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
