@@ -17,7 +17,7 @@ from .models import (
 )
 
 
-class SyncClient(Protocol):
+class DataClient(Protocol):
     def list_base_records(self) -> list[BaseRecord]: ...
 
     def get_base_record(self, record_id: str) -> BaseRecord: ...
@@ -28,6 +28,8 @@ class SyncClient(Protocol):
 
     def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult: ...
 
+
+class MessageClient(Protocol):
     def send_card(self, open_id: str, card: dict[str, Any]) -> None: ...
 
 
@@ -49,12 +51,14 @@ class SyncService:
     def __init__(
         self,
         config: AppConfig,
-        client: SyncClient,
+        data_client: DataClient,
+        message_client: MessageClient,
         store: SyncedStore,
         logger: logging.Logger | None = None,
     ) -> None:
         self.config = config
-        self.client = client
+        self.data_client = data_client
+        self.message_client = message_client
         self.store = store
         self.logger = logger or logging.getLogger(__name__)
 
@@ -76,7 +80,7 @@ class SyncService:
 
         self.logger.info("开始扫描产品下单记录：baseline=%s", baseline)
         try:
-            for record in self.client.list_base_records():
+            for record in self.data_client.list_base_records():
                 if not matches_required_fields(record.fields, self.config.required_fields):
                     continue
                 summary.scanned += 1
@@ -109,7 +113,7 @@ class SyncService:
 
         self.logger.info("开始处理 Webhook 触发记录：record_id=%s", record_id)
         try:
-            record = self.client.get_base_record(record_id)
+            record = self.data_client.get_base_record(record_id)
             if not matches_required_fields(record.fields, self.config.required_fields):
                 summary.unchanged += 1
                 self.logger.info(
@@ -189,7 +193,7 @@ class SyncService:
                 resolved.revision,
                 copy_name,
             )
-            copied = self.client.copy_spreadsheet(resolved.token, copy_name)
+            copied = self.data_client.copy_spreadsheet(resolved.token, copy_name)
             target_name = copied.name or copy_name
 
             self.store.save_synced(
@@ -242,12 +246,12 @@ class SyncService:
         token = source.token
         title = source.title
         if source.mention_type == "Wiki":
-            token, document_type, wiki_title = self.client.resolve_wiki_node(source.token)
+            token, document_type, wiki_title = self.data_client.resolve_wiki_node(source.token)
             if document_type != "sheet":
                 raise RuntimeError(f"链接对应的文档不是电子表格，而是 {document_type}")
             title = wiki_title or title
 
-        revision, metadata_title = self.client.get_spreadsheet_revision(token)
+        revision, metadata_title = self.data_client.get_spreadsheet_revision(token)
         return ResolvedSheet(
             token=token,
             title=title or metadata_title or "未命名表格",
@@ -259,7 +263,7 @@ class SyncService:
         failed_count = 0
         for open_id in open_ids:
             try:
-                self.client.send_card(open_id, card)
+                self.message_client.send_card(open_id, card)
                 self.logger.info("同步通知发送成功：open_id=%s", open_id)
             except Exception:
                 failed_count += 1

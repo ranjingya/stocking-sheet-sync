@@ -42,15 +42,20 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
 
     config = load_config(
         env={
-            "FEISHU_APP_ID": "cli_test",
-            "FEISHU_APP_SECRET": "secret",
+            "FEISHU_DATA_APP_ID": "cli_data",
+            "FEISHU_DATA_APP_SECRET": "data-secret",
+            "FEISHU_MESSAGE_APP_ID": "cli_message",
+            "FEISHU_MESSAGE_APP_SECRET": "message-secret",
             "REDIS_URL": "redis://redis.example:6379/2",
             "WEBHOOK_SECRET": "webhook-secret",
         },
         config_path=config_path,
     )
 
-    assert config.feishu_app_id == "cli_test"
+    assert config.feishu_data_app_id == "cli_data"
+    assert config.feishu_data_app_secret == "data-secret"
+    assert config.feishu_message_app_id == "cli_message"
+    assert config.feishu_message_app_secret == "message-secret"
     assert config.base_app_token == "base-token"
     assert config.required_fields == {"状态": "需求收集"}
     assert config.notify_open_ids == ("ou_first", "ou_second")
@@ -71,9 +76,30 @@ def test_load_config_rejects_invalid_open_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="格式错误"):
         load_config(
             env={
-                "FEISHU_APP_ID": "cli_test",
-                "FEISHU_APP_SECRET": "secret",
+                "FEISHU_DATA_APP_ID": "cli_data",
+                "FEISHU_DATA_APP_SECRET": "data-secret",
+                "FEISHU_MESSAGE_APP_ID": "cli_message",
+                "FEISHU_MESSAGE_APP_SECRET": "message-secret",
                 "WEBHOOK_SECRET": "webhook-secret",
             },
             config_path=config_path,
         )
+
+
+def test_load_config_supports_legacy_message_credentials(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(CONFIG_TEXT, encoding="utf-8")
+
+    config = load_config(
+        env={
+            "FEISHU_DATA_APP_ID": "cli_data",
+            "FEISHU_DATA_APP_SECRET": "data-secret",
+            "FEISHU_APP_ID": "cli_message",
+            "FEISHU_APP_SECRET": "message-secret",
+            "WEBHOOK_SECRET": "webhook-secret",
+        },
+        config_path=config_path,
+    )
+
+    assert config.feishu_message_app_id == "cli_message"
+    assert config.feishu_message_app_secret == "message-secret"

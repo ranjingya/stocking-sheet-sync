@@ -40,8 +40,21 @@ def run(argv: list[str] | None = None) -> int:
         socket_timeout_seconds=config.request_timeout_seconds,
         logger=logger,
     )
-    client = FeishuClient(config, logger)
-    service = SyncService(config, client, store, logger)
+    data_client = FeishuClient(
+        config,
+        config.feishu_data_app_id,
+        config.feishu_data_app_secret,
+        "data",
+        logger,
+    )
+    message_client = FeishuClient(
+        config,
+        config.feishu_message_app_id,
+        config.feishu_message_app_secret,
+        "message",
+        logger,
+    )
+    service = SyncService(config, data_client, message_client, store, logger)
     stopping = threading.Event()
 
     def request_stop(signum: int, _frame: object) -> None:
@@ -63,7 +76,8 @@ def run(argv: list[str] | None = None) -> int:
             stopping.wait(config.poll_interval_minutes * 60)
         return 0
     finally:
-        client.close()
+        data_client.close()
+        message_client.close()
         store.close()
 
 

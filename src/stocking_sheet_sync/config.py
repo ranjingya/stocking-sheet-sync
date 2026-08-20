@@ -13,8 +13,10 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
-    feishu_app_id: str
-    feishu_app_secret: str
+    feishu_data_app_id: str
+    feishu_data_app_secret: str
+    feishu_message_app_id: str
+    feishu_message_app_secret: str
     feishu_api_base_url: str
     base_app_token: str
     base_table_id: str
@@ -73,8 +75,18 @@ def load_config(
         raise ValueError("source.required_fields 必须是 TOML 对象")
 
     return AppConfig(
-        feishu_app_id=_require_env(environment, "FEISHU_APP_ID"),
-        feishu_app_secret=_require_env(environment, "FEISHU_APP_SECRET"),
+        feishu_data_app_id=_require_env(environment, "FEISHU_DATA_APP_ID"),
+        feishu_data_app_secret=_require_env(environment, "FEISHU_DATA_APP_SECRET"),
+        feishu_message_app_id=_require_env_with_fallback(
+            environment,
+            "FEISHU_MESSAGE_APP_ID",
+            "FEISHU_APP_ID",
+        ),
+        feishu_message_app_secret=_require_env_with_fallback(
+            environment,
+            "FEISHU_MESSAGE_APP_SECRET",
+            "FEISHU_APP_SECRET",
+        ),
         feishu_api_base_url=_text(feishu.get("api_base_url", "https://open.feishu.cn")).rstrip("/"),
         base_app_token=_required_text(source, "app_token", "source.app_token"),
         base_table_id=_required_text(source, "table_id", "source.table_id"),
@@ -119,6 +131,17 @@ def _table(document: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _require_env(env: Mapping[str, str], name: str) -> str:
     value = env.get(name, "").strip()
+    if not value:
+        raise ValueError(f"缺少必填环境变量：{name}")
+    return value
+
+
+def _require_env_with_fallback(
+    env: Mapping[str, str],
+    name: str,
+    fallback_name: str,
+) -> str:
+    value = env.get(name, "").strip() or env.get(fallback_name, "").strip()
     if not value:
         raise ValueError(f"缺少必填环境变量：{name}")
     return value

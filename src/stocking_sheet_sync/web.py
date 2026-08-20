@@ -39,7 +39,7 @@ def create_app(
         raise ValueError("启动 Webhook 服务前必须配置 WEBHOOK_SECRET")
     configure_logging(app_config.log_level)
     logger = logging.getLogger("stocking_sheet_sync.web")
-    owned_resources: tuple[FeishuClient, RedisStateStore] | None = None
+    owned_resources: tuple[FeishuClient, FeishuClient, RedisStateStore] | None = None
 
     if service is None:
         store = RedisStateStore(
@@ -48,18 +48,38 @@ def create_app(
             socket_timeout_seconds=app_config.request_timeout_seconds,
             logger=logger,
         )
-        client = FeishuClient(app_config, logger)
-        service = SyncService(app_config, client, store, logger)
-        owned_resources = (client, store)
+        data_client = FeishuClient(
+            app_config,
+            app_config.feishu_data_app_id,
+            app_config.feishu_data_app_secret,
+            "data",
+            logger,
+        )
+        message_client = FeishuClient(
+            app_config,
+            app_config.feishu_message_app_id,
+            app_config.feishu_message_app_secret,
+            "message",
+            logger,
+        )
+        service = SyncService(
+            app_config,
+            data_client,
+            message_client,
+            store,
+            logger,
+        )
+        owned_resources = (data_client, message_client, store)
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
     if owned_resources is not None:
-        client, store = owned_resources
+        data_client, message_client, store = owned_resources
 
         def close_resources() -> None:
-            client.close()
+            data_client.close()
+            message_client.close()
             store.close()
 
         atexit.register(close_resources)

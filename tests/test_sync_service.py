@@ -61,8 +61,10 @@ class FakeClient:
 def make_config(tmp_path: Path) -> AppConfig:
     del tmp_path
     return AppConfig(
-        feishu_app_id="cli_test",
-        feishu_app_secret="secret",
+        feishu_data_app_id="cli_data",
+        feishu_data_app_secret="data-secret",
+        feishu_message_app_id="cli_message",
+        feishu_message_app_secret="message-secret",
         feishu_api_base_url="https://open.feishu.cn",
         base_app_token="base-token",
         base_table_id="table-id",
@@ -109,13 +111,14 @@ def test_parse_direct_sheet_and_wiki() -> None:
 
 def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    client = FakeClient()
+    data_client = FakeClient()
+    message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
-    service = SyncService(config, client, store)
+    service = SyncService(config, data_client, message_client, store)
     try:
         first = service.run_once()
         second = service.run_once()
-        client.revision = 2
+        data_client.revision = 2
         third = service.run_once()
     finally:
         store.close()
@@ -123,19 +126,21 @@ def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) ->
     assert first.copied == 1
     assert second.unchanged == 1
     assert third.copied == 1
-    assert client.copy_count == 2
-    assert client.sent_to == ["ou_test", "ou_test"]
+    assert data_client.copy_count == 2
+    assert data_client.sent_to == []
+    assert message_client.sent_to == ["ou_test", "ou_test"]
 
 
 def test_baseline_only_seeds_new_record(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    client = FakeClient()
+    data_client = FakeClient()
+    message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
-    service = SyncService(config, client, store)
+    service = SyncService(config, data_client, message_client, store)
     try:
         baseline = service.run_once(baseline=True)
         unchanged = service.run_once()
-        client.revision = 2
+        data_client.revision = 2
         changed = service.run_once()
     finally:
         store.close()
@@ -143,14 +148,15 @@ def test_baseline_only_seeds_new_record(tmp_path: Path) -> None:
     assert baseline.baselined == 1
     assert unchanged.unchanged == 1
     assert changed.copied == 1
-    assert client.copy_count == 1
+    assert data_client.copy_count == 1
 
 
 def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    client = FakeClient()
+    data_client = FakeClient()
+    message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
-    service = SyncService(config, client, store)
+    service = SyncService(config, data_client, message_client, store)
     try:
         first = service.run_record("rec_test")
         second = service.run_record("rec_test")
@@ -160,4 +166,4 @@ def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
     assert first.scanned == 1
     assert first.copied == 1
     assert second.unchanged == 1
-    assert client.copy_count == 1
+    assert data_client.copy_count == 1

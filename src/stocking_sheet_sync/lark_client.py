@@ -19,8 +19,30 @@ class FeishuApiError(RuntimeError):
 
 
 class FeishuClient:
-    def __init__(self, config: AppConfig, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        app_id: str,
+        app_secret: str,
+        client_name: str,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        """
+        功能说明：创建使用指定飞书应用身份的 OpenAPI 客户端。
+
+        参数：
+            config：通用接口地址、超时和重试配置。
+            app_id：该客户端使用的飞书应用 App ID。
+            app_secret：该客户端使用的飞书应用 App Secret。
+            client_name：日志中用于区分应用用途的名称。
+            logger：可选日志记录器。
+
+        返回值：无。
+        """
         self.config = config
+        self.app_id = app_id
+        self.app_secret = app_secret
+        self.client_name = client_name
         self.logger = logger or logging.getLogger(__name__)
         self._access_token = ""
         self._token_expires_at = 0.0
@@ -272,8 +294,8 @@ class FeishuClient:
         response = self._client.post(
             "/open-apis/auth/v3/tenant_access_token/internal",
             json={
-                "app_id": self.config.feishu_app_id,
-                "app_secret": self.config.feishu_app_secret,
+                "app_id": self.app_id,
+                "app_secret": self.app_secret,
             },
         )
         payload = self._decode_payload(response)
@@ -291,7 +313,10 @@ class FeishuClient:
         expire_seconds = int(expire) if isinstance(expire, int | float | str) else 7200
         self._access_token = token
         self._token_expires_at = time.monotonic() + expire_seconds
-        self.logger.info("已刷新飞书 tenant_access_token")
+        self.logger.info(
+            "已刷新飞书 tenant_access_token：client=%s",
+            self.client_name,
+        )
         return token
 
     @staticmethod
