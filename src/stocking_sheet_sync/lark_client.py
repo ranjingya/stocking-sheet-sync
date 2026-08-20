@@ -94,7 +94,7 @@ class FeishuClient:
             if not page_token:
                 break
 
-        self.logger.info("已读取多维表格候选记录：record_count=%d", len(records))
+        self.logger.debug("已读取多维表格候选记录：record_count=%d", len(records))
         return records
 
     def get_base_record(self, record_id: str) -> BaseRecord:
@@ -123,7 +123,7 @@ class FeishuClient:
         record = _parse_base_record(data.get("record"))
         if record is None:
             raise RuntimeError(f"多维表接口未返回有效记录：{record_id}")
-        self.logger.info("已读取 Webhook 触发记录：record_id=%s", record.record_id)
+        self.logger.debug("已读取 Webhook 触发记录：record_id=%s", record.record_id)
         return record
 
     def resolve_wiki_node(self, wiki_token: str) -> tuple[str, str, str]:
@@ -314,7 +314,7 @@ class FeishuClient:
         expire_seconds = int(expire) if isinstance(expire, int | float | str) else 7200
         self._access_token = token
         self._token_expires_at = time.monotonic() + expire_seconds
-        self.logger.info(
+        self.logger.debug(
             "已刷新飞书 tenant_access_token：client=%s",
             self.client_name,
         )

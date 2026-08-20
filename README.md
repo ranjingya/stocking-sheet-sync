@@ -68,6 +68,10 @@ cp config.example.toml config.toml
 - `[runtime]`：扫描间隔、超时、重试和日志级别。
 - `[web]`：Webhook 对外 HTTPS 地址。
 
+`runtime.log_level = "INFO"` 适用于生产环境，只记录服务启动、Webhook 收到与处理结果、
+定时扫描发现的变化以及异常。设置为 `DEBUG` 时会额外记录接口请求、解析、去重、复制和
+通知等排障明细。
+
 生成 Webhook 密钥并写入 `.env`：
 
 ```bash

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -181,3 +182,32 @@ def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
     assert first.copied == 1
     assert second.unchanged == 1
     assert data_client.copy_count == 1
+
+
+def test_scheduled_scan_only_logs_when_content_changes(tmp_path: Path, caplog) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    logger = logging.getLogger("stocking_sheet_sync.scheduled_test")
+    service = SyncService(config, data_client, message_client, store, logger)
+    caplog.set_level(logging.INFO, logger=logger.name)
+    try:
+        caplog.clear()
+        service.run_once()
+        changed_messages = [
+            record.getMessage() for record in caplog.records if record.name == logger.name
+        ]
+
+        caplog.clear()
+        service.run_once()
+        unchanged_messages = [
+            record.getMessage() for record in caplog.records if record.name == logger.name
+        ]
+    finally:
+        store.close()
+
+    assert changed_messages == [
+        "产品下单同步扫描完成：scanned=1 copied=1 unchanged=0 baselined=0 failed=0"
+    ]
+    assert unchanged_messages == []

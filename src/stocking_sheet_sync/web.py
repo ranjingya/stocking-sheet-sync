@@ -121,26 +121,41 @@ def create_app(
             ), 400
 
         logger.info(
-            "收到多维表自动化 Webhook：record_id=%s remote_addr=%s",
+            "收到多维表自动化 Webhook：record_id=%s",
             record_id,
-            request.remote_addr,
         )
         try:
             summary = service.run_record(record_id)
         except SyncBusyError:
             logger.warning("Webhook 触发时同步任务繁忙：record_id=%s", record_id)
             return jsonify({"status": "busy", "record_id": record_id}), 409
-        except Exception:
-            logger.exception("Webhook 触发处理异常：record_id=%s", record_id)
+        except Exception as error:
+            logger.error(
+                "多维表自动化 Webhook 处理失败：record_id=%s reason=%s",
+                record_id,
+                error,
+            )
+            logger.debug(
+                "多维表自动化 Webhook 处理异常堆栈：record_id=%s",
+                record_id,
+                exc_info=True,
+            )
             return jsonify({"status": "error", "record_id": record_id}), 500
 
         response_status = "failed" if summary.failed else "success"
         status_code = 500 if summary.failed else 200
-        logger.info(
-            "多维表自动化 Webhook 处理结束：record_id=%s status=%s",
-            record_id,
-            response_status,
-        )
+        if summary.failed:
+            logger.debug(
+                "多维表自动化 Webhook 返回失败：record_id=%s",
+                record_id,
+            )
+        else:
+            result = "copied" if summary.copied else "unchanged"
+            logger.info(
+                "多维表自动化 Webhook 处理成功：record_id=%s result=%s",
+                record_id,
+                result,
+            )
         return jsonify(
             {
                 "status": response_status,

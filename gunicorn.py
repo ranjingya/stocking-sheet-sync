@@ -1,3 +1,7 @@
+from stocking_sheet_sync.config import load_config
+
+runtime_log_level = load_config().log_level.lower()
+
 bind = "0.0.0.0:5000"
 
 workers = 1
@@ -11,7 +15,7 @@ keepalive = 5
 max_requests = 500
 max_requests_jitter = 50
 
-accesslog = "-"
+accesslog = "-" if runtime_log_level == "debug" else None
 errorlog = "-"
-loglevel = "info"
+loglevel = runtime_log_level
 capture_output = True

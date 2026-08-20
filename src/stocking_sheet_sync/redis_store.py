@@ -41,7 +41,7 @@ class RedisStateStore:
             health_check_interval=30,
         )
         self._redis.ping()
-        self._logger.info("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
+        self._logger.debug("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
 
     def acquire_run_lock(self, ttl_minutes: float) -> bool:
         """

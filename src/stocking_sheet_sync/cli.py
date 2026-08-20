@@ -69,7 +69,7 @@ def run(argv: list[str] | None = None) -> int:
             service.run_once(baseline=args.baseline)
             if args.once or args.baseline:
                 break
-            logger.info(
+            logger.debug(
                 "等待下一轮产品下单同步扫描：interval_minutes=%.2f",
                 config.poll_interval_minutes,
             )

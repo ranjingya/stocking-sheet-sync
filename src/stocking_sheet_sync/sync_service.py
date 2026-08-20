@@ -78,14 +78,17 @@ class SyncService:
             self.logger.warning("已有同步任务正在运行，本轮跳过")
             return summary
 
-        self.logger.info("开始扫描产品下单记录：baseline=%s", baseline)
+        self.logger.debug("开始扫描产品下单记录：baseline=%s", baseline)
         try:
             for record in self.data_client.list_base_records():
                 if not matches_required_fields(record.fields, self.config.required_fields):
                     continue
                 summary.scanned += 1
                 self._process_record(record, baseline, summary)
-            self.logger.info(
+            log_method = (
+                self.logger.info if summary.copied or summary.baselined else self.logger.debug
+            )
+            log_method(
                 "产品下单同步扫描完成：scanned=%d copied=%d unchanged=%d baselined=%d failed=%d",
                 summary.scanned,
                 summary.copied,
@@ -111,12 +114,12 @@ class SyncService:
         if not self.store.acquire_run_lock(lock_ttl):
             raise SyncBusyError("已有同步任务正在运行")
 
-        self.logger.info("开始处理 Webhook 触发记录：record_id=%s", record_id)
+        self.logger.debug("开始处理 Webhook 触发记录：record_id=%s", record_id)
         try:
             record = self.data_client.get_base_record(record_id)
             if not matches_required_fields(record.fields, self.config.required_fields):
                 summary.unchanged += 1
-                self.logger.info(
+                self.logger.debug(
                     "Webhook 触发记录不符合筛选条件：record_id=%s",
                     record.record_id,
                 )
@@ -124,7 +127,7 @@ class SyncService:
 
             summary.scanned += 1
             self._process_record(record, False, summary)
-            self.logger.info(
+            self.logger.debug(
                 "Webhook 触发记录处理完成：record_id=%s copied=%d unchanged=%d failed=%d",
                 record.record_id,
                 summary.copied,
@@ -144,7 +147,7 @@ class SyncService:
             source = parse_source_sheet(record.fields.get(self.config.link_field_name))
             if source is None:
                 summary.unchanged += 1
-                self.logger.info("记录没有可同步的表格链接：record_id=%s", record.record_id)
+                self.logger.debug("记录没有可同步的表格链接：record_id=%s", record.record_id)
                 return
             if not record_url:
                 raise RuntimeError("多维表接口未返回原始记录链接 shared_url")
@@ -156,7 +159,7 @@ class SyncService:
                 resolved.revision,
             ):
                 summary.unchanged += 1
-                self.logger.info(
+                self.logger.debug(
                     "源表格版本已同步：record_id=%s revision=%d",
                     record.record_id,
                     resolved.revision,
@@ -179,7 +182,7 @@ class SyncService:
                     )
                 )
                 summary.baselined += 1
-                self.logger.info(
+                self.logger.debug(
                     "已将源表格版本记为同步基线：record_id=%s revision=%d",
                     record.record_id,
                     resolved.revision,
@@ -187,7 +190,7 @@ class SyncService:
                 return
 
             copy_name = f"{self.config.copy_name_prefix}{resolved.title}"
-            self.logger.info(
+            self.logger.debug(
                 "检测到未同步版本，开始复制：record_id=%s revision=%d copy_name=%s",
                 record.record_id,
                 resolved.revision,
@@ -219,7 +222,7 @@ class SyncService:
             )
             failed_count = self._notify(list(self.config.notify_open_ids), card)
             summary.copied += 1
-            self.logger.info(
+            self.logger.debug(
                 "电子表格复制完成：record_id=%s revision=%d target_url=%s "
                 "failed_notification_count=%d",
                 record.record_id,
@@ -230,7 +233,16 @@ class SyncService:
         except Exception as error:
             summary.failed += 1
             message = str(error)
-            self.logger.exception("处理记录失败：record_id=%s", record.record_id)
+            self.logger.error(
+                "记录同步失败：record_id=%s reason=%s",
+                record.record_id,
+                message,
+            )
+            self.logger.debug(
+                "记录同步失败堆栈：record_id=%s",
+                record.record_id,
+                exc_info=True,
+            )
             if record_url and self.config.notify_open_ids:
                 card = build_sync_card(
                     original_name=(
@@ -264,10 +276,19 @@ class SyncService:
         for open_id in open_ids:
             try:
                 self.message_client.send_card(open_id, card)
-                self.logger.info("同步通知发送成功：open_id=%s", open_id)
-            except Exception:
+                self.logger.debug("同步通知发送成功：open_id=%s", open_id)
+            except Exception as error:
                 failed_count += 1
-                self.logger.exception("同步通知发送失败：open_id=%s", open_id)
+                self.logger.error(
+                    "同步通知发送失败：open_id=%s reason=%s",
+                    open_id,
+                    error,
+                )
+                self.logger.debug(
+                    "同步通知发送失败堆栈：open_id=%s",
+                    open_id,
+                    exc_info=True,
+                )
         return failed_count
 
 
