@@ -12,7 +12,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  SERVICE_NAME: ${{ vars.SERVICE_NAME || 'backend' }}
 
 jobs:
 
