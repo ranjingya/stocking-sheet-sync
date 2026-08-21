@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,10 @@ class FakeClient:
         self.revision = 1
         self.copy_count = 0
         self.sent_to: list[str] = []
+        self.list_count = 0
 
     def list_base_records(self) -> list[BaseRecord]:
+        self.list_count += 1
         return [
             BaseRecord(
                 record_id="rec_test",
@@ -36,7 +39,19 @@ class FakeClient:
         ]
 
     def get_base_record(self, record_id: str) -> BaseRecord:
-        record = self.list_base_records()[0]
+        record = BaseRecord(
+            record_id="rec_test",
+            shared_url="https://example.feishu.cn/record/rec_test",
+            fields={
+                "状态": "需求收集",
+                "下单表格": {
+                    "link": "https://example.feishu.cn/sheets/source-token",
+                    "text": "备货测试表",
+                    "mentionType": "Sheet",
+                    "token": "source-token",
+                },
+            },
+        )
         if record.record_id != record_id:
             raise RuntimeError(f"记录不存在：{record_id}")
         return record
@@ -60,6 +75,17 @@ class FakeClient:
         self.sent_to.append(open_id)
 
 
+class MutableClock:
+    def __init__(self) -> None:
+        self.value = datetime(2026, 8, 21, 2, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.value
+
+    def advance(self, *, minutes: int) -> None:
+        self.value += timedelta(minutes=minutes)
+
+
 def make_config(tmp_path: Path) -> AppConfig:
     del tmp_path
     return AppConfig(
@@ -76,7 +102,9 @@ def make_config(tmp_path: Path) -> AppConfig:
         target_folder_token="folder-token",
         copy_name_prefix="市场部-",
         notify_open_ids=("ou_test",),
-        poll_interval_minutes=10,
+        poll_interval_minutes=5,
+        change_check_interval_minutes=1,
+        change_quiet_minutes=5,
         redis_url="redis://localhost:6379/0",
         redis_key_prefix="stocking-sheet-sync-test",
         request_timeout_seconds=15,
@@ -124,46 +152,75 @@ def test_parse_base_record_supports_record_url() -> None:
     assert record.shared_url == "https://example.feishu.cn/record/record-token"
 
 
-def test_revision_change_copies_again_and_same_revision_skips(tmp_path: Path) -> None:
+def test_worker_waits_until_revision_is_stable_before_copying(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
-    service = SyncService(config, data_client, message_client, store)
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
-        first = service.run_once()
-        second = service.run_once()
+        first = service.run_record("rec_test")
         data_client.revision = 2
-        third = service.run_once()
+        detected = service.run_once(check_all=True)
+        clock.advance(minutes=4)
+        waiting = service.run_once(check_all=False)
+        clock.advance(minutes=1)
+        copied = service.run_once(check_all=False)
     finally:
         store.close()
 
     assert first.copied == 1
-    assert second.unchanged == 1
-    assert third.copied == 1
+    assert detected.copied == 0
+    assert detected.unchanged == 1
+    assert waiting.copied == 0
+    assert copied.copied == 1
     assert data_client.copy_count == 2
     assert data_client.sent_to == []
     assert message_client.sent_to == ["ou_test", "ou_test"]
 
 
-def test_baseline_only_seeds_new_record(tmp_path: Path) -> None:
+def test_worker_resets_quiet_time_when_revision_changes_again(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, now_provider=clock)
+    try:
+        service.run_record("rec_test")
+        data_client.revision = 2
+        service.run_once(check_all=True)
+        clock.advance(minutes=4)
+        data_client.revision = 3
+        changed_again = service.run_once(check_all=False)
+        clock.advance(minutes=4)
+        waiting = service.run_once(check_all=False)
+        clock.advance(minutes=1)
+        copied = service.run_once(check_all=False)
+    finally:
+        store.close()
+
+    assert changed_again.copied == 0
+    assert waiting.copied == 0
+    assert copied.copied == 1
+    assert data_client.copy_count == 2
+
+
+def test_worker_only_checks_records_already_saved_in_redis(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     service = SyncService(config, data_client, message_client, store)
     try:
-        baseline = service.run_once(baseline=True)
-        unchanged = service.run_once()
-        data_client.revision = 2
-        changed = service.run_once()
+        summary = service.run_once(check_all=True)
     finally:
         store.close()
 
-    assert baseline.baselined == 1
-    assert unchanged.unchanged == 1
-    assert changed.copied == 1
-    assert data_client.copy_count == 1
+    assert summary.scanned == 0
+    assert summary.copied == 0
+    assert data_client.list_count == 0
 
 
 def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
@@ -190,24 +247,39 @@ def test_scheduled_scan_only_logs_when_content_changes(tmp_path: Path, caplog) -
     message_client = FakeClient()
     store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     logger = logging.getLogger("stocking_sheet_sync.scheduled_test")
-    service = SyncService(config, data_client, message_client, store, logger)
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, logger, clock)
     caplog.set_level(logging.INFO, logger=logger.name)
     try:
+        service.run_record("rec_test")
+        data_client.revision = 2
         caplog.clear()
-        service.run_once()
+        service.run_once(check_all=True)
         changed_messages = [
             record.getMessage() for record in caplog.records if record.name == logger.name
         ]
 
         caplog.clear()
-        service.run_once()
+        clock.advance(minutes=1)
+        service.run_once(check_all=False)
         unchanged_messages = [
+            record.getMessage() for record in caplog.records if record.name == logger.name
+        ]
+
+        caplog.clear()
+        clock.advance(minutes=4)
+        service.run_once(check_all=False)
+        copied_messages = [
             record.getMessage() for record in caplog.records if record.name == logger.name
         ]
     finally:
         store.close()
 
     assert changed_messages == [
-        "产品下单同步扫描完成：scanned=1 copied=1 unchanged=0 baselined=0 failed=0"
+        "检测到源表格变化，开始静默观察：record_id=rec_test revision=2"
     ]
     assert unchanged_messages == []
+    assert copied_messages == [
+        "源表格稳定后同步成功：record_id=rec_test revision=2 "
+        "failed_notification_count=0"
+    ]

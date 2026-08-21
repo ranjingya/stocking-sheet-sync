@@ -8,7 +8,7 @@ from typing import Any
 
 from redis import Redis
 
-from .models import SyncedRecord
+from .models import SyncedRecord, SyncedSheetState
 
 _RELEASE_LOCK_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -130,6 +130,91 @@ class RedisStateStore:
             if isinstance(key, str) and isinstance(item, str)
         }
 
+    def list_latest_synced(self) -> list[SyncedSheetState]:
+        """
+        功能说明：读取全部同步历史，并按记录和源表格归并为最新同步状态。
+
+        参数：无。
+
+        返回值：
+            每个 record_id 与 source_token 组合的最新 revision 及其业务信息。
+        """
+        latest: dict[tuple[str, str], SyncedSheetState] = {}
+        for sync_id, raw in self._redis.hgetall(self._synced_key).items():
+            parsed = parse_sync_id(sync_id)
+            if parsed is None:
+                self._logger.warning("忽略格式无效的 Redis 同步标识：sync_id=%s", sync_id)
+                continue
+            record_id, source_token, revision = parsed
+            try:
+                value = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                self._logger.warning("忽略内容无效的 Redis 同步记录：sync_id=%s", sync_id)
+                continue
+            if not isinstance(value, dict):
+                self._logger.warning("忽略非对象类型的 Redis 同步记录：sync_id=%s", sync_id)
+                continue
+
+            state = SyncedSheetState(
+                record_id=record_id,
+                source_token=source_token,
+                synced_revision=revision,
+                source_name=_string_value(value.get("source_name")),
+                source_url=_string_value(value.get("source_url")),
+                record_url=_string_value(value.get("record_url")),
+                target_name=_string_value(value.get("target_name")),
+                target_url=_string_value(value.get("target_url")),
+                synced_at=_string_value(value.get("synced_at")),
+                pending_revision=_optional_int(value.get("pending_revision")),
+                pending_since=_string_value(value.get("pending_since")),
+            )
+            group = (record_id, source_token)
+            current = latest.get(group)
+            if current is None or state.synced_revision > current.synced_revision:
+                latest[group] = state
+
+        return sorted(latest.values(), key=lambda item: (item.record_id, item.source_token))
+
+    def save_pending(
+        self,
+        state: SyncedSheetState,
+        pending_revision: int | None,
+        pending_since: str = "",
+    ) -> None:
+        """
+        功能说明：在最新同步记录中保存或清除源表格静默观察状态。
+
+        参数：
+            state：当前最新同步状态，用于定位 Redis Hash field。
+            pending_revision：观察中的 revision；传入 None 时清除观察状态。
+            pending_since：当前 revision 开始保持不变的时间。
+
+        返回值：无。
+        """
+        sync_id = make_sync_id(
+            state.record_id,
+            state.source_token,
+            state.synced_revision,
+        )
+        raw = self._redis.hget(self._synced_key, sync_id)
+        if not raw:
+            raise ValueError(f"Redis 同步记录不存在：{sync_id}")
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError(f"Redis 同步记录不是 JSON 对象：{sync_id}")
+
+        if pending_revision is None:
+            value.pop("pending_revision", None)
+            value.pop("pending_since", None)
+        else:
+            value["pending_revision"] = pending_revision
+            value["pending_since"] = pending_since
+        self._redis.hset(
+            self._synced_key,
+            sync_id,
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")),
+        )
+
     def close(self) -> None:
         self._redis.close()
 
@@ -144,3 +229,26 @@ class RedisStateStore:
 
 def make_sync_id(record_id: str, source_token: str, source_revision: int) -> str:
     return f"{record_id}:{source_token}:{source_revision}"
+
+
+def parse_sync_id(sync_id: str) -> tuple[str, str, int] | None:
+    parts = sync_id.split(":")
+    if len(parts) != 3 or not parts[0] or not parts[1]:
+        return None
+    try:
+        revision = int(parts[2])
+    except ValueError:
+        return None
+    if revision < 0:
+        return None
+    return parts[0], parts[1], revision
+
+
+def _string_value(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value

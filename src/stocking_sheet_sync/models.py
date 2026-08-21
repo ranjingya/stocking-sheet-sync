@@ -48,10 +48,24 @@ class SyncedRecord:
     synced_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class SyncedSheetState:
+    record_id: str
+    source_token: str
+    synced_revision: int
+    source_name: str
+    source_url: str
+    record_url: str
+    target_name: str
+    target_url: str
+    synced_at: str
+    pending_revision: int | None = None
+    pending_since: str = ""
+
+
 @dataclass(slots=True)
 class SyncSummary:
     scanned: int = 0
     copied: int = 0
     unchanged: int = 0
-    baselined: int = 0
     failed: int = 0

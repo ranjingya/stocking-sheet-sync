@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -13,6 +14,7 @@ from .models import (
     ResolvedSheet,
     SourceSheet,
     SyncedRecord,
+    SyncedSheetState,
     SyncSummary,
 )
 
@@ -42,6 +44,15 @@ class SyncedStore(Protocol):
 
     def save_synced(self, record: SyncedRecord) -> None: ...
 
+    def list_latest_synced(self) -> list[SyncedSheetState]: ...
+
+    def save_pending(
+        self,
+        state: SyncedSheetState,
+        pending_revision: int | None,
+        pending_since: str = "",
+    ) -> None: ...
+
 
 class SyncBusyError(RuntimeError):
     """同步任务已经在其他进程中运行。"""
@@ -55,22 +66,24 @@ class SyncService:
         message_client: MessageClient,
         store: SyncedStore,
         logger: logging.Logger | None = None,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self.config = config
         self.data_client = data_client
         self.message_client = message_client
         self.store = store
         self.logger = logger or logging.getLogger(__name__)
+        self._now_provider = now_provider or (lambda: datetime.now(UTC))
 
-    def run_once(self, *, baseline: bool = False) -> SyncSummary:
+    def run_once(self, *, check_all: bool = True) -> SyncSummary:
         """
-        功能说明：扫描多维表记录，检测源表 revision 并按需复制和通知。
+        功能说明：从 Redis 读取已接管表格，检查 revision 并按静默窗口复制和通知。
 
         参数：
-            baseline：是否只将当前表格版本记为已同步，不执行复制和通知。
+            check_all：是否检查全部已接管表格；为 False 时只检查观察中的表格。
 
         返回值：
-            本轮扫描、复制、跳过、基线和失败数量。
+            本轮扫描、复制、跳过和失败数量。
         """
         summary = SyncSummary()
         lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
@@ -78,22 +91,18 @@ class SyncService:
             self.logger.warning("已有同步任务正在运行，本轮跳过")
             return summary
 
-        self.logger.debug("开始扫描产品下单记录：baseline=%s", baseline)
+        self.logger.debug("开始检查已接管表格：check_all=%s", check_all)
         try:
-            for record in self.data_client.list_base_records():
-                if not matches_required_fields(record.fields, self.config.required_fields):
+            for state in self.store.list_latest_synced():
+                if not check_all and state.pending_revision is None:
                     continue
                 summary.scanned += 1
-                self._process_record(record, baseline, summary)
-            log_method = (
-                self.logger.info if summary.copied or summary.baselined else self.logger.debug
-            )
-            log_method(
-                "产品下单同步扫描完成：scanned=%d copied=%d unchanged=%d baselined=%d failed=%d",
+                self._check_synced_sheet(state, summary)
+            self.logger.debug(
+                "已接管表格检查完成：scanned=%d copied=%d unchanged=%d failed=%d",
                 summary.scanned,
                 summary.copied,
                 summary.unchanged,
-                summary.baselined,
                 summary.failed,
             )
             return summary
@@ -126,7 +135,7 @@ class SyncService:
                 return summary
 
             summary.scanned += 1
-            self._process_record(record, False, summary)
+            self._process_record(record, summary)
             self.logger.debug(
                 "Webhook 触发记录处理完成：record_id=%s copied=%d unchanged=%d failed=%d",
                 record.record_id,
@@ -138,7 +147,7 @@ class SyncService:
         finally:
             self.store.release_run_lock()
 
-    def _process_record(self, record: BaseRecord, baseline: bool, summary: SyncSummary) -> None:
+    def _process_record(self, record: BaseRecord, summary: SyncSummary) -> None:
         source: SourceSheet | None = None
         resolved: ResolvedSheet | None = None
         record_url = record.shared_url.strip()
@@ -166,29 +175,7 @@ class SyncService:
                 )
                 return
 
-            synced_at = format_shanghai_time(datetime.now(UTC))
-            if baseline:
-                self.store.save_synced(
-                    SyncedRecord(
-                        record_id=record.record_id,
-                        source_token=resolved.token,
-                        source_revision=resolved.revision,
-                        source_name=resolved.title,
-                        source_url=resolved.source_url,
-                        record_url=record_url,
-                        target_name="",
-                        target_url="",
-                        synced_at=synced_at,
-                    )
-                )
-                summary.baselined += 1
-                self.logger.debug(
-                    "已将源表格版本记为同步基线：record_id=%s revision=%d",
-                    record.record_id,
-                    resolved.revision,
-                )
-                return
-
+            synced_at = format_shanghai_time(self._now())
             copy_name = f"{self.config.copy_name_prefix}{resolved.title}"
             self.logger.debug(
                 "检测到未同步版本，开始复制：record_id=%s revision=%d copy_name=%s",
@@ -253,6 +240,180 @@ class SyncService:
                     reason=message,
                 )
                 self._notify(list(self.config.notify_open_ids), card)
+
+    def _check_synced_sheet(
+        self,
+        state: SyncedSheetState,
+        summary: SyncSummary,
+    ) -> None:
+        """
+        功能说明：检查一张已接管表格，并维护 revision 静默观察状态。
+
+        参数：
+            state：Redis 中该表格的最新同步状态。
+            summary：用于累计本轮处理结果的汇总对象。
+
+        返回值：无。
+        """
+        now = self._now()
+        try:
+            online_revision, metadata_title = self.data_client.get_spreadsheet_revision(
+                state.source_token
+            )
+            if online_revision == state.synced_revision:
+                if state.pending_revision is not None:
+                    self.store.save_pending(state, None)
+                    self.logger.debug(
+                        "源表格已恢复到同步版本，清除观察状态：record_id=%s revision=%d",
+                        state.record_id,
+                        online_revision,
+                    )
+                summary.unchanged += 1
+                return
+
+            if state.pending_revision is None:
+                self.store.save_pending(
+                    state,
+                    online_revision,
+                    format_shanghai_time(now),
+                )
+                summary.unchanged += 1
+                self.logger.info(
+                    "检测到源表格变化，开始静默观察：record_id=%s revision=%d",
+                    state.record_id,
+                    online_revision,
+                )
+                return
+
+            if online_revision != state.pending_revision:
+                self.store.save_pending(
+                    state,
+                    online_revision,
+                    format_shanghai_time(now),
+                )
+                summary.unchanged += 1
+                self.logger.debug(
+                    "观察中的源表格再次变化，刷新静默时间：record_id=%s revision=%d",
+                    state.record_id,
+                    online_revision,
+                )
+                return
+
+            pending_since = parse_state_time(state.pending_since)
+            if pending_since is None:
+                self.store.save_pending(
+                    state,
+                    online_revision,
+                    format_shanghai_time(now),
+                )
+                summary.unchanged += 1
+                self.logger.warning(
+                    "源表格观察时间无效，重新开始静默观察：record_id=%s revision=%d",
+                    state.record_id,
+                    online_revision,
+                )
+                return
+
+            quiet_duration = now - pending_since.astimezone(UTC)
+            required_quiet = timedelta(minutes=self.config.change_quiet_minutes)
+            if quiet_duration < required_quiet:
+                summary.unchanged += 1
+                return
+
+            self._copy_monitored_sheet(
+                state,
+                online_revision,
+                metadata_title or state.source_name,
+                summary,
+            )
+        except Exception as error:
+            summary.failed += 1
+            message = str(error)
+            self.logger.error(
+                "定时监控表格失败：record_id=%s reason=%s",
+                state.record_id,
+                message,
+            )
+            self.logger.debug(
+                "定时监控表格失败堆栈：record_id=%s",
+                state.record_id,
+                exc_info=True,
+            )
+            if state.pending_revision is not None:
+                try:
+                    self.store.save_pending(
+                        state,
+                        state.pending_revision,
+                        format_shanghai_time(now),
+                    )
+                except Exception:
+                    self.logger.debug("刷新观察重试时间失败", exc_info=True)
+            if state.record_url and self.config.notify_open_ids:
+                card = build_sync_card(
+                    original_name=state.source_name or "未知表格",
+                    record_url=state.record_url,
+                    status="failure",
+                    reason=message,
+                )
+                self._notify(list(self.config.notify_open_ids), card)
+
+    def _copy_monitored_sheet(
+        self,
+        state: SyncedSheetState,
+        revision: int,
+        source_name: str,
+        summary: SyncSummary,
+    ) -> None:
+        """
+        功能说明：复制一张已经结束静默观察的电子表格并记录同步结果。
+
+        参数：
+            state：该表格最近一次成功同步的状态。
+            revision：本次需要复制的在线 revision。
+            source_name：当前源表格名称。
+            summary：用于累计本轮复制结果的汇总对象。
+
+        返回值：无。
+        """
+        if not state.record_url:
+            raise RuntimeError("Redis 同步记录缺少原始记录链接")
+        copy_name = f"{self.config.copy_name_prefix}{source_name}"
+        copied = self.data_client.copy_spreadsheet(state.source_token, copy_name)
+        target_name = copied.name or copy_name
+        self.store.save_synced(
+            SyncedRecord(
+                record_id=state.record_id,
+                source_token=state.source_token,
+                source_revision=revision,
+                source_name=source_name,
+                source_url=state.source_url,
+                record_url=state.record_url,
+                target_name=target_name,
+                target_url=copied.url,
+                synced_at=format_shanghai_time(self._now()),
+            )
+        )
+        card = build_sync_card(
+            original_name=source_name,
+            record_url=state.record_url,
+            target_name=target_name,
+            target_url=copied.url,
+            status="success",
+        )
+        failed_count = self._notify(list(self.config.notify_open_ids), card)
+        summary.copied += 1
+        self.logger.info(
+            "源表格稳定后同步成功：record_id=%s revision=%d failed_notification_count=%d",
+            state.record_id,
+            revision,
+            failed_count,
+        )
+
+    def _now(self) -> datetime:
+        value = self._now_provider()
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     def _resolve_source(self, source: SourceSheet) -> ResolvedSheet:
         token = source.token
@@ -335,6 +496,16 @@ def matches_required_fields(fields: dict[str, Any], required: dict[str, Any]) ->
 def format_shanghai_time(value: datetime) -> str:
     shanghai_timezone = timezone(timedelta(hours=8))
     return value.astimezone(shanghai_timezone).isoformat(timespec="seconds")
+
+
+def parse_state_time(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
 
 
 def _unwrap_link_value(value: Any) -> dict[str, Any] | None:

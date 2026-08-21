@@ -4,16 +4,17 @@
 
 ## 工作方式
 
-程序按固定间隔扫描多维表记录：
+程序由 Webhook 服务和定时 Worker 共同完成同步：
 
-1. 读取配置视图中的记录并应用字段过滤条件。
-2. 解析“下单表格”字段，兼容 Wiki 链接和直接 Sheet 链接。
-3. 获取真实电子表格的 `revision`。
-4. 将 `record_id + sheet_token + revision` 与 Redis 状态比较。
-5. 首次发现或 revision 变化时，将电子表格复制到共享文件夹。
-6. 保存复制结果，再逐人发送飞书卡片。
+1. 多维表自动化将新增或修改记录的 `record_id` 发送给 Webhook。
+2. Webhook 解析“下单表格”字段，兼容 Wiki 链接和直接 Sheet 链接，并立即创建首次副本。
+3. 首次复制成功后，将 `record_id + sheet_token + revision` 写入 Redis。
+4. Worker 每 5 分钟从 Redis 读取已经成功同步过的表格，并检查在线 `revision`。
+5. 发现变化的表格进入每分钟一次的静默观察；revision 再次变化时重新计时。
+6. revision 连续 5 分钟不变后创建新副本、保存新版本并发送通知。
 
-同一 revision 最多复制一次。源表内容发生变化并产生新 revision 后，会再次创建一个副本；程序不会自动删除历史副本。
+Worker 只监控 Redis 中已经登记的表格，不扫描多维表历史记录。同一 revision 最多复制一次；
+程序不会自动删除历史副本。
 
 ## 环境要求
 
@@ -65,7 +66,7 @@ cp config.example.toml config.toml
 - `[target]`：目标共享文件夹及副本名前缀。
 - `[notifications]`：逐人通知使用的 `open_id` 数组。
 - `[redis]`：Redis 键命名空间。
-- `[runtime]`：扫描间隔、超时、重试和日志级别。
+- `[runtime]`：常规检查间隔、变动检查间隔、静默时间、超时、重试和日志级别。
 - `[web]`：Webhook 对外 HTTPS 地址。
 
 `runtime.log_level = "INFO"` 适用于生产环境，只记录服务启动、Webhook 收到与处理结果、
@@ -139,30 +140,18 @@ curl --request POST 'http://127.0.0.1:8000/webhooks/base-record' \
   --data '{"record_id":"recxxxxxxxxxxxx"}'
 ```
 
-Gunicorn 负责即时接收新增或修改记录。现有常驻轮询进程继续检测链接内电子表格
-`revision` 的变化；两种入口共享 Redis 锁和同步状态，不会重复搬运同一版本。
-
-## 首次接管
-
-如果现有记录已经由旧集成平台搬运过，先建立当前 revision 基线，避免全部重复搬运：
-
-```bash
-uv run stocking-sheet-sync --baseline
-```
-
-基线命令只记录 Redis 中尚不存在的表格版本。
-
-如果需要让程序首次启动时搬运所有符合条件的记录，跳过基线命令即可。
+Gunicorn 负责即时接收新增或修改记录。常驻 Worker 只检测 Redis 中已登记电子表格的
+`revision` 变化；两种入口共享 Redis 锁和同步状态，不会重复搬运同一版本。
 
 ## 运行
 
-执行一轮扫描：
+执行一轮 Redis 已登记表格检查：
 
 ```bash
 uv run stocking-sheet-sync --once
 ```
 
-按 `runtime.poll_interval_minutes` 常驻轮询：
+启动常驻 Worker：
 
 ```bash
 uv run stocking-sheet-sync
@@ -195,6 +184,11 @@ Hash value 是 JSON，只保存：
 - 目标副本名称和链接
 - UTC+8 同步时间
 
+表格处于静默观察期时，最新同步版本的 value 还会保存：
+
+- `pending_revision`：观察中的在线 revision
+- `pending_since`：该 revision 最近一次变化的 UTC+8 时间
+
 复制失败时不写 Redis，下次扫描会继续尝试。通知失败只写日志，不额外保存通知状态。
 
 扫描锁保存为带自动过期时间的 Redis String：
@@ -210,6 +204,19 @@ redis-cli -u "$REDIS_URL" HGETALL 'stocking-sheet-sync:synced'
 ```
 
 Redis 需要开启持久化或使用可靠的托管实例。清空这些键会让程序失去历史去重依据。
+
+## Docker Compose
+
+`docker-compose.yaml` 使用同一个镜像运行两个长期服务：
+
+- `stocking-sheet-sync`：Gunicorn Webhook 服务，通过 Traefik 对外提供 HTTPS 接口。
+- `stocking-sheet-sync-worker`：单进程定时 Worker，不开放端口。
+
+两个服务共用 `.env`、`config.toml` 和 Redis。启动或更新服务：
+
+```bash
+docker compose up -d --force-recreate
+```
 
 ## 检查与测试
 

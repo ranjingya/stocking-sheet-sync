@@ -27,6 +27,8 @@ class AppConfig:
     copy_name_prefix: str
     notify_open_ids: tuple[str, ...]
     poll_interval_minutes: float
+    change_check_interval_minutes: float
+    change_quiet_minutes: float
     redis_url: str
     redis_key_prefix: str
     request_timeout_seconds: float
@@ -97,7 +99,14 @@ def load_config(
         copy_name_prefix=_text(target.get("copy_name_prefix", "市场部-")),
         notify_open_ids=_parse_open_ids(notifications.get("open_ids", [])),
         poll_interval_minutes=_positive_float(
-            runtime.get("poll_interval_minutes", 10), "runtime.poll_interval_minutes"
+            runtime.get("poll_interval_minutes", 5), "runtime.poll_interval_minutes"
+        ),
+        change_check_interval_minutes=_positive_float(
+            runtime.get("change_check_interval_minutes", 1),
+            "runtime.change_check_interval_minutes",
+        ),
+        change_quiet_minutes=_positive_float(
+            runtime.get("change_quiet_minutes", 5), "runtime.change_quiet_minutes"
         ),
         redis_url=(environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"),
         redis_key_prefix=_parse_key_prefix(redis.get("key_prefix")),

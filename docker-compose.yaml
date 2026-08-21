@@ -20,6 +20,20 @@ services:
     networks:
       - traefik-network
 
+  stocking-sheet-sync-worker:
+    image: ghcr.io/ranjingya/stocking-sheet-sync:latest
+    container_name: stocking-sheet-sync-worker
+    restart: unless-stopped
+    command: ["./.venv/bin/stocking-sheet-sync"]
+    env_file:
+      - .env
+    environment:
+      CONFIG_PATH: /app/config.toml
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+    networks:
+      - traefik-network
+
 networks:
   traefik-network:
     external: true

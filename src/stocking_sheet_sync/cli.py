@@ -4,6 +4,7 @@ import argparse
 import logging
 import signal
 import threading
+import time
 
 from .config import load_config
 from .lark_client import FeishuClient
@@ -14,21 +15,16 @@ from .sync_service import SyncService
 
 def run(argv: list[str] | None = None) -> int:
     """
-    功能说明：初始化同步服务，并按单次、基线或常驻模式运行。
+    功能说明：初始化同步 Worker，并按单次或分级轮询模式运行。
 
     参数：
-        argv：可选命令行参数；支持 --once 和 --baseline。
+        argv：可选命令行参数；支持 --once。
 
     返回值：
         进程退出码，正常完成返回 0。
     """
     parser = argparse.ArgumentParser(description="飞书备货表格同步服务")
     parser.add_argument("--once", action="store_true", help="执行一轮扫描后退出")
-    parser.add_argument(
-        "--baseline",
-        action="store_true",
-        help="仅为未接管记录建立当前 revision 基线，不复制文件",
-    )
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -65,15 +61,20 @@ def run(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, request_stop)
 
     try:
+        next_full_check = 0.0
         while not stopping.is_set():
-            service.run_once(baseline=args.baseline)
-            if args.once or args.baseline:
+            now = time.monotonic()
+            check_all = now >= next_full_check
+            service.run_once(check_all=check_all)
+            if check_all:
+                next_full_check = time.monotonic() + config.poll_interval_minutes * 60
+            if args.once:
                 break
             logger.debug(
-                "等待下一轮产品下单同步扫描：interval_minutes=%.2f",
-                config.poll_interval_minutes,
+                "等待下一轮变动表格检查：interval_minutes=%.2f",
+                config.change_check_interval_minutes,
             )
-            stopping.wait(config.poll_interval_minutes * 60)
+            stopping.wait(config.change_check_interval_minutes * 60)
         return 0
     finally:
         data_client.close()
