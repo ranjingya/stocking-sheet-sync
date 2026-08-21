@@ -33,7 +33,10 @@ def test_redis_store_saves_human_readable_hash() -> None:
     assert restored["source_name"] == "备货测试表"
     redis_hash = client.hashes["stocking-sheet-sync-test:synced"]
     raw = redis_hash["rec_test:source-token:12"]
-    assert "target_token" not in json.loads(raw)
+    saved_value = json.loads(raw)
+    assert "target_token" not in saved_value
+    assert saved_value["copy_version"] == 1
+    assert store.next_copy_version("rec_test", "source-token") == 2
 
 
 def test_redis_store_groups_versions_and_persists_pending_state() -> None:
@@ -55,12 +58,14 @@ def test_redis_store_groups_versions_and_persists_pending_state() -> None:
                 target_name="市场部-备货测试表",
                 target_url=f"https://example.feishu.cn/sheets/target-{revision}",
                 synced_at="2026-08-21T10:00:00+08:00",
+                copy_version=1 if revision == 4 else 2,
             )
         )
 
     latest = store.list_latest_synced()
     assert len(latest) == 1
     assert latest[0].synced_revision == 7
+    assert store.next_copy_version("rec_test", "source-token") == 3
 
     store.save_pending(latest[0], 8, "2026-08-21T10:05:00+08:00")
     observed = store.list_latest_synced()[0]
@@ -71,6 +76,25 @@ def test_redis_store_groups_versions_and_persists_pending_state() -> None:
     cleared = store.list_latest_synced()[0]
     assert cleared.pending_revision is None
     assert cleared.pending_since == ""
+
+
+def test_redis_store_derives_next_copy_version_from_legacy_records() -> None:
+    client = FakeRedis()
+    store = RedisStateStore(
+        "redis://localhost:6379/0",
+        "stocking-sheet-sync-test",
+        client=client,
+    )
+    redis_hash = client.hashes.setdefault("stocking-sheet-sync-test:synced", {})
+    for revision in (4, 7):
+        redis_hash[f"rec_test:source-token:{revision}"] = json.dumps(
+            {
+                "target_url": f"https://example.feishu.cn/sheets/target-{revision}",
+                "synced_at": "2026-08-21T10:00:00+08:00",
+            }
+        )
+
+    assert store.next_copy_version("rec_test", "source-token") == 3
 
 
 def test_redis_lock_is_released_only_by_owner() -> None:

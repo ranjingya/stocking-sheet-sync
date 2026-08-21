@@ -44,6 +44,8 @@ class SyncedStore(Protocol):
 
     def save_synced(self, record: SyncedRecord) -> None: ...
 
+    def next_copy_version(self, record_id: str, source_token: str) -> int: ...
+
     def list_latest_synced(self) -> list[SyncedSheetState]: ...
 
     def save_pending(
@@ -176,7 +178,12 @@ class SyncService:
                 return
 
             synced_at = format_shanghai_time(self._now())
-            copy_name = f"{self.config.copy_name_prefix}{resolved.title}"
+            copy_version = self.store.next_copy_version(record.record_id, resolved.token)
+            copy_name = build_copy_name(
+                self.config.copy_name_prefix,
+                resolved.title,
+                copy_version,
+            )
             self.logger.debug(
                 "检测到未同步版本，开始复制：record_id=%s revision=%d copy_name=%s",
                 record.record_id,
@@ -197,6 +204,7 @@ class SyncService:
                     target_name=target_name,
                     target_url=copied.url,
                     synced_at=synced_at,
+                    copy_version=copy_version,
                 )
             )
 
@@ -383,7 +391,12 @@ class SyncService:
         """
         if not state.record_url:
             raise RuntimeError("Redis 同步记录缺少原始记录链接")
-        copy_name = f"{self.config.copy_name_prefix}{source_name}"
+        copy_version = self.store.next_copy_version(state.record_id, state.source_token)
+        copy_name = build_copy_name(
+            self.config.copy_name_prefix,
+            source_name,
+            copy_version,
+        )
         copied = self.data_client.copy_spreadsheet(state.source_token, copy_name)
         target_name = copied.name or copy_name
         self.store.save_synced(
@@ -397,6 +410,7 @@ class SyncService:
                 target_name=target_name,
                 target_url=copied.url,
                 synced_at=format_shanghai_time(self._now()),
+                copy_version=copy_version,
             )
         )
         card = build_sync_card(
@@ -492,6 +506,33 @@ def parse_source_sheet(value: Any) -> SourceSheet | None:
         source_url=link,
         mention_type=mention_type,
     )
+
+
+def build_copy_name(prefix: str, source_name: str, copy_version: int) -> str:
+    """
+    功能说明：按照搬运次数生成目标文件名，并将版本号放在表格扩展名前。
+
+    参数：
+        prefix：目标文件名前缀。
+        source_name：源文件标题。
+        copy_version：本次搬运的业务版本号，首次搬运为 1。
+
+    返回值：
+        首次搬运不带版本后缀，后续搬运带有 -vN 的目标文件名。
+    """
+    base_name = f"{prefix}{source_name}"
+    if copy_version <= 1:
+        return base_name
+
+    matched = re.match(
+        r"^(.*?)(\.(?:xlsx|xlsm|xlsb|xls|csv|ods))$",
+        base_name,
+        flags=re.IGNORECASE,
+    )
+    if matched is None:
+        return f"{base_name}-v{copy_version}"
+    stem, extension = matched.groups()
+    return f"{stem}-v{copy_version}{extension}"
 
 
 def matches_required_fields(fields: dict[str, Any], required: dict[str, Any]) -> bool:

@@ -105,12 +105,44 @@ class RedisStateStore:
             "target_name": record.target_name,
             "target_url": record.target_url,
             "synced_at": record.synced_at,
+            "copy_version": record.copy_version,
         }
         self._redis.hset(
             self._synced_key,
             sync_id,
             json.dumps(value, ensure_ascii=False, separators=(",", ":")),
         )
+
+    def next_copy_version(self, record_id: str, source_token: str) -> int:
+        """
+        功能说明：计算同一多维表记录和源表格的下一次搬运版本号。
+
+        参数：
+            record_id：多维表记录 ID。
+            source_token：真实电子表格 token。
+
+        返回值：
+            下一次成功搬运应使用的业务版本号；首次搬运返回 1。
+        """
+        successful_count = 0
+        highest_recorded_version = 0
+        for sync_id, raw in self._redis.hgetall(self._synced_key).items():
+            parsed = parse_sync_id(sync_id)
+            if parsed is None or parsed[:2] != (record_id, source_token):
+                continue
+            try:
+                value = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(value, dict) or not _string_value(value.get("target_url")):
+                continue
+
+            successful_count += 1
+            copy_version = _positive_int(value.get("copy_version"))
+            if copy_version is not None:
+                highest_recorded_version = max(highest_recorded_version, copy_version)
+
+        return max(successful_count, highest_recorded_version) + 1
 
     def get_synced(
         self, record_id: str, source_token: str, source_revision: int
@@ -250,5 +282,11 @@ def _string_value(value: object) -> str:
 
 def _optional_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return None
     return value

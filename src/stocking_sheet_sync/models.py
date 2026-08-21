@@ -46,6 +46,7 @@ class SyncedRecord:
     target_name: str
     target_url: str
     synced_at: str
+    copy_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)

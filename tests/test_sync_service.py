@@ -9,7 +9,7 @@ from stocking_sheet_sync.config import AppConfig
 from stocking_sheet_sync.lark_client import _parse_base_record
 from stocking_sheet_sync.models import BaseRecord, CopyResult
 from stocking_sheet_sync.redis_store import RedisStateStore
-from stocking_sheet_sync.sync_service import SyncService, parse_source_sheet
+from stocking_sheet_sync.sync_service import SyncService, build_copy_name, parse_source_sheet
 from tests.fakes import FakeRedis
 
 
@@ -17,6 +17,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.revision = 1
         self.copy_count = 0
+        self.copy_names: list[str] = []
         self.sent_to: list[str] = []
         self.list_count = 0
 
@@ -64,6 +65,7 @@ class FakeClient:
 
     def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult:
         self.copy_count += 1
+        self.copy_names.append(copy_name)
         return CopyResult(
             name=copy_name,
             token=f"target-{self.copy_count}",
@@ -139,6 +141,12 @@ def test_parse_direct_sheet_and_wiki() -> None:
     assert wiki.token == "wiki-token"
 
 
+def test_build_copy_name_adds_business_version_before_extension() -> None:
+    assert build_copy_name("市场部-", "备货测试表.xlsx", 1) == "市场部-备货测试表.xlsx"
+    assert build_copy_name("市场部-", "备货测试表.xlsx", 2) == "市场部-备货测试表-v2.xlsx"
+    assert build_copy_name("市场部-", "备货测试表", 3) == "市场部-备货测试表-v3"
+
+
 def test_parse_base_record_supports_record_url() -> None:
     record = _parse_base_record(
         {
@@ -176,6 +184,7 @@ def test_worker_waits_until_revision_is_stable_before_copying(tmp_path: Path) ->
     assert waiting.copied == 0
     assert copied.copied == 1
     assert data_client.copy_count == 2
+    assert data_client.copy_names == ["市场部-备货测试表", "市场部-备货测试表-v2"]
     assert data_client.sent_to == []
     assert message_client.sent_to == ["ou_test", "ou_test"]
 
@@ -205,6 +214,30 @@ def test_worker_resets_quiet_time_when_revision_changes_again(tmp_path: Path) ->
     assert waiting.copied == 0
     assert copied.copied == 1
     assert data_client.copy_count == 2
+
+
+def test_worker_increments_copy_version_for_each_successful_update(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, now_provider=clock)
+    try:
+        service.run_record("rec_test")
+        for revision in (2, 3):
+            data_client.revision = revision
+            service.run_once(check_all=True)
+            clock.advance(minutes=10)
+            service.run_once(check_all=False)
+    finally:
+        store.close()
+
+    assert data_client.copy_names == [
+        "市场部-备货测试表",
+        "市场部-备货测试表-v2",
+        "市场部-备货测试表-v3",
+    ]
 
 
 def test_worker_only_checks_records_already_saved_in_redis(tmp_path: Path) -> None:
