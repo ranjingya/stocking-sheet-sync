@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from stocking_sheet_sync.config import AppConfig
-from stocking_sheet_sync.lark_client import _parse_base_record
+from stocking_sheet_sync.lark_client import FeishuApiError, _parse_base_record
 from stocking_sheet_sync.models import BaseRecord, CopyResult
 from stocking_sheet_sync.redis_store import RedisStateStore
 from stocking_sheet_sync.sync_service import SyncService, build_copy_name, parse_source_sheet
@@ -24,6 +24,8 @@ class FakeClient:
         self.status = "需求收集"
         self.source_token = "source-token"
         self.copy_error = ""
+        self.record_deleted = False
+        self.sent_cards: list[dict[str, Any]] = []
 
     def list_base_records(self) -> list[BaseRecord]:
         self.list_count += 1
@@ -44,6 +46,8 @@ class FakeClient:
         ]
 
     def get_base_record(self, record_id: str) -> BaseRecord:
+        if self.record_deleted:
+            raise FeishuApiError("飞书接口失败：RecordIdNotFound", 1, 404)
         record = BaseRecord(
             record_id="rec_test",
             shared_url="https://example.feishu.cn/record/rec_test",
@@ -81,6 +85,7 @@ class FakeClient:
 
     def send_card(self, open_id: str, card: dict[str, Any]) -> None:
         self.sent_to.append(open_id)
+        self.sent_cards.append(card)
 
 
 class MutableClock:
@@ -392,6 +397,34 @@ def test_worker_stops_pending_copy_when_status_no_longer_matches(tmp_path: Path)
     assert skipped.skipped == 1
     assert data_client.copy_count == 1
     assert state is not None and state.pending_revision is None
+
+
+def test_worker_notifies_and_removes_state_when_record_is_deleted(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        service.run_record("rec_test")
+        data_client.record_deleted = True
+        summary = service.run_once(check_all=True)
+        state = store.get_state("rec_test", "source-token")
+    finally:
+        store.close()
+
+    assert summary.result == "skipped"
+    assert summary.skipped == 1
+    assert summary.failed == 0
+    assert state is None
+    assert data_client.copy_count == 1
+    assert message_client.sent_to == ["ou_test", "ou_failure"]
+    deleted_card = message_client.sent_cards[-1]
+    assert deleted_card["header"]["template"] == "red"
+    assert deleted_card["header"]["title"]["content"] == (
+        "产品下单同步 · 原记录已删除"
+    )
+    assert "市场部-备货测试表" in deleted_card["body"]["elements"][0]["content"]
 
 
 def test_worker_ignores_state_when_record_points_to_another_sheet(tmp_path: Path) -> None:

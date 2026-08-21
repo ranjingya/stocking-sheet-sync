@@ -53,3 +53,22 @@ def test_build_failure_card_contains_reason() -> None:
 
     assert card["header"]["template"] == "red"
     assert "没有访问权限" in card["body"]["elements"][0]["content"]
+
+
+def test_build_deleted_record_card_links_latest_copy() -> None:
+    card = build_sync_card(
+        original_name="备货测试表",
+        record_url="https://example.feishu.cn/record/record-token",
+        target_name="市场部-备货测试表-v2",
+        target_url="https://example.feishu.cn/sheets/target-token",
+        status="deleted",
+        sync_type="update",
+        target_folder_token="folder-token",
+    )
+
+    assert card["header"]["template"] == "red"
+    assert card["header"]["title"]["content"] == "产品下单同步 · 原记录已删除"
+    content = card["body"]["elements"][0]["content"]
+    assert "原始记录： 备货测试表" in content
+    assert "市场部-备货测试表-v2" in content
+    assert "target-token" in content

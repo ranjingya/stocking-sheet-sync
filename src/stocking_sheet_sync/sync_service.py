@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from .card import build_sync_card
 from .config import AppConfig
+from .lark_client import FeishuApiError
 from .models import (
     BaseRecord,
     CopyResult,
@@ -56,6 +57,8 @@ class SyncedStore(Protocol):
         pending_revision: int | None,
         pending_since: str = "",
     ) -> None: ...
+
+    def delete_state(self, record_id: str, source_token: str) -> None: ...
 
 
 class SyncBusyError(RuntimeError):
@@ -314,6 +317,40 @@ class SyncService:
                 )
                 self._notify(list(self.config.failure_notify_open_ids), card)
 
+    def _handle_deleted_record(
+        self,
+        state: SyncedSheetState,
+        summary: SyncSummary,
+    ) -> None:
+        """
+        功能说明：通知原始记录已删除，并清理对应的 Redis 监听状态。
+
+        参数：
+            state：原记录删除前保存的最新同步状态。
+            summary：用于累计本轮跳过结果的汇总对象。
+
+        返回值：无。
+        """
+        card = build_sync_card(
+            original_name=state.source_name or "未知表格",
+            record_url=state.record_url,
+            target_name=state.target_name,
+            target_url=state.target_url,
+            status="deleted",
+            sync_type="update",
+            target_folder_token=self.config.target_folder_token,
+        )
+        failed_count = self._notify(list(self.config.failure_notify_open_ids), card)
+        self.store.delete_state(state.record_id, state.source_token)
+        summary.skipped += 1
+        self.logger.warning(
+            "Worker 表格检查完成：record_id=%s name=%s result=skipped "
+            "reason=原始记录已删除 redis_key_deleted=true failed_notification_count=%d",
+            state.record_id,
+            state.source_name,
+            failed_count,
+        )
+
     def _check_synced_sheet(
         self,
         state: SyncedSheetState,
@@ -448,6 +485,9 @@ class SyncService:
                 summary,
             )
         except Exception as error:
+            if _is_record_not_found_error(error):
+                self._handle_deleted_record(state, summary)
+                return
             summary.failed += 1
             message = str(error)
             self.logger.error(
@@ -713,6 +753,11 @@ def _finalize_summary_result(summary: SyncSummary) -> None:
     else:
         summary.result = "unchanged"
         summary.reason = "没有需要搬运的新版本"
+
+
+def _is_record_not_found_error(error: Exception) -> bool:
+    """判断飞书多维表错误是否表示原始记录已经删除。"""
+    return isinstance(error, FeishuApiError) and "RecordIdNotFound" in str(error)
 
 
 def format_shanghai_time(value: datetime) -> str:

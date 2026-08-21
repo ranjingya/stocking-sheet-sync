@@ -256,6 +256,18 @@ class RedisStateStore:
         )
         self._write_state(updated)
 
+    def delete_state(self, record_id: str, source_token: str) -> None:
+        """
+        功能说明：删除指定多维表记录与电子表格的监听状态。
+
+        参数：
+            record_id：已经删除的多维表记录 ID。
+            source_token：该记录原先对应的真实电子表格 token。
+
+        返回值：无。
+        """
+        self._redis.delete(self._state_key(record_id, source_token))
+
     def close(self) -> None:
         self._redis.close()
 
