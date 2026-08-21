@@ -128,11 +128,24 @@ def create_app(
         try:
             summary = service.run_record(record_id)
         except SyncBusyError:
-            logger.warning("Webhook 触发时同步任务繁忙：record_id=%s", record_id)
-            return jsonify({"status": "busy", "record_id": record_id}), 409
+            reason = "已有同步任务正在运行"
+            logger.warning(
+                "多维表自动化 Webhook 处理完成：record_id=%s result=busy reason=%s",
+                record_id,
+                reason,
+            )
+            return jsonify(
+                {
+                    "status": "busy",
+                    "result": "busy",
+                    "reason": reason,
+                    "record_id": record_id,
+                }
+            ), 409
         except Exception as error:
             logger.error(
-                "多维表自动化 Webhook 处理失败：record_id=%s reason=%s",
+                "多维表自动化 Webhook 处理完成：record_id=%s "
+                "result=failed reason=%s",
                 record_id,
                 error,
             )
@@ -141,25 +154,35 @@ def create_app(
                 record_id,
                 exc_info=True,
             )
-            return jsonify({"status": "error", "record_id": record_id}), 500
+            return jsonify(
+                {
+                    "status": "error",
+                    "result": "failed",
+                    "reason": str(error),
+                    "record_id": record_id,
+                }
+            ), 500
 
-        response_status = "failed" if summary.failed else "success"
-        status_code = 500 if summary.failed else 200
-        if summary.failed:
-            logger.debug(
-                "多维表自动化 Webhook 返回失败：record_id=%s",
+        response_status = "failed" if summary.result == "failed" else "success"
+        status_code = 500 if summary.result == "failed" else 200
+        if summary.reason:
+            logger.info(
+                "多维表自动化 Webhook 处理完成：record_id=%s result=%s reason=%s",
                 record_id,
+                summary.result,
+                summary.reason,
             )
         else:
-            result = "copied" if summary.copied else "unchanged"
             logger.info(
-                "多维表自动化 Webhook 处理成功：record_id=%s result=%s",
+                "多维表自动化 Webhook 处理完成：record_id=%s result=%s",
                 record_id,
-                result,
+                summary.result,
             )
         return jsonify(
             {
                 "status": response_status,
+                "result": summary.result,
+                "reason": summary.reason,
                 "record_id": record_id,
                 "summary": asdict(summary),
             }

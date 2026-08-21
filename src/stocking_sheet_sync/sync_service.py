@@ -92,7 +92,12 @@ class SyncService:
         summary = SyncSummary()
         lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
         if not self.store.acquire_run_lock(lock_ttl):
-            self.logger.warning("已有同步任务正在运行，本轮跳过")
+            summary.result = "busy"
+            summary.reason = "已有同步任务正在运行"
+            self.logger.warning(
+                "Worker 本轮检查结束：result=busy reason=%s",
+                summary.reason,
+            )
             return summary
 
         try:
@@ -114,6 +119,7 @@ class SyncService:
                     summary,
                     verify_monitor=check_all,
                 )
+            _finalize_summary_result(summary)
             if check_all or states:
                 self.logger.info(
                     "本轮检查完成：检查=%d 无变化=%d 观察中=%d 搬运=%d "
@@ -150,10 +156,13 @@ class SyncService:
                 record.fields,
                 self.config.required_fields,
             ):
-                summary.unchanged += 1
+                summary.skipped += 1
+                summary.result = "skipped"
+                summary.reason = "不符合首次搬运条件"
                 self.logger.debug(
-                    "Webhook 触发记录不符合筛选条件：record_id=%s",
+                    "Webhook 触发记录不符合筛选条件：record_id=%s reason=%s",
                     record.record_id,
+                    summary.reason,
                 )
                 return summary
 
@@ -178,8 +187,14 @@ class SyncService:
         try:
             source = parse_source_sheet(record.fields.get(self.config.link_field_name))
             if source is None:
-                summary.unchanged += 1
-                self.logger.debug("记录没有可同步的表格链接：record_id=%s", record.record_id)
+                summary.skipped += 1
+                summary.result = "skipped"
+                summary.reason = "表格链接为空或格式不支持"
+                self.logger.debug(
+                    "记录没有可同步的表格链接：record_id=%s reason=%s",
+                    record.record_id,
+                    summary.reason,
+                )
                 return
             if not record_url:
                 raise RuntimeError("多维表接口未返回原始记录链接 shared_url")
@@ -192,6 +207,8 @@ class SyncService:
                 resolved.revision,
             ):
                 summary.unchanged += 1
+                summary.result = "unchanged"
+                summary.reason = "当前版本已同步"
                 self.logger.debug(
                     "源表格版本已同步：record_id=%s revision=%d",
                     record.record_id,
@@ -212,7 +229,9 @@ class SyncService:
                         record.record_id,
                         resolved.revision,
                     )
-                summary.unchanged += 1
+                summary.observing += 1
+                summary.result = "observing"
+                summary.reason = "等待静默期结束"
                 return
 
             synced_at = format_shanghai_time(self._now())
@@ -257,6 +276,8 @@ class SyncService:
             )
             failed_count = self._notify(list(self.config.notify_open_ids), card)
             summary.copied += 1
+            summary.result = "copied"
+            summary.reason = ""
             self.logger.debug(
                 "电子表格复制完成：record_id=%s revision=%d target_url=%s "
                 "failed_notification_count=%d",
@@ -268,6 +289,8 @@ class SyncService:
         except Exception as error:
             summary.failed += 1
             message = str(error)
+            summary.result = "failed"
+            summary.reason = message
             self.logger.error(
                 "记录同步失败：record_id=%s reason=%s",
                 record.record_id,
@@ -318,7 +341,7 @@ class SyncService:
                     self.store.save_pending(state, None)
                 summary.skipped += 1
                 self.logger.info(
-                    "跳过监听：record_id=%s name=%s reason=%s",
+                    "Worker 表格检查完成：record_id=%s name=%s result=skipped reason=%s",
                     state.record_id,
                     state.source_name,
                     ineligibility_reason,
@@ -332,7 +355,8 @@ class SyncService:
                 if state.pending_revision is not None:
                     self.store.save_pending(state, None)
                     self.logger.info(
-                        "表格恢复到已同步版本，结束观察：record_id=%s name=%s revision=%d",
+                        "Worker 表格检查完成：record_id=%s name=%s revision=%d "
+                        "result=unchanged reason=表格已恢复到同步版本",
                         state.record_id,
                         state.source_name,
                         online_revision,
@@ -348,7 +372,8 @@ class SyncService:
                 )
                 summary.observing += 1
                 self.logger.info(
-                    "检测到表格变化，开始静默观察：record_id=%s name=%s revision=%d",
+                    "Worker 表格检查完成：record_id=%s name=%s revision=%d "
+                    "result=observing reason=开始静默观察",
                     state.record_id,
                     state.source_name,
                     online_revision,
@@ -363,7 +388,8 @@ class SyncService:
                 )
                 summary.observing += 1
                 self.logger.info(
-                    "观察中的表格再次变化，重新计时：record_id=%s name=%s revision=%d",
+                    "Worker 表格检查完成：record_id=%s name=%s revision=%d "
+                    "result=observing reason=表格再次变化，重新计时",
                     state.record_id,
                     state.source_name,
                     online_revision,
@@ -379,7 +405,8 @@ class SyncService:
                 )
                 summary.observing += 1
                 self.logger.warning(
-                    "表格观察时间无效，重新开始计时：record_id=%s name=%s revision=%d",
+                    "Worker 表格检查完成：record_id=%s name=%s revision=%d "
+                    "result=observing reason=观察时间无效，重新计时",
                     state.record_id,
                     state.source_name,
                     online_revision,
@@ -391,8 +418,8 @@ class SyncService:
             if quiet_duration < required_quiet:
                 summary.observing += 1
                 self.logger.info(
-                    "表格静默观察中：record_id=%s name=%s revision=%d "
-                    "已稳定=%.1f分钟/%.1f分钟",
+                    "Worker 表格检查完成：record_id=%s name=%s revision=%d "
+                    "result=observing reason=静默观察中 已稳定=%.1f分钟/%.1f分钟",
                     state.record_id,
                     state.source_name,
                     online_revision,
@@ -407,7 +434,7 @@ class SyncService:
                 self.store.save_pending(state, None)
                 summary.skipped += 1
                 self.logger.info(
-                    "跳过搬运：record_id=%s name=%s reason=%s",
+                    "Worker 表格检查完成：record_id=%s name=%s result=skipped reason=%s",
                     state.record_id,
                     state.source_name,
                     ineligibility_reason,
@@ -424,7 +451,7 @@ class SyncService:
             summary.failed += 1
             message = str(error)
             self.logger.error(
-                "定时监控表格失败：record_id=%s reason=%s",
+                "Worker 表格检查完成：record_id=%s result=failed reason=%s",
                 state.record_id,
                 message,
             )
@@ -510,8 +537,8 @@ class SyncService:
             copy_version,
         )
         self.logger.info(
-            "表格静默期结束，开始搬运：record_id=%s name=%s revision=%d "
-            "version=v%d target_name=%s",
+            "Worker 开始搬运：record_id=%s name=%s revision=%d version=v%d "
+            "target_name=%s",
             state.record_id,
             source_name,
             revision,
@@ -548,7 +575,8 @@ class SyncService:
         failed_count = self._notify(list(self.config.notify_open_ids), card)
         summary.copied += 1
         self.logger.info(
-            "表格搬运成功：record_id=%s revision=%d version=v%d target_name=%s "
+            "Worker 表格检查完成：record_id=%s revision=%d version=v%d "
+            "target_name=%s result=copied "
             "failed_notification_count=%d",
             state.record_id,
             revision,
@@ -666,6 +694,25 @@ def matches_required_fields(fields: dict[str, Any], required: dict[str, Any]) ->
         _normalize_comparable(fields.get(name)) == _normalize_comparable(expected)
         for name, expected in required.items()
     )
+
+
+def _finalize_summary_result(summary: SyncSummary) -> None:
+    """根据本轮累计数量生成统一的主结果。"""
+    if summary.failed:
+        summary.result = "failed"
+        summary.reason = "存在处理失败的表格"
+    elif summary.copied:
+        summary.result = "copied"
+        summary.reason = ""
+    elif summary.observing:
+        summary.result = "observing"
+        summary.reason = "存在等待静默期结束的表格"
+    elif summary.skipped:
+        summary.result = "skipped"
+        summary.reason = "存在不符合监听条件的表格"
+    else:
+        summary.result = "unchanged"
+        summary.reason = "没有需要搬运的新版本"
 
 
 def format_shanghai_time(value: datetime) -> str:

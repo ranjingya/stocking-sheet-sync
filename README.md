@@ -131,6 +131,9 @@ https://stock-sync.kktree.cn/webhooks/base-record
 
 Webhook 只读取并处理指定记录。以下地址用于负载均衡器或部署平台健康检查：
 
+响应中的 `result` 使用六种统一结果：`copied`、`unchanged`、`observing`、`skipped`、
+`busy`、`failed`。未搬运或处理失败时，`reason` 会说明原因。
+
 ```text
 GET https://stock-sync.kktree.cn/healthz
 ```

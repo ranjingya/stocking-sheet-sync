@@ -278,7 +278,10 @@ def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
 
     assert first.scanned == 1
     assert first.copied == 1
+    assert first.result == "copied"
     assert second.unchanged == 1
+    assert second.result == "unchanged"
+    assert second.reason == "当前版本已同步"
     assert data_client.copy_count == 1
 
 
@@ -296,6 +299,26 @@ def test_webhook_initial_copy_does_not_apply_monitor_fields(tmp_path: Path) -> N
 
     assert summary.copied == 1
     assert data_client.copy_count == 1
+
+
+def test_webhook_reports_skipped_when_required_fields_do_not_match(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    data_client.status = "已完成"
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        summary = service.run_record("rec_test")
+    finally:
+        store.close()
+
+    assert summary.skipped == 1
+    assert summary.result == "skipped"
+    assert summary.reason == "不符合首次搬运条件"
+    assert data_client.copy_count == 0
 
 
 def test_webhook_existing_sheet_enters_quiet_observation_without_copying(
@@ -318,7 +341,9 @@ def test_webhook_existing_sheet_enters_quiet_observation_without_copying(
         store.close()
 
     assert triggered.copied == 0
-    assert triggered.unchanged == 1
+    assert triggered.observing == 1
+    assert triggered.result == "observing"
+    assert triggered.reason == "等待静默期结束"
     assert state is not None and state.pending_revision == 2
     assert copied.copied == 1
     assert data_client.copy_names == ["市场部-备货测试表", "市场部-备货测试表-v2"]
@@ -403,21 +428,21 @@ def test_worker_logs_scan_observation_and_copy_progress(tmp_path: Path, caplog) 
 
     assert changed_messages == [
         "开始常规检查：监听表格=1",
-        "检测到表格变化，开始静默观察：record_id=rec_test "
-        "name=备货测试表 revision=2",
+        "Worker 表格检查完成：record_id=rec_test name=备货测试表 revision=2 "
+        "result=observing reason=开始静默观察",
         "本轮检查完成：检查=1 无变化=0 观察中=1 搬运=0 跳过=0 失败=0",
     ]
     assert unchanged_messages == [
         "开始变动检查：观察中=1",
-        "表格静默观察中：record_id=rec_test name=备货测试表 revision=2 "
-        "已稳定=1.0分钟/10.0分钟",
+        "Worker 表格检查完成：record_id=rec_test name=备货测试表 revision=2 "
+        "result=observing reason=静默观察中 已稳定=1.0分钟/10.0分钟",
         "本轮检查完成：检查=1 无变化=0 观察中=1 搬运=0 跳过=0 失败=0",
     ]
     assert copied_messages == [
         "开始变动检查：观察中=1",
-        "表格静默期结束，开始搬运：record_id=rec_test name=备货测试表 "
+        "Worker 开始搬运：record_id=rec_test name=备货测试表 "
         "revision=2 version=v2 target_name=市场部-备货测试表-v2",
-        "表格搬运成功：record_id=rec_test revision=2 version=v2 "
-        "target_name=市场部-备货测试表-v2 failed_notification_count=0",
+        "Worker 表格检查完成：record_id=rec_test revision=2 version=v2 "
+        "target_name=市场部-备货测试表-v2 result=copied failed_notification_count=0",
         "本轮检查完成：检查=1 无变化=0 观察中=0 搬运=1 跳过=0 失败=0",
     ]

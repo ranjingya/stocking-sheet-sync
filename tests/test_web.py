@@ -15,7 +15,7 @@ class FakeWebhookService:
 
     def run_record(self, record_id: str) -> SyncSummary:
         self.record_ids.append(record_id)
-        return SyncSummary(scanned=1, copied=1)
+        return SyncSummary(scanned=1, copied=1, result="copied")
 
 
 def test_webhook_requires_bearer_secret(tmp_path: Path) -> None:
@@ -49,6 +49,8 @@ def test_webhook_processes_one_record(tmp_path: Path, caplog) -> None:
     )
 
     assert response.status_code == 200
+    assert response.get_json()["result"] == "copied"
+    assert response.get_json()["reason"] == ""
     assert response.get_json()["summary"]["copied"] == 1
     assert service.record_ids == ["rec_test"]
     messages = [
@@ -56,7 +58,7 @@ def test_webhook_processes_one_record(tmp_path: Path, caplog) -> None:
     ]
     assert messages == [
         "收到多维表自动化 Webhook：record_id=rec_test",
-        "多维表自动化 Webhook 处理成功：record_id=rec_test result=copied",
+        "多维表自动化 Webhook 处理完成：record_id=rec_test result=copied",
     ]
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+SyncResult = Literal["copied", "unchanged", "observing", "skipped", "busy", "failed"]
+
 
 @dataclass(frozen=True, slots=True)
 class BaseRecord:
@@ -78,3 +80,5 @@ class SyncSummary:
     observing: int = 0
     skipped: int = 0
     failed: int = 0
+    result: SyncResult = "unchanged"
+    reason: str = ""
