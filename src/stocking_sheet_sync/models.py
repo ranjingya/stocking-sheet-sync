@@ -75,4 +75,6 @@ class SyncSummary:
     scanned: int = 0
     copied: int = 0
     unchanged: int = 0
+    observing: int = 0
+    skipped: int = 0
     failed: int = 0

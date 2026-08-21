@@ -53,6 +53,12 @@ def run(argv: list[str] | None = None) -> int:
     )
     service = SyncService(config, data_client, message_client, store, logger)
     stopping = threading.Event()
+    logger.info(
+        "Worker 启动：常规检查=%.2f分钟 变动检查=%.2f分钟 静默时间=%.2f分钟",
+        config.poll_interval_minutes,
+        config.change_check_interval_minutes,
+        config.change_quiet_minutes,
+    )
 
     def request_stop(signum: int, _frame: object) -> None:
         logger.info("收到退出信号，准备停止程序：signal=%d", signum)

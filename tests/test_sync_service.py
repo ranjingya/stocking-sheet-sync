@@ -184,8 +184,9 @@ def test_worker_waits_until_revision_is_stable_before_copying(tmp_path: Path) ->
 
     assert first.copied == 1
     assert detected.copied == 0
-    assert detected.unchanged == 1
+    assert detected.observing == 1
     assert waiting.copied == 0
+    assert waiting.observing == 1
     assert copied.copied == 1
     assert data_client.copy_count == 2
     assert data_client.copy_names == ["市场部-备货测试表", "市场部-备货测试表-v2"]
@@ -215,7 +216,9 @@ def test_worker_resets_quiet_time_when_revision_changes_again(tmp_path: Path) ->
         store.close()
 
     assert changed_again.copied == 0
+    assert changed_again.observing == 1
     assert waiting.copied == 0
+    assert waiting.observing == 1
     assert copied.copied == 1
     assert data_client.copy_count == 2
 
@@ -323,6 +326,7 @@ def test_worker_stops_pending_copy_when_status_no_longer_matches(tmp_path: Path)
         store.close()
 
     assert skipped.copied == 0
+    assert skipped.skipped == 1
     assert data_client.copy_count == 1
     assert state is not None and state.pending_revision is None
 
@@ -342,10 +346,11 @@ def test_worker_ignores_state_when_record_points_to_another_sheet(tmp_path: Path
         store.close()
 
     assert skipped.copied == 0
+    assert skipped.skipped == 1
     assert data_client.copy_count == 1
 
 
-def test_scheduled_scan_only_logs_when_content_changes(tmp_path: Path, caplog) -> None:
+def test_worker_logs_scan_observation_and_copy_progress(tmp_path: Path, caplog) -> None:
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
@@ -380,10 +385,22 @@ def test_scheduled_scan_only_logs_when_content_changes(tmp_path: Path, caplog) -
         store.close()
 
     assert changed_messages == [
-        "检测到源表格变化，开始静默观察：record_id=rec_test revision=2"
+        "开始常规检查：监听表格=1",
+        "检测到表格变化，开始静默观察：record_id=rec_test "
+        "name=备货测试表 revision=2",
+        "本轮检查完成：检查=1 无变化=0 观察中=1 搬运=0 跳过=0 失败=0",
     ]
-    assert unchanged_messages == []
+    assert unchanged_messages == [
+        "开始变动检查：观察中=1",
+        "表格静默观察中：record_id=rec_test name=备货测试表 revision=2 "
+        "已稳定=1.0分钟/10.0分钟",
+        "本轮检查完成：检查=1 无变化=0 观察中=1 搬运=0 跳过=0 失败=0",
+    ]
     assert copied_messages == [
-        "源表格稳定后同步成功：record_id=rec_test revision=2 "
-        "failed_notification_count=0"
+        "开始变动检查：观察中=1",
+        "表格静默期结束，开始搬运：record_id=rec_test name=备货测试表 "
+        "revision=2 version=v2 target_name=市场部-备货测试表-v2",
+        "表格搬运成功：record_id=rec_test revision=2 version=v2 "
+        "target_name=市场部-备货测试表-v2 failed_notification_count=0",
+        "本轮检查完成：检查=1 无变化=0 观察中=0 搬运=1 跳过=0 失败=0",
     ]

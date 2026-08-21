@@ -95,24 +95,36 @@ class SyncService:
             self.logger.warning("已有同步任务正在运行，本轮跳过")
             return summary
 
-        self.logger.debug("开始检查已接管表格：check_all=%s", check_all)
         try:
-            for state in self.store.list_latest_synced():
-                if not check_all and state.pending_revision is None:
-                    continue
+            all_states = self.store.list_latest_synced()
+            states = (
+                all_states
+                if check_all
+                else [state for state in all_states if state.pending_revision is not None]
+            )
+            if check_all:
+                self.logger.info("开始常规检查：监听表格=%d", len(states))
+            elif states:
+                self.logger.info("开始变动检查：观察中=%d", len(states))
+
+            for state in states:
                 summary.scanned += 1
                 self._check_synced_sheet(
                     state,
                     summary,
                     verify_monitor=check_all,
                 )
-            self.logger.debug(
-                "已接管表格检查完成：scanned=%d copied=%d unchanged=%d failed=%d",
-                summary.scanned,
-                summary.copied,
-                summary.unchanged,
-                summary.failed,
-            )
+            if check_all or states:
+                self.logger.info(
+                    "本轮检查完成：检查=%d 无变化=%d 观察中=%d 搬运=%d "
+                    "跳过=%d 失败=%d",
+                    summary.scanned,
+                    summary.unchanged,
+                    summary.observing,
+                    summary.copied,
+                    summary.skipped,
+                    summary.failed,
+                )
             return summary
         finally:
             self.store.release_run_lock()
@@ -301,14 +313,18 @@ class SyncService:
         """
         now = self._now()
         try:
-            if verify_monitor and not self._is_monitor_eligible(state):
+            ineligibility_reason = (
+                self._monitor_ineligibility_reason(state) if verify_monitor else None
+            )
+            if ineligibility_reason is not None:
                 if state.pending_revision is not None:
                     self.store.save_pending(state, None)
-                summary.unchanged += 1
-                self.logger.debug(
-                    "记录当前不符合监听条件：record_id=%s source_token=%s",
+                summary.skipped += 1
+                self.logger.info(
+                    "跳过监听：record_id=%s name=%s reason=%s",
                     state.record_id,
-                    state.source_token,
+                    state.source_name,
+                    ineligibility_reason,
                 )
                 return
 
@@ -318,9 +334,10 @@ class SyncService:
             if online_revision == state.synced_revision:
                 if state.pending_revision is not None:
                     self.store.save_pending(state, None)
-                    self.logger.debug(
-                        "源表格已恢复到同步版本，清除观察状态：record_id=%s revision=%d",
+                    self.logger.info(
+                        "表格恢复到已同步版本，结束观察：record_id=%s name=%s revision=%d",
                         state.record_id,
+                        state.source_name,
                         online_revision,
                     )
                 summary.unchanged += 1
@@ -332,10 +349,11 @@ class SyncService:
                     online_revision,
                     format_shanghai_time(now),
                 )
-                summary.unchanged += 1
+                summary.observing += 1
                 self.logger.info(
-                    "检测到源表格变化，开始静默观察：record_id=%s revision=%d",
+                    "检测到表格变化，开始静默观察：record_id=%s name=%s revision=%d",
                     state.record_id,
+                    state.source_name,
                     online_revision,
                 )
                 return
@@ -346,10 +364,11 @@ class SyncService:
                     online_revision,
                     format_shanghai_time(now),
                 )
-                summary.unchanged += 1
-                self.logger.debug(
-                    "观察中的源表格再次变化，刷新静默时间：record_id=%s revision=%d",
+                summary.observing += 1
+                self.logger.info(
+                    "观察中的表格再次变化，重新计时：record_id=%s name=%s revision=%d",
                     state.record_id,
+                    state.source_name,
                     online_revision,
                 )
                 return
@@ -361,10 +380,11 @@ class SyncService:
                     online_revision,
                     format_shanghai_time(now),
                 )
-                summary.unchanged += 1
+                summary.observing += 1
                 self.logger.warning(
-                    "源表格观察时间无效，重新开始静默观察：record_id=%s revision=%d",
+                    "表格观察时间无效，重新开始计时：record_id=%s name=%s revision=%d",
                     state.record_id,
+                    state.source_name,
                     online_revision,
                 )
                 return
@@ -372,16 +392,28 @@ class SyncService:
             quiet_duration = now - pending_since.astimezone(UTC)
             required_quiet = timedelta(minutes=self.config.change_quiet_minutes)
             if quiet_duration < required_quiet:
-                summary.unchanged += 1
+                summary.observing += 1
+                self.logger.info(
+                    "表格静默观察中：record_id=%s name=%s revision=%d "
+                    "已稳定=%.1f分钟/%.1f分钟",
+                    state.record_id,
+                    state.source_name,
+                    online_revision,
+                    quiet_duration.total_seconds() / 60,
+                    self.config.change_quiet_minutes,
+                )
                 return
 
-            if not verify_monitor and not self._is_monitor_eligible(state):
+            if not verify_monitor:
+                ineligibility_reason = self._monitor_ineligibility_reason(state)
+            if ineligibility_reason is not None:
                 self.store.save_pending(state, None)
-                summary.unchanged += 1
-                self.logger.debug(
-                    "搬运前记录已不符合监听条件：record_id=%s source_token=%s",
+                summary.skipped += 1
+                self.logger.info(
+                    "跳过搬运：record_id=%s name=%s reason=%s",
                     state.record_id,
-                    state.source_token,
+                    state.source_name,
+                    ineligibility_reason,
                 )
                 return
 
@@ -424,33 +456,35 @@ class SyncService:
                 )
                 self._notify(list(self.config.notify_open_ids), card)
 
-    def _is_monitor_eligible(self, state: SyncedSheetState) -> bool:
+    def _monitor_ineligibility_reason(self, state: SyncedSheetState) -> str | None:
         """
-        功能说明：确认多维表记录状态合格且仍然指向当前监听的电子表格。
+        功能说明：检查多维表记录是否仍符合监听条件，并返回具体跳过原因。
 
         参数：
             state：Redis 中记录 ID 与真实电子表格 token 的对应状态。
 
         返回值：
-            状态字段符合配置且当前链接仍解析到同一 token 时返回 True。
+            符合监听条件时返回 None，否则返回便于日志排查的原因。
         """
         record = self.data_client.get_base_record(state.record_id)
         if not matches_required_fields(
             record.fields,
             self.config.monitor_required_fields,
         ):
-            return False
+            return "状态字段不符合监听条件"
         source = parse_source_sheet(record.fields.get(self.config.link_field_name))
         if source is None:
-            return False
+            return "表格链接为空或格式不支持"
         current_token = source.token
         if source.mention_type == "Wiki":
             current_token, document_type, _title = self.data_client.resolve_wiki_node(
                 source.token
             )
             if document_type != "sheet":
-                return False
-        return current_token == state.source_token
+                return f"链接对应的文档不是电子表格，而是 {document_type}"
+        if current_token != state.source_token:
+            return "记录中的表格链接已更换"
+        return None
 
     def _copy_monitored_sheet(
         self,
@@ -477,6 +511,15 @@ class SyncService:
             self.config.copy_name_prefix,
             source_name,
             copy_version,
+        )
+        self.logger.info(
+            "表格静默期结束，开始搬运：record_id=%s name=%s revision=%d "
+            "version=v%d target_name=%s",
+            state.record_id,
+            source_name,
+            revision,
+            copy_version,
+            copy_name,
         )
         copied = self.data_client.copy_spreadsheet(state.source_token, copy_name)
         target_name = copied.name or copy_name
@@ -508,9 +551,12 @@ class SyncService:
         failed_count = self._notify(list(self.config.notify_open_ids), card)
         summary.copied += 1
         self.logger.info(
-            "源表格稳定后同步成功：record_id=%s revision=%d failed_notification_count=%d",
+            "表格搬运成功：record_id=%s revision=%d version=v%d target_name=%s "
+            "failed_notification_count=%d",
             state.record_id,
             revision,
+            copy_version,
+            target_name,
             failed_count,
         )
 
