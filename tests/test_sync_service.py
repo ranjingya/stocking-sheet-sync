@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -278,6 +279,22 @@ def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
     assert first.scanned == 1
     assert first.copied == 1
     assert second.unchanged == 1
+    assert data_client.copy_count == 1
+
+
+def test_webhook_initial_copy_does_not_apply_monitor_fields(tmp_path: Path) -> None:
+    config = replace(make_config(tmp_path), required_fields={})
+    data_client = FakeClient()
+    data_client.status = "已完成"
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        summary = service.run_record("rec_test")
+    finally:
+        store.close()
+
+    assert summary.copied == 1
     assert data_client.copy_count == 1
 
 

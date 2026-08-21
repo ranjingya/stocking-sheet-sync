@@ -149,9 +149,6 @@ class SyncService:
             if not matches_required_fields(
                 record.fields,
                 self.config.required_fields,
-            ) or not matches_required_fields(
-                record.fields,
-                self.config.monitor_required_fields,
             ):
                 summary.unchanged += 1
                 self.logger.debug(
