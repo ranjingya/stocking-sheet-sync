@@ -106,37 +106,6 @@ def test_redis_store_expires_after_three_natural_days_without_extension() -> Non
     assert "ss:rec_test:source-token" not in client.strings
 
 
-def test_redis_store_migrates_unexpired_legacy_hash() -> None:
-    client = FakeRedis()
-    legacy_hash = client.hashes.setdefault("stocking-sheet-sync:synced", {})
-    for revision in (4, 7):
-        legacy_hash[f"rec_test:source-token:{revision}"] = json.dumps(
-            {
-                "source_name": "备货测试表",
-                "source_url": "https://example.feishu.cn/sheets/source-token",
-                "record_url": "https://example.feishu.cn/record/rec_test",
-                "target_name": f"市场部-备货测试表-v{revision}",
-                "target_url": f"https://example.feishu.cn/sheets/target-{revision}",
-                "synced_at": "2026-08-21T10:00:00+08:00",
-            }
-        )
-
-    store = RedisStateStore(
-        "redis://localhost:6379/0",
-        "ss",
-        legacy_hash_key="stocking-sheet-sync:synced",
-        client=client,
-        now_provider=MutableClock(),
-    )
-    state = store.get_state("rec_test", "source-token")
-
-    assert state is not None
-    assert state.synced_revision == 7
-    assert len(state.versions) == 2
-    assert store.next_copy_version("rec_test", "source-token") == 3
-    assert "stocking-sheet-sync:synced" in client.hashes
-
-
 def test_redis_lock_is_released_only_by_owner() -> None:
     client = FakeRedis()
     first = RedisStateStore("redis://localhost:6379/0", "ss", client=client)

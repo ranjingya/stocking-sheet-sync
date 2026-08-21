@@ -28,10 +28,9 @@ open_ids = [
   "ou_yyyyyyyyyyyyyyyy",
 ]
 
-# Redis String 键命名空间；旧 Hash 仅用于自动迁移
+# Redis String 键命名空间
 [redis]
 key_prefix = "ss"
-legacy_hash_key = "stocking-sheet-sync:synced"
 
 # Webhook 对外服务地址
 [web]

@@ -33,7 +33,6 @@ class AppConfig:
     change_quiet_minutes: float
     redis_url: str
     redis_key_prefix: str
-    redis_legacy_hash_key: str | None
     request_timeout_seconds: float
     max_retries: int
     log_level: str
@@ -118,7 +117,6 @@ def load_config(
         ),
         redis_url=(environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"),
         redis_key_prefix=_parse_key_prefix(redis.get("key_prefix")),
-        redis_legacy_hash_key=_optional_text(redis.get("legacy_hash_key")),
         request_timeout_seconds=_positive_float(
             runtime.get("request_timeout_seconds", 15), "runtime.request_timeout_seconds"
         ),

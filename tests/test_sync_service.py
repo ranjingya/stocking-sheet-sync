@@ -113,7 +113,6 @@ def make_config(tmp_path: Path) -> AppConfig:
         change_quiet_minutes=10,
         redis_url="redis://localhost:6379/0",
         redis_key_prefix="stocking-sheet-sync-test",
-        redis_legacy_hash_key=None,
         request_timeout_seconds=15,
         max_retries=3,
         log_level="INFO",

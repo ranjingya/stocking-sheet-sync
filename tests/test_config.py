@@ -26,7 +26,6 @@ open_ids = ["ou_first", "ou_second", "ou_first"]
 
 [redis]
 key_prefix = "ss-test"
-legacy_hash_key = "stocking-sheet-sync-test:synced"
 
 [web]
 public_base_url = "https://stock-sync.example.com"
@@ -68,7 +67,6 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
     assert config.notify_open_ids == ("ou_first", "ou_second")
     assert config.redis_url == "redis://redis.example:6379/2"
     assert config.redis_key_prefix == "ss-test"
-    assert config.redis_legacy_hash_key == "stocking-sheet-sync-test:synced"
     assert config.poll_interval_minutes == 30
     assert config.change_check_interval_minutes == 1
     assert config.change_quiet_minutes == 10

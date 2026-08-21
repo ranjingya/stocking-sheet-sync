@@ -29,7 +29,6 @@ class RedisStateStore:
         key_prefix: str,
         *,
         monitor_days: int = 3,
-        legacy_hash_key: str | None = None,
         socket_timeout_seconds: float = 5,
         client: Any | None = None,
         logger: logging.Logger | None = None,
@@ -42,7 +41,6 @@ class RedisStateStore:
         if monitor_days < 1:
             raise ValueError("Redis monitor_days 必须为正整数")
         self._monitor_days = monitor_days
-        self._legacy_hash_key = (legacy_hash_key or "").strip()
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self._lock_token: str | None = None
         self._redis = client or Redis.from_url(
@@ -54,7 +52,6 @@ class RedisStateStore:
         )
         self._redis.ping()
         self._logger.debug("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
-        self._migrate_legacy_hash()
 
     def acquire_run_lock(self, ttl_minutes: float) -> bool:
         """
@@ -363,95 +360,6 @@ class RedisStateStore:
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
-
-    def _migrate_legacy_hash(self) -> None:
-        if not self._legacy_hash_key:
-            return
-        grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
-        for sync_id, raw in self._redis.hgetall(self._legacy_hash_key).items():
-            parsed = parse_sync_id(sync_id)
-            if parsed is None:
-                continue
-            try:
-                value = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if not isinstance(value, dict) or not _string_value(value.get("target_url")):
-                continue
-            record_id, source_token, revision = parsed
-            grouped.setdefault((record_id, source_token), []).append((revision, value))
-
-        migrated = 0
-        for (record_id, source_token), entries in grouped.items():
-            entries.sort(key=lambda item: item[0])
-            dated_entries = [
-                (revision, value)
-                for revision, value in entries
-                if parse_state_time(_string_value(value.get("synced_at"))) is not None
-            ]
-            monitor_started_at = min(
-                (_string_value(value.get("synced_at")) for _, value in dated_entries),
-                key=lambda item: parse_state_time(item) or self._now(),
-                default=format_state_time(self._now()),
-            )
-            monitor_expires_at = format_state_time(
-                self._monitor_expiration(monitor_started_at)
-            )
-            if (parse_state_time(monitor_expires_at) or self._now()) <= self._now():
-                continue
-
-            versions: list[dict[str, Any]] = []
-            for index, (revision, value) in enumerate(entries, start=1):
-                versions.append(
-                    {
-                        "revision": revision,
-                        "copy_version": _positive_int(value.get("copy_version")) or index,
-                        "target_name": _string_value(value.get("target_name")),
-                        "target_url": _string_value(value.get("target_url")),
-                        "synced_at": _string_value(value.get("synced_at")),
-                    }
-                )
-            latest_revision, latest = entries[-1]
-            latest_version = versions[-1]
-            state = SyncedSheetState(
-                record_id=record_id,
-                source_token=source_token,
-                synced_revision=latest_revision,
-                source_name=_string_value(latest.get("source_name")),
-                source_url=_string_value(latest.get("source_url")),
-                record_url=_string_value(latest.get("record_url")),
-                target_name=_string_value(latest_version.get("target_name")),
-                target_url=_string_value(latest_version.get("target_url")),
-                synced_at=_string_value(latest_version.get("synced_at")),
-                copy_version=_positive_int(latest_version.get("copy_version")) or len(versions),
-                monitor_started_at=monitor_started_at,
-                monitor_expires_at=monitor_expires_at,
-                pending_revision=_optional_int(latest.get("pending_revision")),
-                pending_since=_string_value(latest.get("pending_since")),
-                versions=tuple(versions),
-            )
-            if self._write_state(state, nx=True):
-                migrated += 1
-        if migrated:
-            self._logger.info("旧 Redis Hash 迁移完成：migrated=%d", migrated)
-
-
-def make_sync_id(record_id: str, source_token: str, source_revision: int) -> str:
-    return f"{record_id}:{source_token}:{source_revision}"
-
-
-def parse_sync_id(sync_id: str) -> tuple[str, str, int] | None:
-    parts = sync_id.split(":")
-    if len(parts) != 3 or not parts[0] or not parts[1]:
-        return None
-    try:
-        revision = int(parts[2])
-    except ValueError:
-        return None
-    if revision < 0:
-        return None
-    return parts[0], parts[1], revision
-
 
 def format_state_time(value: datetime) -> str:
     return value.astimezone(_SHANGHAI_TIMEZONE).isoformat(timespec="seconds")
