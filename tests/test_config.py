@@ -23,6 +23,7 @@ copy_name_prefix = "市场部-"
 
 [notifications]
 open_ids = ["ou_first", "ou_second", "ou_first"]
+failure_open_ids = ["ou_failure", "ou_failure"]
 
 [redis]
 key_prefix = "ss-test"
@@ -65,6 +66,7 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
     assert config.monitor_required_fields == {"状态": "需求收集"}
     assert config.monitor_days == 3
     assert config.notify_open_ids == ("ou_first", "ou_second")
+    assert config.failure_notify_open_ids == ("ou_failure",)
     assert config.redis_url == "redis://redis.example:6379/2"
     assert config.redis_key_prefix == "ss-test"
     assert config.poll_interval_minutes == 30

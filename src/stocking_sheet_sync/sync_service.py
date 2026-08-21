@@ -301,7 +301,7 @@ class SyncService:
                 record.record_id,
                 exc_info=True,
             )
-            if record_url and self.config.notify_open_ids:
+            if record_url and self.config.failure_notify_open_ids:
                 card = build_sync_card(
                     original_name=(
                         resolved.title if resolved else source.title if source else "未知表格"
@@ -312,7 +312,7 @@ class SyncService:
                     target_folder_token=self.config.target_folder_token,
                     reason=message,
                 )
-                self._notify(list(self.config.notify_open_ids), card)
+                self._notify(list(self.config.failure_notify_open_ids), card)
 
     def _check_synced_sheet(
         self,
@@ -469,7 +469,7 @@ class SyncService:
                     )
                 except Exception:
                     self.logger.debug("刷新观察重试时间失败", exc_info=True)
-            if state.record_url and self.config.notify_open_ids:
+            if state.record_url and self.config.failure_notify_open_ids:
                 card = build_sync_card(
                     original_name=state.source_name or "未知表格",
                     record_url=state.record_url,
@@ -478,7 +478,7 @@ class SyncService:
                     target_folder_token=self.config.target_folder_token,
                     reason=message,
                 )
-                self._notify(list(self.config.notify_open_ids), card)
+                self._notify(list(self.config.failure_notify_open_ids), card)
 
     def _monitor_ineligibility_reason(self, state: SyncedSheetState) -> str | None:
         """

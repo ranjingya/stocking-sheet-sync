@@ -23,6 +23,7 @@ class FakeClient:
         self.list_count = 0
         self.status = "需求收集"
         self.source_token = "source-token"
+        self.copy_error = ""
 
     def list_base_records(self) -> list[BaseRecord]:
         self.list_count += 1
@@ -67,6 +68,8 @@ class FakeClient:
         return self.revision, "备货测试表"
 
     def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult:
+        if self.copy_error:
+            raise RuntimeError(self.copy_error)
         self.copy_count += 1
         self.copy_names.append(copy_name)
         return CopyResult(
@@ -109,6 +112,7 @@ def make_config(tmp_path: Path) -> AppConfig:
         target_folder_token="folder-token",
         copy_name_prefix="市场部-",
         notify_open_ids=("ou_test",),
+        failure_notify_open_ids=("ou_failure",),
         poll_interval_minutes=30,
         change_check_interval_minutes=1,
         change_quiet_minutes=10,
@@ -319,6 +323,23 @@ def test_webhook_reports_skipped_when_required_fields_do_not_match(
     assert summary.result == "skipped"
     assert summary.reason == "不符合首次搬运条件"
     assert data_client.copy_count == 0
+
+
+def test_sync_failure_only_notifies_failure_recipients(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    data_client.copy_error = "没有复制权限"
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        summary = service.run_record("rec_test")
+    finally:
+        store.close()
+
+    assert summary.result == "failed"
+    assert message_client.sent_to == ["ou_failure"]
+    assert "ou_test" not in message_client.sent_to
 
 
 def test_webhook_existing_sheet_enters_quiet_observation_without_copying(

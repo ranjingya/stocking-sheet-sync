@@ -28,6 +28,11 @@ open_ids = [
   "ou_yyyyyyyyyyyyyyyy",
 ]
 
+# 同步失败通知接收人；可以与成功通知列表不同
+failure_open_ids = [
+  "ou_xxxxxxxxxxxxxxxx",
+]
+
 # Redis String 键命名空间
 [redis]
 key_prefix = "ss"

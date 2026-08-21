@@ -49,8 +49,8 @@ Worker 只监控 Redis 中已经登记且未过期的表格，不扫描多维表
 - 确保数据应用可以向目标共享文件夹写入文件。
 - 为消息应用启用机器人能力并发布，让通知接收人在消息应用可用范围内。
 
-`open_id` 与应用有关。`notifications.open_ids` 必须使用消息应用获取的
-`open_id`，不能直接复用集成平台生成的 `anycross_user_*` ID。
+`open_id` 与应用有关。`notifications.open_ids` 和 `notifications.failure_open_ids`
+必须使用消息应用获取的 `open_id`，不能直接复用集成平台生成的 `anycross_user_*` ID。
 
 ## 安装
 
@@ -72,7 +72,7 @@ cp config.example.toml config.toml
 
 - `[source]`：源多维表、链接字段、监听状态条件和监听自然日数。
 - `[target]`：目标共享文件夹及副本名前缀。
-- `[notifications]`：逐人通知使用的 `open_id` 数组。
+- `[notifications]`：`open_ids` 接收成功通知，`failure_open_ids` 接收失败通知。
 - `[redis]`：Redis 键命名空间。
 - `[runtime]`：常规检查间隔、变动检查间隔、静默时间、超时、重试和日志级别。
 - `[web]`：Webhook 对外 HTTPS 地址。

@@ -28,6 +28,7 @@ class AppConfig:
     target_folder_token: str
     copy_name_prefix: str
     notify_open_ids: tuple[str, ...]
+    failure_notify_open_ids: tuple[str, ...]
     poll_interval_minutes: float
     change_check_interval_minutes: float
     change_quiet_minutes: float
@@ -104,7 +105,14 @@ def load_config(
         monitor_days=_positive_int(source.get("monitor_days", 3), "source.monitor_days"),
         target_folder_token=_required_text(target, "folder_token", "target.folder_token"),
         copy_name_prefix=_text(target.get("copy_name_prefix", "市场部-")),
-        notify_open_ids=_parse_open_ids(notifications.get("open_ids", [])),
+        notify_open_ids=_parse_open_ids(
+            notifications.get("open_ids", []),
+            "notifications.open_ids",
+        ),
+        failure_notify_open_ids=_parse_open_ids(
+            notifications.get("failure_open_ids", []),
+            "notifications.failure_open_ids",
+        ),
         poll_interval_minutes=_positive_float(
             runtime.get("poll_interval_minutes", 30), "runtime.poll_interval_minutes"
         ),
@@ -199,13 +207,13 @@ def _positive_int(value: object, field_name: str) -> int:
     return int(parsed)
 
 
-def _parse_open_ids(value: object) -> tuple[str, ...]:
+def _parse_open_ids(value: object, field_name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError("notifications.open_ids 必须是字符串数组")
+        raise ValueError(f"{field_name} 必须是字符串数组")
     open_ids = tuple(dict.fromkeys(item.strip() for item in value if item.strip()))
     invalid = [item for item in open_ids if not re.fullmatch(r"ou_[A-Za-z0-9_-]+", item)]
     if invalid:
-        raise ValueError(f"notifications.open_ids 中存在格式错误的 open_id：{', '.join(invalid)}")
+        raise ValueError(f"{field_name} 中存在格式错误的 open_id：{', '.join(invalid)}")
     return open_ids
 
 
