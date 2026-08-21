@@ -206,6 +206,8 @@ class SyncService:
                 target_name=target_name,
                 target_url=copied.url,
                 status="success",
+                sync_type="initial",
+                target_folder_token=self.config.target_folder_token,
             )
             failed_count = self._notify(list(self.config.notify_open_ids), card)
             summary.copied += 1
@@ -237,6 +239,8 @@ class SyncService:
                     ),
                     record_url=record_url,
                     status="failure",
+                    sync_type="initial",
+                    target_folder_token=self.config.target_folder_token,
                     reason=message,
                 )
                 self._notify(list(self.config.notify_open_ids), card)
@@ -353,6 +357,8 @@ class SyncService:
                     original_name=state.source_name or "未知表格",
                     record_url=state.record_url,
                     status="failure",
+                    sync_type="update",
+                    target_folder_token=self.config.target_folder_token,
                     reason=message,
                 )
                 self._notify(list(self.config.notify_open_ids), card)
@@ -399,6 +405,8 @@ class SyncService:
             target_name=target_name,
             target_url=copied.url,
             status="success",
+            sync_type="update",
+            target_folder_token=self.config.target_folder_token,
         )
         failed_count = self._notify(list(self.config.notify_open_ids), card)
         summary.copied += 1

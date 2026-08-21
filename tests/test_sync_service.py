@@ -102,9 +102,9 @@ def make_config(tmp_path: Path) -> AppConfig:
         target_folder_token="folder-token",
         copy_name_prefix="市场部-",
         notify_open_ids=("ou_test",),
-        poll_interval_minutes=5,
+        poll_interval_minutes=30,
         change_check_interval_minutes=1,
-        change_quiet_minutes=5,
+        change_quiet_minutes=10,
         redis_url="redis://localhost:6379/0",
         redis_key_prefix="stocking-sheet-sync-test",
         request_timeout_seconds=15,
@@ -163,7 +163,7 @@ def test_worker_waits_until_revision_is_stable_before_copying(tmp_path: Path) ->
         first = service.run_record("rec_test")
         data_client.revision = 2
         detected = service.run_once(check_all=True)
-        clock.advance(minutes=4)
+        clock.advance(minutes=9)
         waiting = service.run_once(check_all=False)
         clock.advance(minutes=1)
         copied = service.run_once(check_all=False)
@@ -191,10 +191,10 @@ def test_worker_resets_quiet_time_when_revision_changes_again(tmp_path: Path) ->
         service.run_record("rec_test")
         data_client.revision = 2
         service.run_once(check_all=True)
-        clock.advance(minutes=4)
+        clock.advance(minutes=9)
         data_client.revision = 3
         changed_again = service.run_once(check_all=False)
-        clock.advance(minutes=4)
+        clock.advance(minutes=9)
         waiting = service.run_once(check_all=False)
         clock.advance(minutes=1)
         copied = service.run_once(check_all=False)
@@ -267,7 +267,7 @@ def test_scheduled_scan_only_logs_when_content_changes(tmp_path: Path, caplog) -
         ]
 
         caplog.clear()
-        clock.advance(minutes=4)
+        clock.advance(minutes=9)
         service.run_once(check_all=False)
         copied_messages = [
             record.getMessage() for record in caplog.records if record.name == logger.name

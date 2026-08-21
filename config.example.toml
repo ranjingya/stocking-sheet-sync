@@ -34,9 +34,9 @@ public_base_url = "https://stock-sync.example.com"
 
 # 程序运行参数
 [runtime]
-poll_interval_minutes = 5
+poll_interval_minutes = 30
 change_check_interval_minutes = 1
-change_quiet_minutes = 5
+change_quiet_minutes = 10
 request_timeout_seconds = 15
 max_retries = 3
 log_level = "INFO"

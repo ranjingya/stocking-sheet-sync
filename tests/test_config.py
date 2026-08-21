@@ -29,9 +29,9 @@ key_prefix = "stocking-sheet-sync-test"
 public_base_url = "https://stock-sync.example.com"
 
 [runtime]
-poll_interval_minutes = 5
+poll_interval_minutes = 30
 change_check_interval_minutes = 1
-change_quiet_minutes = 5
+change_quiet_minutes = 10
 request_timeout_seconds = 20
 max_retries = 4
 log_level = "WARNING"
@@ -63,9 +63,9 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
     assert config.notify_open_ids == ("ou_first", "ou_second")
     assert config.redis_url == "redis://redis.example:6379/2"
     assert config.redis_key_prefix == "stocking-sheet-sync-test"
-    assert config.poll_interval_minutes == 5
+    assert config.poll_interval_minutes == 30
     assert config.change_check_interval_minutes == 1
-    assert config.change_quiet_minutes == 5
+    assert config.change_quiet_minutes == 10
     assert config.log_level == "WARNING"
     assert config.public_base_url == "https://stock-sync.example.com"
     assert config.webhook_secret == "webhook-secret"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 
 def build_sync_card(
@@ -10,6 +11,8 @@ def build_sync_card(
     original_name: str,
     record_url: str,
     status: Literal["success", "failure"],
+    sync_type: Literal["initial", "update"],
+    target_folder_token: str,
     target_name: str = "",
     target_url: str = "",
     reason: str = "",
@@ -21,6 +24,8 @@ def build_sync_card(
         original_name：原文档名称。
         record_url：原多维表记录链接。
         status：同步状态，支持 success 或 failure。
+        sync_type：同步场景，支持 initial 首次同步或 update 更新同步。
+        target_folder_token：目标共享文件夹 token。
         target_name：同步后表格名称，成功时必填。
         target_url：同步后表格链接，成功时必填。
         reason：失败原因，失败时必填。
@@ -31,9 +36,12 @@ def build_sync_card(
     success = status == "success"
     if status not in {"success", "failure"}:
         raise ValueError("status 必须填写 success 或 failure")
+    if sync_type not in {"initial", "update"}:
+        raise ValueError("sync_type 必须填写 initial 或 update")
 
     original_name = _escape_markdown(_clean_text(original_name))
     record_url = _validate_url(record_url, "原始记录链接")
+    folder_url = _build_folder_url(record_url, target_folder_token)
     target_name = _escape_markdown(_clean_text(target_name))
     target_url = _validate_url(target_url, "同步表格链接") if target_url else ""
     reason = _escape_markdown(_clean_text(reason))
@@ -45,17 +53,20 @@ def build_sync_card(
     if not success and not reason:
         raise ValueError("同步失败时失败原因不能为空")
 
-    result_text = "同步成功" if success else "同步失败"
+    scene_text = "首次同步" if sync_type == "initial" else "更新"
+    result_text = f"{scene_text}{'成功' if success else '失败'}"
     if success:
+        target_label = "同步副本" if sync_type == "initial" else "最新副本"
         detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n同步表格： [{target_name}]({target_url})"
+            f"原始记录： [{original_name}]({record_url})\n"
+            f"{target_label}： [{target_name}]({target_url})"
         )
-        action_text = "查看同步表格"
+        action_text = "查看同步副本" if sync_type == "initial" else "查看最新副本"
         action_url = target_url
     else:
         detail_content = (
             f"原始记录： [{original_name}]({record_url})\n"
-            "同步表格： 未生成\n"
+            "同步副本： 未生成\n"
             f"失败原因： <font color='red'>{reason}</font>"
         )
         action_text = "查看原始记录"
@@ -70,7 +81,9 @@ def build_sync_card(
         },
         "header": {
             "title": {"tag": "plain_text", "content": f"产品下单同步 · {result_text}"},
-            "template": "green" if success else "red",
+            "template": (
+                "yellow" if success and sync_type == "update" else "green" if success else "red"
+            ),
         },
         "body": {
             "direction": "vertical",
@@ -78,16 +91,52 @@ def build_sync_card(
             "elements": [
                 {"tag": "markdown", "content": detail_content},
                 {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": action_text},
-                    "type": "primary" if success else "danger",
-                    "size": "medium",
-                    "width": "default",
-                    "behaviors": [{"type": "open_url", "default_url": action_url}],
-                },
+                    "tag": "column_set",
+                    "flex_mode": "none",
+                    "horizontal_spacing": "8px",
+                    "columns": [
+                        {
+                            "tag": "column",
+                            "width": "auto",
+                            "elements": [
+                                _build_button(
+                                    action_text,
+                                    action_url,
+                                    "primary" if success else "danger",
+                                )
+                            ],
+                        },
+                        {
+                            "tag": "column",
+                            "width": "auto",
+                            "elements": [
+                                _build_button("打开目标文件夹", folder_url, "default")
+                            ],
+                        },
+                    ],
+                }
             ],
         },
     }
+
+
+def _build_button(text: str, url: str, button_type: str) -> dict[str, Any]:
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": text},
+        "type": button_type,
+        "size": "medium",
+        "width": "default",
+        "behaviors": [{"type": "open_url", "default_url": url}],
+    }
+
+
+def _build_folder_url(reference_url: str, folder_token: str) -> str:
+    token = _clean_text(folder_token)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        raise ValueError("目标文件夹 token 格式无效")
+    parsed = urlsplit(reference_url)
+    return f"{parsed.scheme}://{parsed.netloc}/drive/folder/{token}"
 
 
 def _clean_text(value: object) -> str:
