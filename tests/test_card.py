@@ -13,6 +13,8 @@ def test_build_success_card_contains_record_and_target_links() -> None:
     )
 
     assert card["header"]["template"] == "green"
+    assert card["header"]["title"]["content"] == "产品下单同步 · 同步成功"
+    assert card["config"]["summary"]["content"] == "产品下单同步 · 同步成功"
     content = card["body"]["elements"][0]["content"]
     assert "备货测试表" in content
     assert "record-token" in content

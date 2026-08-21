@@ -53,8 +53,11 @@ def build_sync_card(
     if not success and not reason:
         raise ValueError("同步失败时失败原因不能为空")
 
-    scene_text = "首次同步" if sync_type == "initial" else "更新"
-    result_text = f"{scene_text}{'成功' if success else '失败'}"
+    result_text = (
+        f"同步{'成功' if success else '失败'}"
+        if sync_type == "initial"
+        else f"更新{'成功' if success else '失败'}"
+    )
     if success:
         target_label = "同步副本" if sync_type == "initial" else "最新副本"
         detail_content = (
