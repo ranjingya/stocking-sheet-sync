@@ -12,6 +12,10 @@ link_field_name = "下单表格"
 # 只处理符合这些条件的记录；不需要过滤时填写空对象 {}
 required_fields = { "状态" = "需求收集", "下单状态" = "未完成" }
 
+# 已接管表格只有在记录仍符合这些条件时才继续监听
+monitor_required_fields = { "状态" = "需求收集" }
+monitor_days = 3
+
 # 目标共享文件夹
 [target]
 folder_token = "xxxxxxxxxxxxxxxx"
@@ -24,9 +28,10 @@ open_ids = [
   "ou_yyyyyyyyyyyyyyyy",
 ]
 
-# Redis 键命名空间；已同步版本保存在 stocking-sheet-sync:synced
+# Redis String 键命名空间；旧 Hash 仅用于自动迁移
 [redis]
-key_prefix = "stocking-sheet-sync"
+key_prefix = "ss"
+legacy_hash_key = "stocking-sheet-sync:synced"
 
 # Webhook 对外服务地址
 [web]

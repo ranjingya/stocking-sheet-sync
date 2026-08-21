@@ -47,6 +47,8 @@ class SyncedRecord:
     target_url: str
     synced_at: str
     copy_version: int = 1
+    monitor_started_at: str = ""
+    monitor_expires_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +62,12 @@ class SyncedSheetState:
     target_name: str
     target_url: str
     synced_at: str
+    copy_version: int = 1
+    monitor_started_at: str = ""
+    monitor_expires_at: str = ""
     pending_revision: int | None = None
     pending_since: str = ""
+    versions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(slots=True)

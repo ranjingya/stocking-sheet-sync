@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import fnmatch
+
 
 class FakeRedis:
     def __init__(self) -> None:
         self.strings: dict[str, str] = {}
         self.hashes: dict[str, dict[str, str]] = {}
+        self.expirations: dict[str, int] = {}
 
     def ping(self) -> bool:
         return True
@@ -22,6 +25,27 @@ class FakeRedis:
             return None
         self.strings[key] = value
         return True
+
+    def get(self, key: str) -> str | None:
+        return self.strings.get(key)
+
+    def delete(self, key: str) -> int:
+        existed = key in self.strings or key in self.hashes
+        self.strings.pop(key, None)
+        self.hashes.pop(key, None)
+        self.expirations.pop(key, None)
+        return int(existed)
+
+    def expireat(self, key: str, timestamp: int) -> bool:
+        if key not in self.strings:
+            return False
+        self.expirations[key] = timestamp
+        return True
+
+    def scan_iter(self, *, match: str):
+        for key in list(self.strings):
+            if fnmatch.fnmatch(key, match):
+                yield key
 
     def eval(self, script: str, key_count: int, key: str, token: str) -> int:
         del script, key_count

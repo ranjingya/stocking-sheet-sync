@@ -42,6 +42,8 @@ class SyncedStore(Protocol):
 
     def is_synced(self, record_id: str, source_token: str, source_revision: int) -> bool: ...
 
+    def get_state(self, record_id: str, source_token: str) -> SyncedSheetState | None: ...
+
     def save_synced(self, record: SyncedRecord) -> None: ...
 
     def next_copy_version(self, record_id: str, source_token: str) -> int: ...
@@ -99,7 +101,11 @@ class SyncService:
                 if not check_all and state.pending_revision is None:
                     continue
                 summary.scanned += 1
-                self._check_synced_sheet(state, summary)
+                self._check_synced_sheet(
+                    state,
+                    summary,
+                    verify_monitor=check_all,
+                )
             self.logger.debug(
                 "已接管表格检查完成：scanned=%d copied=%d unchanged=%d failed=%d",
                 summary.scanned,
@@ -128,7 +134,13 @@ class SyncService:
         self.logger.debug("开始处理 Webhook 触发记录：record_id=%s", record_id)
         try:
             record = self.data_client.get_base_record(record_id)
-            if not matches_required_fields(record.fields, self.config.required_fields):
+            if not matches_required_fields(
+                record.fields,
+                self.config.required_fields,
+            ) or not matches_required_fields(
+                record.fields,
+                self.config.monitor_required_fields,
+            ):
                 summary.unchanged += 1
                 self.logger.debug(
                     "Webhook 触发记录不符合筛选条件：record_id=%s",
@@ -164,6 +176,7 @@ class SyncService:
                 raise RuntimeError("多维表接口未返回原始记录链接 shared_url")
 
             resolved = self._resolve_source(source)
+            current_state = self.store.get_state(record.record_id, resolved.token)
             if self.store.is_synced(
                 record.record_id,
                 resolved.token,
@@ -175,6 +188,22 @@ class SyncService:
                     record.record_id,
                     resolved.revision,
                 )
+                return
+
+            if current_state is not None:
+                if current_state.pending_revision != resolved.revision:
+                    self.store.save_pending(
+                        current_state,
+                        resolved.revision,
+                        format_shanghai_time(self._now()),
+                    )
+                    self.logger.info(
+                        "Webhook 检测到已监听表格变化，开始静默观察："
+                        "record_id=%s revision=%d",
+                        record.record_id,
+                        resolved.revision,
+                    )
+                summary.unchanged += 1
                 return
 
             synced_at = format_shanghai_time(self._now())
@@ -257,6 +286,8 @@ class SyncService:
         self,
         state: SyncedSheetState,
         summary: SyncSummary,
+        *,
+        verify_monitor: bool,
     ) -> None:
         """
         功能说明：检查一张已接管表格，并维护 revision 静默观察状态。
@@ -264,11 +295,23 @@ class SyncService:
         参数：
             state：Redis 中该表格的最新同步状态。
             summary：用于累计本轮处理结果的汇总对象。
+            verify_monitor：本轮是否需要重新验证记录状态和当前表格链接。
 
         返回值：无。
         """
         now = self._now()
         try:
+            if verify_monitor and not self._is_monitor_eligible(state):
+                if state.pending_revision is not None:
+                    self.store.save_pending(state, None)
+                summary.unchanged += 1
+                self.logger.debug(
+                    "记录当前不符合监听条件：record_id=%s source_token=%s",
+                    state.record_id,
+                    state.source_token,
+                )
+                return
+
             online_revision, metadata_title = self.data_client.get_spreadsheet_revision(
                 state.source_token
             )
@@ -332,6 +375,16 @@ class SyncService:
                 summary.unchanged += 1
                 return
 
+            if not verify_monitor and not self._is_monitor_eligible(state):
+                self.store.save_pending(state, None)
+                summary.unchanged += 1
+                self.logger.debug(
+                    "搬运前记录已不符合监听条件：record_id=%s source_token=%s",
+                    state.record_id,
+                    state.source_token,
+                )
+                return
+
             self._copy_monitored_sheet(
                 state,
                 online_revision,
@@ -370,6 +423,34 @@ class SyncService:
                     reason=message,
                 )
                 self._notify(list(self.config.notify_open_ids), card)
+
+    def _is_monitor_eligible(self, state: SyncedSheetState) -> bool:
+        """
+        功能说明：确认多维表记录状态合格且仍然指向当前监听的电子表格。
+
+        参数：
+            state：Redis 中记录 ID 与真实电子表格 token 的对应状态。
+
+        返回值：
+            状态字段符合配置且当前链接仍解析到同一 token 时返回 True。
+        """
+        record = self.data_client.get_base_record(state.record_id)
+        if not matches_required_fields(
+            record.fields,
+            self.config.monitor_required_fields,
+        ):
+            return False
+        source = parse_source_sheet(record.fields.get(self.config.link_field_name))
+        if source is None:
+            return False
+        current_token = source.token
+        if source.mention_type == "Wiki":
+            current_token, document_type, _title = self.data_client.resolve_wiki_node(
+                source.token
+            )
+            if document_type != "sheet":
+                return False
+        return current_token == state.source_token
 
     def _copy_monitored_sheet(
         self,
@@ -411,6 +492,8 @@ class SyncService:
                 target_url=copied.url,
                 synced_at=format_shanghai_time(self._now()),
                 copy_version=copy_version,
+                monitor_started_at=state.monitor_started_at,
+                monitor_expires_at=state.monitor_expires_at,
             )
         )
         card = build_sync_card(

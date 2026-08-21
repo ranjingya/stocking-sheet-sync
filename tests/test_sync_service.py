@@ -20,6 +20,8 @@ class FakeClient:
         self.copy_names: list[str] = []
         self.sent_to: list[str] = []
         self.list_count = 0
+        self.status = "需求收集"
+        self.source_token = "source-token"
 
     def list_base_records(self) -> list[BaseRecord]:
         self.list_count += 1
@@ -28,12 +30,12 @@ class FakeClient:
                 record_id="rec_test",
                 shared_url="https://example.feishu.cn/record/rec_test",
                 fields={
-                    "状态": "需求收集",
+                    "状态": self.status,
                     "下单表格": {
-                        "link": "https://example.feishu.cn/sheets/source-token",
+                        "link": f"https://example.feishu.cn/sheets/{self.source_token}",
                         "text": "备货测试表",
                         "mentionType": "Sheet",
-                        "token": "source-token",
+                        "token": self.source_token,
                     },
                 },
             )
@@ -44,12 +46,12 @@ class FakeClient:
             record_id="rec_test",
             shared_url="https://example.feishu.cn/record/rec_test",
             fields={
-                "状态": "需求收集",
+                "状态": self.status,
                 "下单表格": {
-                    "link": "https://example.feishu.cn/sheets/source-token",
+                    "link": f"https://example.feishu.cn/sheets/{self.source_token}",
                     "text": "备货测试表",
                     "mentionType": "Sheet",
-                    "token": "source-token",
+                    "token": self.source_token,
                 },
             },
         )
@@ -101,6 +103,8 @@ def make_config(tmp_path: Path) -> AppConfig:
         base_view_id=None,
         link_field_name="下单表格",
         required_fields={"状态": "需求收集"},
+        monitor_required_fields={"状态": "需求收集"},
+        monitor_days=3,
         target_folder_token="folder-token",
         copy_name_prefix="市场部-",
         notify_open_ids=("ou_test",),
@@ -109,6 +113,7 @@ def make_config(tmp_path: Path) -> AppConfig:
         change_quiet_minutes=10,
         redis_url="redis://localhost:6379/0",
         redis_key_prefix="stocking-sheet-sync-test",
+        redis_legacy_hash_key=None,
         request_timeout_seconds=15,
         max_retries=3,
         log_level="INFO",
@@ -271,6 +276,73 @@ def test_webhook_record_only_processes_requested_record(tmp_path: Path) -> None:
     assert first.scanned == 1
     assert first.copied == 1
     assert second.unchanged == 1
+    assert data_client.copy_count == 1
+
+
+def test_webhook_existing_sheet_enters_quiet_observation_without_copying(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, now_provider=clock)
+    try:
+        service.run_record("rec_test")
+        data_client.revision = 2
+        triggered = service.run_record("rec_test")
+        state = store.get_state("rec_test", "source-token")
+        clock.advance(minutes=10)
+        copied = service.run_once(check_all=False)
+    finally:
+        store.close()
+
+    assert triggered.copied == 0
+    assert triggered.unchanged == 1
+    assert state is not None and state.pending_revision == 2
+    assert copied.copied == 1
+    assert data_client.copy_names == ["市场部-备货测试表", "市场部-备货测试表-v2"]
+
+
+def test_worker_stops_pending_copy_when_status_no_longer_matches(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    clock = MutableClock()
+    service = SyncService(config, data_client, message_client, store, now_provider=clock)
+    try:
+        service.run_record("rec_test")
+        data_client.revision = 2
+        service.run_once(check_all=True)
+        data_client.status = "已完成"
+        clock.advance(minutes=10)
+        skipped = service.run_once(check_all=False)
+        state = store.get_state("rec_test", "source-token")
+    finally:
+        store.close()
+
+    assert skipped.copied == 0
+    assert data_client.copy_count == 1
+    assert state is not None and state.pending_revision is None
+
+
+def test_worker_ignores_state_when_record_points_to_another_sheet(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        service.run_record("rec_test")
+        data_client.revision = 2
+        data_client.source_token = "replacement-token"
+        skipped = service.run_once(check_all=True)
+    finally:
+        store.close()
+
+    assert skipped.copied == 0
     assert data_client.copy_count == 1
 
 

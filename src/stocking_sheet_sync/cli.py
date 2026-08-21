@@ -33,6 +33,8 @@ def run(argv: list[str] | None = None) -> int:
     store = RedisStateStore(
         config.redis_url,
         config.redis_key_prefix,
+        monitor_days=config.monitor_days,
+        legacy_hash_key=config.redis_legacy_hash_key,
         socket_timeout_seconds=config.request_timeout_seconds,
         logger=logger,
     )

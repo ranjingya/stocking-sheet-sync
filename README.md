@@ -8,13 +8,14 @@
 
 1. 多维表自动化将新增或修改记录的 `record_id` 发送给 Webhook。
 2. Webhook 解析“下单表格”字段，兼容 Wiki 链接和直接 Sheet 链接，并立即创建首次副本。
-3. 首次复制成功后，将 `record_id + sheet_token + revision` 写入 Redis。
-4. Worker 每 30 分钟从 Redis 读取已经成功同步过的表格，并检查在线 `revision`。
-5. 发现变化的表格进入每分钟一次的静默观察；revision 再次变化时重新计时。
-6. revision 连续 10 分钟不变后创建新副本、保存新版本并发送通知。
+3. 已监听表格再次触发 Webhook 时只进入静默观察，不立即创建更新副本。
+4. 每张表格使用一个带三自然日有效期的 Redis String 保存监听状态和全部搬运版本。
+5. Worker 每 30 分钟检查状态合格且记录仍指向同一表格的监听对象。
+6. 发现变化的表格进入每分钟一次的静默观察；revision 再次变化时重新计时。
+7. revision 连续 10 分钟不变后再次校验记录状态，创建新副本并发送通知。
 
-Worker 只监控 Redis 中已经登记的表格，不扫描多维表历史记录。同一 revision 最多复制一次；
-程序不会自动删除历史副本。
+Worker 只监控 Redis 中已经登记且未过期的表格，不扫描多维表历史记录。同一 revision
+最多复制一次；程序不会自动删除历史副本。
 
 首次副本保持 `市场部-原标题`；后续更新副本按成功搬运次数依次命名为 `市场部-原标题-v2`、
 `市场部-原标题-v3`。源标题带 `.xlsx` 等表格扩展名时，版本号位于扩展名前，例如
@@ -69,7 +70,7 @@ cp config.example.toml config.toml
 
 配置区块说明：
 
-- `[source]`：源多维表、视图、链接字段和记录筛选条件。
+- `[source]`：源多维表、链接字段、监听状态条件和监听自然日数。
 - `[target]`：目标共享文件夹及副本名前缀。
 - `[notifications]`：逐人通知使用的 `open_id` 数组。
 - `[redis]`：Redis 键命名空间。
@@ -172,43 +173,36 @@ uv run python main.py --once
 
 ## Redis 状态
 
-所有已同步表格版本保存在一个 Redis Hash：
+每个已监听表格保存在一个 Redis String：
 
 ```text
-stocking-sheet-sync:synced
+ss:<record_id>:<source_token>
 ```
 
-Hash field 是同步版本唯一标识：
+Value 是 JSON，包含：
 
-```text
-<record_id>:<source_token>:<revision>
-```
-
-Hash value 是 JSON，只保存：
-
-- 源表格名称和链接
+- 多维表记录 ID、真实电子表格 token、名称和链接
 - 原多维表记录链接
-- 目标副本名称和链接
-- UTC+8 同步时间
-- `copy_version`：成功搬运版本号，首次为 1
+- 最新 revision、搬运版本号、目标副本及 UTC+8 同步时间
+- 首次监听时间、过期时间和静默观察状态
+- `versions`：全部成功搬运版本及其目标链接
 
-表格处于静默观察期时，最新同步版本的 value 还会保存：
-
-- `pending_revision`：观察中的在线 revision
-- `pending_since`：该 revision 最近一次变化的 UTC+8 时间
+Key 在首次同步日期后的第三个自然日零点过期，后续搬运不会延长有效期。
+`redis.legacy_hash_key` 中尚在监听期内的数据会在服务启动时迁移，源 Hash 保留。
 
 复制失败时不写 Redis，下次扫描会继续尝试。通知失败只写日志，不额外保存通知状态。
 
 扫描锁保存为带自动过期时间的 Redis String：
 
 ```text
-stocking-sheet-sync:lock:scan
+ss:lock:scan
 ```
 
 可以通过以下命令查看同步记录：
 
 ```bash
-redis-cli -u "$REDIS_URL" HGETALL 'stocking-sheet-sync:synced'
+redis-cli -u "$REDIS_URL" --scan --pattern 'ss:*'
+redis-cli -u "$REDIS_URL" GET 'ss:<record_id>:<source_token>'
 ```
 
 Redis 需要开启持久化或使用可靠的托管实例。清空这些键会让程序失去历史去重依据。

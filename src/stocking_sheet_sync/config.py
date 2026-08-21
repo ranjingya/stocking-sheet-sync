@@ -23,6 +23,8 @@ class AppConfig:
     base_view_id: str | None
     link_field_name: str
     required_fields: dict[str, Any]
+    monitor_required_fields: dict[str, Any]
+    monitor_days: int
     target_folder_token: str
     copy_name_prefix: str
     notify_open_ids: tuple[str, ...]
@@ -31,6 +33,7 @@ class AppConfig:
     change_quiet_minutes: float
     redis_url: str
     redis_key_prefix: str
+    redis_legacy_hash_key: str | None
     request_timeout_seconds: float
     max_retries: int
     log_level: str
@@ -75,6 +78,9 @@ def load_config(
     required_fields = source.get("required_fields", {})
     if not isinstance(required_fields, dict):
         raise ValueError("source.required_fields 必须是 TOML 对象")
+    monitor_required_fields = source.get("monitor_required_fields", {})
+    if not isinstance(monitor_required_fields, dict):
+        raise ValueError("source.monitor_required_fields 必须是 TOML 对象")
 
     return AppConfig(
         feishu_data_app_id=_require_env(environment, "FEISHU_DATA_APP_ID"),
@@ -95,6 +101,8 @@ def load_config(
         base_view_id=_optional_text(source.get("view_id")),
         link_field_name=_text(source.get("link_field_name", "下单表格")) or "下单表格",
         required_fields=required_fields,
+        monitor_required_fields=monitor_required_fields,
+        monitor_days=_positive_int(source.get("monitor_days", 3), "source.monitor_days"),
         target_folder_token=_required_text(target, "folder_token", "target.folder_token"),
         copy_name_prefix=_text(target.get("copy_name_prefix", "市场部-")),
         notify_open_ids=_parse_open_ids(notifications.get("open_ids", [])),
@@ -110,6 +118,7 @@ def load_config(
         ),
         redis_url=(environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"),
         redis_key_prefix=_parse_key_prefix(redis.get("key_prefix")),
+        redis_legacy_hash_key=_optional_text(redis.get("legacy_hash_key")),
         request_timeout_seconds=_positive_float(
             runtime.get("request_timeout_seconds", 15), "runtime.request_timeout_seconds"
         ),

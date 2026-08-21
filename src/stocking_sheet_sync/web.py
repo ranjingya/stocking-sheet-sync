@@ -45,6 +45,8 @@ def create_app(
         store = RedisStateStore(
             app_config.redis_url,
             app_config.redis_key_prefix,
+            monitor_days=app_config.monitor_days,
+            legacy_hash_key=app_config.redis_legacy_hash_key,
             socket_timeout_seconds=app_config.request_timeout_seconds,
             logger=logger,
         )
