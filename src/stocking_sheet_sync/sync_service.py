@@ -37,9 +37,9 @@ class MessageClient(Protocol):
 
 
 class SyncedStore(Protocol):
-    def acquire_run_lock(self, ttl_minutes: float) -> bool: ...
+    def acquire_run_lock(self, ttl_minutes: float) -> str | None: ...
 
-    def release_run_lock(self) -> None: ...
+    def release_run_lock(self, token: str) -> None: ...
 
     def is_synced(self, record_id: str, source_token: str, source_revision: int) -> bool: ...
 
@@ -94,7 +94,8 @@ class SyncService:
         """
         summary = SyncSummary()
         lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
-        if not self.store.acquire_run_lock(lock_ttl):
+        lock_token = self.store.acquire_run_lock(lock_ttl)
+        if lock_token is None:
             summary.result = "busy"
             summary.reason = "已有同步任务正在运行"
             self.logger.warning(
@@ -136,7 +137,7 @@ class SyncService:
                 )
             return summary
         finally:
-            self.store.release_run_lock()
+            self.store.release_run_lock(lock_token)
 
     def run_record(self, record_id: str) -> SyncSummary:
         """
@@ -149,7 +150,8 @@ class SyncService:
         """
         summary = SyncSummary()
         lock_ttl = max(self.config.poll_interval_minutes * 2, 30)
-        if not self.store.acquire_run_lock(lock_ttl):
+        lock_token = self.store.acquire_run_lock(lock_ttl)
+        if lock_token is None:
             raise SyncBusyError("已有同步任务正在运行")
 
         self.logger.debug("开始处理 Webhook 触发记录：record_id=%s", record_id)
@@ -180,7 +182,7 @@ class SyncService:
             )
             return summary
         finally:
-            self.store.release_run_lock()
+            self.store.release_run_lock(lock_token)
 
     def _process_record(self, record: BaseRecord, summary: SyncSummary) -> None:
         source: SourceSheet | None = None

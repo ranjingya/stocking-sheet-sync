@@ -108,12 +108,12 @@ def test_redis_store_expires_after_three_natural_days_without_extension() -> Non
 
 def test_redis_lock_is_released_only_by_owner() -> None:
     client = FakeRedis()
-    first = RedisStateStore("redis://localhost:6379/0", "ss", client=client)
-    second = RedisStateStore("redis://localhost:6379/0", "ss", client=client)
+    store = RedisStateStore("redis://localhost:6379/0", "ss", client=client)
 
-    assert first.acquire_run_lock(1) is True
-    assert second.acquire_run_lock(1) is False
-    second.release_run_lock()
+    owner_token = store.acquire_run_lock(1)
+    assert isinstance(owner_token, str)
+    assert store.acquire_run_lock(1) is None
+    store.release_run_lock("not-the-owner")
     assert "ss:lock:scan" in client.strings
-    first.release_run_lock()
-    assert second.acquire_run_lock(1) is True
+    store.release_run_lock(owner_token)
+    assert isinstance(store.acquire_run_lock(1), str)

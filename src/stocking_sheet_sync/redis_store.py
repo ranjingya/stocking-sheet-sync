@@ -42,7 +42,6 @@ class RedisStateStore:
             raise ValueError("Redis monitor_days 必须为正整数")
         self._monitor_days = monitor_days
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
-        self._lock_token: str | None = None
         self._redis = client or Redis.from_url(
             redis_url,
             decode_responses=True,
@@ -53,7 +52,7 @@ class RedisStateStore:
         self._redis.ping()
         self._logger.debug("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
 
-    def acquire_run_lock(self, ttl_minutes: float) -> bool:
+    def acquire_run_lock(self, ttl_minutes: float) -> str | None:
         """
         功能说明：通过 Redis SET NX EX 获取分布式扫描锁。
 
@@ -61,19 +60,23 @@ class RedisStateStore:
             ttl_minutes：锁自动失效的分钟数。
 
         返回值：
-            是否成功取得锁。
+            成功时返回本次加锁的唯一 token；锁已被占用时返回 None。
         """
         token = uuid.uuid4().hex
         ttl_seconds = max(1, math.ceil(ttl_minutes * 60))
         acquired = bool(self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds))
-        self._lock_token = token if acquired else None
-        return acquired
+        return token if acquired else None
 
-    def release_run_lock(self) -> None:
-        token = self._lock_token
-        self._lock_token = None
-        if token:
-            self._redis.eval(_RELEASE_LOCK_SCRIPT, 1, self._lock_key, token)
+    def release_run_lock(self, token: str) -> None:
+        """
+        功能说明：仅当 Redis 中的锁仍属于当前调用时释放锁。
+
+        参数：
+            token：acquire_run_lock 成功时返回的唯一 token。
+
+        返回值：无。
+        """
+        self._redis.eval(_RELEASE_LOCK_SCRIPT, 1, self._lock_key, token)
 
     def get_state(self, record_id: str, source_token: str) -> SyncedSheetState | None:
         """
