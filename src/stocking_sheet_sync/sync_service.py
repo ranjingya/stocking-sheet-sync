@@ -372,18 +372,17 @@ class SyncService:
         """
         now = self._now()
         try:
-            ineligibility_reason = (
-                self._monitor_ineligibility_reason(state) if verify_monitor else None
+            ineligibility_reason, delete_ineligible_state = (
+                self._monitor_ineligibility(state)
+                if verify_monitor
+                else (None, False)
             )
             if ineligibility_reason is not None:
-                if state.pending_revision is not None:
-                    self.store.save_pending(state, None)
-                summary.skipped += 1
-                self.logger.info(
-                    "Worker 表格检查完成：record_id=%s name=%s result=skipped reason=%s",
-                    state.record_id,
-                    state.source_name,
+                self._skip_ineligible_state(
+                    state,
+                    summary,
                     ineligibility_reason,
+                    delete_state=delete_ineligible_state,
                 )
                 return
 
@@ -468,15 +467,15 @@ class SyncService:
                 return
 
             if not verify_monitor:
-                ineligibility_reason = self._monitor_ineligibility_reason(state)
+                ineligibility_reason, delete_ineligible_state = (
+                    self._monitor_ineligibility(state)
+                )
             if ineligibility_reason is not None:
-                self.store.save_pending(state, None)
-                summary.skipped += 1
-                self.logger.info(
-                    "Worker 表格检查完成：record_id=%s name=%s result=skipped reason=%s",
-                    state.record_id,
-                    state.source_name,
+                self._skip_ineligible_state(
+                    state,
+                    summary,
                     ineligibility_reason,
+                    delete_state=delete_ineligible_state,
                 )
                 return
 
@@ -522,35 +521,70 @@ class SyncService:
                 )
                 self._notify(list(self.config.failure_notify_open_ids), card)
 
-    def _monitor_ineligibility_reason(self, state: SyncedSheetState) -> str | None:
+    def _skip_ineligible_state(
+        self,
+        state: SyncedSheetState,
+        summary: SyncSummary,
+        reason: str,
+        *,
+        delete_state: bool,
+    ) -> None:
         """
-        功能说明：检查多维表记录是否仍符合监听条件，并返回具体跳过原因。
+        功能说明：跳过不再符合监听条件的记录，并按链接状态保留或删除 Redis 状态。
+
+        参数：
+            state：Redis 中的表格监听状态。
+            summary：用于累计本轮跳过数量的汇总对象。
+            reason：本次跳过的具体原因。
+            delete_state：是否删除已失效的 Redis Key。
+
+        返回值：无。
+        """
+        if delete_state:
+            self.store.delete_state(state.record_id, state.source_token)
+        elif state.pending_revision is not None:
+            self.store.save_pending(state, None)
+        summary.skipped += 1
+        self.logger.info(
+            "Worker 表格检查完成：record_id=%s name=%s result=skipped "
+            "reason=%s redis_key_deleted=%s",
+            state.record_id,
+            state.source_name,
+            reason,
+            str(delete_state).lower(),
+        )
+
+    def _monitor_ineligibility(
+        self, state: SyncedSheetState
+    ) -> tuple[str | None, bool]:
+        """
+        功能说明：检查多维表记录是否仍符合监听条件。
 
         参数：
             state：Redis 中记录 ID 与真实电子表格 token 的对应状态。
 
         返回值：
-            符合监听条件时返回 None，否则返回便于日志排查的原因。
+            返回“跳过原因、是否删除 Redis Key”；符合条件时返回 (None, False)。
         """
         record = self.data_client.get_base_record(state.record_id)
         if not matches_required_fields(
             record.fields,
             self.config.monitor_required_fields,
         ):
-            return "状态字段不符合监听条件"
+            return "状态字段不符合监听条件", False
         source = parse_source_sheet(record.fields.get(self.config.link_field_name))
         if source is None:
-            return "表格链接为空或格式不支持"
+            return "表格链接为空或格式不支持", True
         current_token = source.token
         if source.mention_type == "Wiki":
             current_token, document_type, _title = self.data_client.resolve_wiki_node(
                 source.token
             )
             if document_type != "sheet":
-                return f"链接对应的文档不是电子表格，而是 {document_type}"
+                return f"链接对应的文档不是电子表格，而是 {document_type}", True
         if current_token != state.source_token:
-            return "记录中的表格链接已更换"
-        return None
+            return "记录中的表格链接已更换", True
+        return None, False
 
     def _copy_monitored_sheet(
         self,

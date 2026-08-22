@@ -25,6 +25,7 @@ class FakeClient:
         self.source_token = "source-token"
         self.copy_error = ""
         self.record_deleted = False
+        self.link_available = True
         self.sent_cards: list[dict[str, Any]] = []
 
     def list_base_records(self) -> list[BaseRecord]:
@@ -48,17 +49,22 @@ class FakeClient:
     def get_base_record(self, record_id: str) -> BaseRecord:
         if self.record_deleted:
             raise FeishuApiError("飞书接口失败：RecordIdNotFound", 1, 404)
+        link_value = (
+            {
+                "link": f"https://example.feishu.cn/sheets/{self.source_token}",
+                "text": "备货测试表",
+                "mentionType": "Sheet",
+                "token": self.source_token,
+            }
+            if self.link_available
+            else None
+        )
         record = BaseRecord(
             record_id="rec_test",
             shared_url="https://example.feishu.cn/record/rec_test",
             fields={
                 "状态": self.status,
-                "下单表格": {
-                    "link": f"https://example.feishu.cn/sheets/{self.source_token}",
-                    "text": "备货测试表",
-                    "mentionType": "Sheet",
-                    "token": self.source_token,
-                },
+                "下单表格": link_value,
             },
         )
         if record.record_id != record_id:
@@ -427,7 +433,7 @@ def test_worker_notifies_and_removes_state_when_record_is_deleted(tmp_path: Path
     assert "市场部-备货测试表" in deleted_card["body"]["elements"][0]["content"]
 
 
-def test_worker_ignores_state_when_record_points_to_another_sheet(tmp_path: Path) -> None:
+def test_worker_removes_state_when_record_points_to_another_sheet(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
@@ -438,12 +444,34 @@ def test_worker_ignores_state_when_record_points_to_another_sheet(tmp_path: Path
         data_client.revision = 2
         data_client.source_token = "replacement-token"
         skipped = service.run_once(check_all=True)
+        state = store.get_state("rec_test", "source-token")
     finally:
         store.close()
 
     assert skipped.copied == 0
     assert skipped.skipped == 1
     assert data_client.copy_count == 1
+    assert state is None
+
+
+def test_worker_removes_state_when_record_link_is_empty(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    data_client = FakeClient()
+    message_client = FakeClient()
+    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
+    service = SyncService(config, data_client, message_client, store)
+    try:
+        service.run_record("rec_test")
+        data_client.link_available = False
+        skipped = service.run_once(check_all=True)
+        state = store.get_state("rec_test", "source-token")
+    finally:
+        store.close()
+
+    assert skipped.copied == 0
+    assert skipped.skipped == 1
+    assert data_client.copy_count == 1
+    assert state is None
 
 
 def test_worker_logs_scan_observation_and_copy_progress(tmp_path: Path, caplog) -> None:
