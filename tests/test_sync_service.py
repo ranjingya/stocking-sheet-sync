@@ -184,8 +184,13 @@ def test_worker_waits_until_revision_is_stable_before_copying(tmp_path: Path) ->
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
         first = service.run_record("rec_test")
@@ -214,8 +219,13 @@ def test_worker_resets_quiet_time_when_revision_changes_again(tmp_path: Path) ->
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
         service.run_record("rec_test")
@@ -243,8 +253,13 @@ def test_worker_increments_copy_version_for_each_successful_update(tmp_path: Pat
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
         service.run_record("rec_test")
@@ -359,8 +374,13 @@ def test_webhook_existing_sheet_enters_quiet_observation_without_copying(
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
         service.run_record("rec_test")
@@ -385,8 +405,13 @@ def test_worker_stops_pending_copy_when_status_no_longer_matches(tmp_path: Path)
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, now_provider=clock)
     try:
         service.run_record("rec_test")
@@ -478,9 +503,14 @@ def test_worker_logs_scan_observation_and_copy_progress(tmp_path: Path, caplog) 
     config = make_config(tmp_path)
     data_client = FakeClient()
     message_client = FakeClient()
-    store = RedisStateStore(config.redis_url, config.redis_key_prefix, client=FakeRedis())
     logger = logging.getLogger("stocking_sheet_sync.scheduled_test")
     clock = MutableClock()
+    store = RedisStateStore(
+        config.redis_url,
+        config.redis_key_prefix,
+        client=FakeRedis(),
+        now_provider=clock,
+    )
     service = SyncService(config, data_client, message_client, store, logger, clock)
     caplog.set_level(logging.INFO, logger=logger.name)
     try:

@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 stocking-sheet-sync = "stocking_sheet_sync.cli:main"
+stocking-sheet-sync-notify = "stocking_sheet_sync.manual_notify:main"
 
 [dependency-groups]
 dev = [

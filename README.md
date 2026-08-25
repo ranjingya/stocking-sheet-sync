@@ -174,6 +174,33 @@ uv run stocking-sheet-sync
 uv run python main.py --once
 ```
 
+## 手动发送同步通知
+
+需要手动补发卡片时，可以直接指定原始记录和目标表格的名称与链接。
+该命令仅向 `notifications.open_ids` 发送卡片，不复制文件，也不读写 Redis。
+
+首次搬运通知：
+
+```bash
+uv run stocking-sheet-sync-notify \
+  --mode copy \
+  --original-name '原始记录名称' \
+  --original-url 'https://example.feishu.cn/record/record-token' \
+  --target-name '市场部-目标表格名称' \
+  --target-url 'https://example.feishu.cn/sheets/target-token'
+```
+
+更新搬运通知：
+
+```bash
+uv run stocking-sheet-sync-notify \
+  --mode update \
+  --original-name '原始记录名称' \
+  --original-url 'https://example.feishu.cn/record/record-token' \
+  --target-name '市场部-目标表格名称-v2' \
+  --target-url 'https://example.feishu.cn/sheets/target-token'
+```
+
 ## Redis 状态
 
 每个已监听表格保存在一个 Redis String：
