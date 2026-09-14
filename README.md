@@ -28,9 +28,9 @@ cp .env.example .env
 cp config/config.example.toml config/config.toml
 ```
 
-在项目根目录运行程序，主配置默认读取 `config/config.toml`，历史销量来源配置默认读取 `config/sales-sources.toml`。两份 TOML 分别维护搬运设置和数仓表、字段、平台映射。
+在项目根目录运行程序，主配置默认读取 `config/config.toml`，历史销量来源配置默认读取 `config/sales-sources.toml`。`config/sheet-layout.toml` 提供市场部新品、老品结构规则。三份 TOML 分别维护搬运设置、数仓来源和市场部表头结构。
 
-`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET` 和历史销量检查使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例和销量来源配置随项目维护。
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET` 和历史销量检查使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例、销量来源和市场部结构规则随项目维护。
 
 | 配置区块 | 用途 |
 | --- | --- |
@@ -131,10 +131,11 @@ uv run stocking-sheet-sync-notify \
 ├── .env
 └── config/
     ├── config.toml
-    └── sales-sources.toml
+    ├── sales-sources.toml
+    └── sheet-layout.toml
 ```
 
-将 `config/config.example.toml` 复制为宿主机的 `config/config.toml` 并填写业务设置，将项目的 `config/sales-sources.toml` 放入同一目录。Compose 将整个宿主机目录 `/home/yatui/stocking-sheet-sync/config` 只读挂载到容器的 `/app/config`；该目录需要包含上述两份 TOML。容器工作目录为 `/app`，程序按默认相对路径读取配置，凭证通过 `.env` 注入。
+将 `config/config.example.toml` 复制为宿主机的 `config/config.toml` 并填写业务设置，将项目的 `config/sales-sources.toml` 和 `config/sheet-layout.toml` 放入同一目录。Compose 将整个宿主机目录 `/home/yatui/stocking-sheet-sync/config` 只读挂载到容器的 `/app/config`；该目录需要包含上述三份 TOML。容器工作目录为 `/app`，程序按默认相对路径读取配置，凭证通过 `.env` 注入。
 
 在部署目录启动：
 
@@ -159,3 +160,7 @@ uv run --group lint ruff check .
 ## 历史销量检查
 
 `stocking-sheet-sync-inspect` 按指定日期读取五个平台的发货数据，核对商品及目标列，输出本地 JSON、CSV。使用方法、来源、去重与日期覆盖规则见 [历史发货数据读取与表格匹配](docs/sales-data.md)。
+
+## 市场部结构预览
+
+`stocking-sheet-sync-layout` 按款号分类，预览市场部新增列、标题和分组调整，输出 Markdown 与 JSON。支持线上表格和离线完整快照，不连接数仓或修改表格。使用方法与字段规则见 [市场部结构预览](docs/market-layout.md)。

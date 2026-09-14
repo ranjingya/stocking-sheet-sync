@@ -1,0 +1,46 @@
+# 市场部结构预览规则。款式年份取 style_pattern 的 year 分组。
+[layout]
+style_pattern = '^KQ(?P<year>\d{2})'
+new_year = 26
+group_row = 2
+market_header = "市场部"
+platform_order = ["vip", "jd_self", "pdd", "tmall_supermarket", "jd_pop"]
+new_metrics = ["sales", "demand"]
+legacy_metrics = ["history", "sales", "demand"]
+
+[platforms.vip]
+sales = "唯品近 30 天"
+demand = "唯品会"
+history = "唯品{period}"
+history_pattern = '^唯品(?:会)?(?P<period>\d.+)$'
+
+[platforms.jd_self]
+sales = "自营近 30 天"
+demand = "京东自营"
+history = "自营{period}"
+history_pattern = '^(?:京东)?自营(?P<period>\d.+)$'
+
+[platforms.pdd]
+sales = "拼多多近 30 天"
+demand = "拼多多"
+legacy_metrics = ["history", "history_net", "sales", "demand"]
+history = "拼多多{period}实发"
+history_pattern = '^拼多多(?P<period>\d.+)实发$'
+history_net = "拼多多{period}实发-实退"
+history_net_pattern = '^拼多多(?P<period>\d.+)实发-实退$'
+
+[platforms.tmall_supermarket]
+sales = "猫超近 30 天"
+demand = "天猫超市"
+history = "猫超{period}"
+history_pattern = '^(?:猫超|天猫超市)(?P<period>\d.+)$'
+
+[platforms.jd_pop]
+sales = "京东 POP 近 30 天"
+demand = "京东 POP"
+history = "京东 POP{period}"
+history_pattern = '^京东pop(?P<period>\d.+)$'
+
+# 缺少往年区间列时，可按平台明确填写表头区间文本。
+# 例如 vip = "25.9-10月"；具体查询起止日期在历史数据阶段另行确定。
+[history_periods]
