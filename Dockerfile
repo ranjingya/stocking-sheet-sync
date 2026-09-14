@@ -10,6 +10,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY gunicorn.py ./
 COPY src ./src
+COPY config ./config
 
 RUN uv sync --frozen --no-dev
 

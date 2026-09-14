@@ -11,3 +11,6 @@ dist/
 config.toml
 *.log
 .DS_Store
+
+# 本地数据核对结果
+/artifacts/
