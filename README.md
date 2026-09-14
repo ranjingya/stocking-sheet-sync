@@ -164,3 +164,7 @@ uv run --group lint ruff check .
 ## 市场部结构准备
 
 `stocking-sheet-sync-layout` 按款号分类，预览市场部新增列、标题和分组调整，输出 Markdown 与 JSON。支持线上表格和离线完整快照，不连接数仓或修改表格。`stocking-sheet-sync-layout-apply` 支持为新品实际补齐销量列、继承需求列样式及调整市场部合并表头；默认预览，实际执行需指定版本，并在写入后回读核验。使用方法与字段规则见 [市场部结构准备](docs/market-layout.md)。
+
+## 历史销量填充
+
+`stocking-sheet-sync-sales-fill` 读取本项目配置的数仓来源，在市场部商品行填充近30天销量。必须指定预估日，默认预览；实际写入需加 `--apply --expected-revision`。支持商品与覆盖检查、非空冲突保护、相同值跳过、批量写入和全量回读，日期缺口不会作为零销量填入。使用方法见 [历史销量读取与填充](docs/sales-data.md#实际填充近30天销量)。
