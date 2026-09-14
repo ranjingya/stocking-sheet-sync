@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import tomllib
@@ -20,18 +21,13 @@ class AppConfig:
     feishu_api_base_url: str
     base_app_token: str
     base_table_id: str
-    base_view_id: str | None
     link_field_name: str
     required_fields: dict[str, Any]
-    monitor_required_fields: dict[str, Any]
-    monitor_days: int
     target_folder_token: str
     copy_name_prefix: str
     notify_open_ids: tuple[str, ...]
     failure_notify_open_ids: tuple[str, ...]
-    poll_interval_minutes: float
-    change_check_interval_minutes: float
-    change_quiet_minutes: float
+    lock_ttl_seconds: int
     redis_url: str
     redis_key_prefix: str
     request_timeout_seconds: float
@@ -78,9 +74,6 @@ def load_config(
     required_fields = source.get("required_fields", {})
     if not isinstance(required_fields, dict):
         raise ValueError("source.required_fields 必须是 TOML 对象")
-    monitor_required_fields = source.get("monitor_required_fields", {})
-    if not isinstance(monitor_required_fields, dict):
-        raise ValueError("source.monitor_required_fields 必须是 TOML 对象")
 
     return AppConfig(
         feishu_data_app_id=_require_env(environment, "FEISHU_DATA_APP_ID"),
@@ -98,11 +91,8 @@ def load_config(
         feishu_api_base_url=_text(feishu.get("api_base_url", "https://open.feishu.cn")).rstrip("/"),
         base_app_token=_required_text(source, "app_token", "source.app_token"),
         base_table_id=_required_text(source, "table_id", "source.table_id"),
-        base_view_id=_optional_text(source.get("view_id")),
         link_field_name=_text(source.get("link_field_name", "下单表格")) or "下单表格",
         required_fields=required_fields,
-        monitor_required_fields=monitor_required_fields,
-        monitor_days=_positive_int(source.get("monitor_days", 3), "source.monitor_days"),
         target_folder_token=_required_text(target, "folder_token", "target.folder_token"),
         copy_name_prefix=_text(target.get("copy_name_prefix", "市场部-")),
         notify_open_ids=_parse_open_ids(
@@ -113,15 +103,8 @@ def load_config(
             notifications.get("failure_open_ids", []),
             "notifications.failure_open_ids",
         ),
-        poll_interval_minutes=_positive_float(
-            runtime.get("poll_interval_minutes", 30), "runtime.poll_interval_minutes"
-        ),
-        change_check_interval_minutes=_positive_float(
-            runtime.get("change_check_interval_minutes", 1),
-            "runtime.change_check_interval_minutes",
-        ),
-        change_quiet_minutes=_positive_float(
-            runtime.get("change_quiet_minutes", 10), "runtime.change_quiet_minutes"
+        lock_ttl_seconds=_positive_int(
+            runtime.get("lock_ttl_seconds", 300), "runtime.lock_ttl_seconds"
         ),
         redis_url=(environment.get("REDIS_URL", "").strip() or "redis://localhost:6379/0"),
         redis_key_prefix=_parse_key_prefix(redis.get("key_prefix")),
@@ -195,7 +178,7 @@ def _positive_float(value: object, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{field_name} 必须是正数：{value!r}")
     parsed = float(value)
-    if parsed <= 0:
+    if not math.isfinite(parsed) or parsed <= 0:
         raise ValueError(f"{field_name} 必须是正数：{value!r}")
     return parsed
 

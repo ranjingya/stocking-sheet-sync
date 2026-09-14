@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -16,6 +16,14 @@ class FeishuApiError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.status = status
+
+
+class CopyRejected(RuntimeError):
+    """飞书明确拒绝复制，可以重新触发。"""
+
+
+class CopyOutcomeUnknown(RuntimeError):
+    """复制结果无法确认，需要人工核对目标文件夹。"""
 
 
 class FeishuClient:
@@ -54,48 +62,6 @@ class FeishuClient:
 
     def close(self) -> None:
         self._client.close()
-
-    def list_base_records(self) -> list[BaseRecord]:
-        """
-        功能说明：分页读取目标多维表中的全部候选记录。
-
-        参数：无。
-
-        返回值：标准化后的多维表记录列表。
-        """
-        records: list[BaseRecord] = []
-        page_token = ""
-        while True:
-            params: dict[str, str] = {
-                "page_size": "200",
-                "automatic_fields": "true",
-                "user_id_type": "open_id",
-            }
-            if page_token:
-                params["page_token"] = page_token
-            if self.config.base_view_id:
-                params["view_id"] = self.config.base_view_id
-
-            path = (
-                f"/open-apis/bitable/v1/apps/{quote(self.config.base_app_token, safe='')}"
-                f"/tables/{quote(self.config.base_table_id, safe='')}/records"
-            )
-            data = self._request("GET", path, params=params)
-            items = data.get("items", [])
-            if not isinstance(items, list):
-                raise RuntimeError("多维表接口返回的 records.items 不是列表")
-            for item in items:
-                record = _parse_base_record(item)
-                if record is not None:
-                    records.append(record)
-
-            has_more = bool(data.get("has_more"))
-            page_token = str(data.get("page_token", "")).strip() if has_more else ""
-            if not page_token:
-                break
-
-        self.logger.debug("已读取多维表格候选记录：record_count=%d", len(records))
-        return records
 
     def get_base_record(self, record_id: str) -> BaseRecord:
         """
@@ -150,27 +116,6 @@ class FeishuClient:
             raise RuntimeError(f"Wiki 节点未返回真实文档信息：{wiki_token}")
         return token, document_type, title
 
-    def get_spreadsheet_revision(self, spreadsheet_token: str) -> tuple[int, str]:
-        """
-        功能说明：读取电子表格当前 revision 和标题，用于识别内容变化。
-
-        参数：
-            spreadsheet_token：真实电子表格 token。
-
-        返回值：当前 revision 和接口返回的标题。
-        """
-        data = self._request(
-            "GET",
-            f"/open-apis/sheets/v2/spreadsheets/{quote(spreadsheet_token, safe='')}/metainfo",
-        )
-        properties = data.get("properties") if isinstance(data.get("properties"), dict) else {}
-        spreadsheet = data.get("spreadsheet") if isinstance(data.get("spreadsheet"), dict) else {}
-        revision = data.get("revision", properties.get("revision", spreadsheet.get("revision")))
-        title = str(properties.get("title", spreadsheet.get("title", ""))).strip()
-        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
-            raise RuntimeError(f"电子表格未返回有效 revision：{spreadsheet_token}")
-        return revision, title
-
     def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult:
         """
         功能说明：把源电子表格复制到配置的共享文件夹。
@@ -181,28 +126,41 @@ class FeishuClient:
 
         返回值：新副本的名称、token、类型和链接。
         """
-        data = self._request(
-            "POST",
-            f"/open-apis/drive/v1/files/{quote(spreadsheet_token, safe='')}/copy",
-            json_body={
-                "folder_token": self.config.target_folder_token,
-                "name": copy_name,
-                "type": "sheet",
-            },
-        )
-        file_data = data.get("file")
-        if not isinstance(file_data, dict):
-            raise RuntimeError(f"复制接口未返回目标文件信息：{spreadsheet_token}")
-        token = str(file_data.get("token", "")).strip()
-        url = str(file_data.get("url", "")).strip()
-        if not token or not url:
-            raise RuntimeError(f"复制接口未返回目标文件信息：{spreadsheet_token}")
-        return CopyResult(
-            name=str(file_data.get("name", "")).strip() or copy_name,
-            token=token,
-            file_type=str(file_data.get("type", "sheet")),
-            url=url,
-        )
+        try:
+            data = self._request(
+                "POST",
+                f"/open-apis/drive/v1/files/{quote(spreadsheet_token, safe='')}/copy",
+                retry=False,
+                json_body={
+                    "folder_token": self.config.target_folder_token,
+                    "name": copy_name,
+                    "type": "sheet",
+                },
+            )
+            file_data = data.get("file")
+            if not isinstance(file_data, dict):
+                raise RuntimeError(f"复制接口未返回目标文件信息：{spreadsheet_token}")
+            raw_token = file_data.get("token")
+            raw_url = file_data.get("url")
+            token = raw_token.strip() if isinstance(raw_token, str) else ""
+            url = raw_url.strip() if isinstance(raw_url, str) else ""
+            parsed_url = urlsplit(url)
+            if not token or parsed_url.scheme != "https" or not parsed_url.netloc:
+                raise RuntimeError(f"复制接口未返回目标文件信息：{spreadsheet_token}")
+            return CopyResult(
+                name=str(file_data.get("name", "")).strip() or copy_name,
+                token=token,
+                file_type=str(file_data.get("type", "sheet")),
+                url=url,
+            )
+        except FeishuApiError as error:
+            if (400 <= error.status < 500 and error.status not in {408, 499}) or (
+                200 <= error.status < 300 and error.code > 0
+            ):
+                raise CopyRejected(str(error)) from error
+            raise CopyOutcomeUnknown("复制结果不确定，请核对目标文件夹") from error
+        except Exception as error:
+            raise CopyOutcomeUnknown("复制结果不确定，请核对目标文件夹") from error
 
     def send_card(self, open_id: str, card: dict[str, Any]) -> None:
         """
@@ -234,9 +192,11 @@ class FeishuClient:
         *,
         params: dict[str, str] | None = None,
         json_body: dict[str, Any] | None = None,
+        retry: bool = True,
     ) -> dict[str, Any]:
         last_error: Exception | None = None
-        for attempt in range(1, self.config.max_retries + 1):
+        attempts = self.config.max_retries if retry else 1
+        for attempt in range(1, attempts + 1):
             try:
                 token = self._get_access_token()
                 response = self._client.request(
@@ -259,20 +219,16 @@ class FeishuClient:
                     code,
                     response.status_code,
                 )
-                if attempt >= self.config.max_retries or not _should_retry(
-                    response.status_code, code
-                ):
+                if attempt >= attempts or not _should_retry(response.status_code, code):
                     raise error
                 last_error = error
             except FeishuApiError as error:
                 last_error = error
-                if attempt >= self.config.max_retries or not _should_retry(
-                    error.status, error.code
-                ):
+                if attempt >= attempts or not _should_retry(error.status, error.code):
                     raise
             except (httpx.TransportError, httpx.TimeoutException) as error:
                 last_error = error
-                if attempt >= self.config.max_retries:
+                if attempt >= attempts:
                     raise
 
             wait_seconds = 0.5 * (2 ** (attempt - 1))

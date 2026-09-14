@@ -8,7 +8,6 @@ ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-COPY main.py ./
 COPY gunicorn.py ./
 COPY src ./src
 

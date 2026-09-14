@@ -1,7 +1,7 @@
 [project]
 name = "stocking-sheet-sync"
 version = "0.1.0"
-description = "将飞书多维表中的备货电子表格按版本同步到共享文件夹"
+description = "将飞书多维表中的备货电子表格搬运到共享文件夹"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,7 +13,6 @@ dependencies = [
 ]
 
 [project.scripts]
-stocking-sheet-sync = "stocking_sheet_sync.cli:main"
 stocking-sheet-sync-notify = "stocking_sheet_sync.manual_notify:main"
 
 [dependency-groups]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from .card import build_sync_card
 from .config import load_config
@@ -25,7 +25,6 @@ def send_manual_notification(
     message_client: CardMessageClient,
     open_ids: tuple[str, ...],
     *,
-    mode: Literal["copy", "update"],
     original_name: str,
     original_url: str,
     target_name: str,
@@ -39,7 +38,6 @@ def send_manual_notification(
     参数：
         message_client：用于发送飞书卡片的消息客户端。
         open_ids：需要接收通知的用户 Open ID 列表。
-        mode：通知类型，copy 表示首次搬运，update 表示更新搬运。
         original_name：原始记录显示名称。
         original_url：原始记录链接。
         target_name：目标表格显示名称。
@@ -50,8 +48,6 @@ def send_manual_notification(
     返回值：
         成功和失败的接收人数量。
     """
-    if mode not in {"copy", "update"}:
-        raise ValueError("mode 必须填写 copy 或 update")
     if not open_ids:
         raise ValueError("notifications.open_ids 不能为空")
 
@@ -62,14 +58,12 @@ def send_manual_notification(
         target_name=target_name,
         target_url=target_url,
         status="success",
-        sync_type="initial" if mode == "copy" else "update",
         target_folder_token=target_folder_token,
     )
     sent = 0
     failed = 0
     active_logger.info(
-        "开始发送手动同步通知：mode=%s recipients=%d target_name=%s",
-        mode,
+        "开始发送手动同步通知：recipients=%d target_name=%s",
         len(open_ids),
         target_name,
     )
@@ -77,6 +71,7 @@ def send_manual_notification(
         try:
             message_client.send_card(open_id, card)
             sent += 1
+            active_logger.info("手动同步通知发送成功：open_id=%s", open_id)
         except Exception as error:
             failed += 1
             active_logger.error(
@@ -104,7 +99,6 @@ def run(argv: list[str] | None = None) -> int:
         全部发送成功返回 0，存在失败接收人返回 1。
     """
     parser = argparse.ArgumentParser(description="手动发送产品下单同步结果卡片")
-    parser.add_argument("--mode", choices=("copy", "update"), required=True)
     parser.add_argument("--original-name", required=True, help="原始记录显示名称")
     parser.add_argument("--original-url", required=True, help="原始记录链接")
     parser.add_argument("--target-name", required=True, help="目标表格显示名称")
@@ -125,7 +119,6 @@ def run(argv: list[str] | None = None) -> int:
         summary = send_manual_notification(
             message_client,
             config.notify_open_ids,
-            mode=args.mode,
             original_name=args.original_name,
             original_url=args.original_url,
             target_name=args.target_name,

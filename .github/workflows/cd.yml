@@ -86,6 +86,6 @@ jobs:
           script: |
             set -e
             cd "${{ vars.DEPLOY_DIR }}"
-            docker compose pull stocking-sheet-sync stocking-sheet-sync-worker
-            docker compose up -d --remove-orphans stocking-sheet-sync stocking-sheet-sync-worker
+            docker compose pull stocking-sheet-sync
+            docker compose up -d --remove-orphans stocking-sheet-sync
             docker image prune -f

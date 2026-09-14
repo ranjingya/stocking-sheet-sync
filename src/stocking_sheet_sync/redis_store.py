@@ -2,21 +2,25 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import uuid
-from collections.abc import Callable
-from dataclasses import replace
-from datetime import UTC, datetime, time, timedelta, timezone
+from dataclasses import asdict, replace
 from typing import Any
+from urllib.parse import urlsplit
 
 from redis import Redis
 
-from .models import SyncedRecord, SyncedSheetState
+from .models import CopyResult, CopyState
 
-_SHANGHAI_TIMEZONE = timezone(timedelta(hours=8))
-_RELEASE_LOCK_SCRIPT = """
+_COMPARE_DELETE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+_COMPARE_SET = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2])
+    return 1
 end
 return 0
 """
@@ -28,20 +32,26 @@ class RedisStateStore:
         redis_url: str,
         key_prefix: str,
         *,
-        monitor_days: int = 3,
         socket_timeout_seconds: float = 5,
         client: Any | None = None,
         logger: logging.Logger | None = None,
-        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
+        """
+        功能说明：连接 Redis，准备永久去重记录与并发锁存储。
+
+        参数：
+            redis_url：Redis 连接地址。
+            key_prefix：当前业务的键命名空间。
+            socket_timeout_seconds：连接和读写超时秒数。
+            client：可选 Redis 客户端，用于注入隔离的测试实现。
+            logger：可选日志记录器。
+
+        返回值：无；连接失败时抛出异常。
+        """
         self._logger = logger or logging.getLogger(__name__)
         self._key_prefix = key_prefix.rstrip(":")
         if not self._key_prefix:
             raise ValueError("Redis key_prefix 不能为空")
-        if monitor_days < 1:
-            raise ValueError("Redis monitor_days 必须为正整数")
-        self._monitor_days = monitor_days
-        self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self._redis = client or Redis.from_url(
             redis_url,
             decode_responses=True,
@@ -50,229 +60,7 @@ class RedisStateStore:
             health_check_interval=30,
         )
         self._redis.ping()
-        self._logger.debug("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
-
-    def acquire_run_lock(self, ttl_minutes: float) -> str | None:
-        """
-        功能说明：通过 Redis SET NX EX 获取分布式扫描锁。
-
-        参数：
-            ttl_minutes：锁自动失效的分钟数。
-
-        返回值：
-            成功时返回本次加锁的唯一 token；锁已被占用时返回 None。
-        """
-        token = uuid.uuid4().hex
-        ttl_seconds = max(1, math.ceil(ttl_minutes * 60))
-        acquired = bool(self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds))
-        return token if acquired else None
-
-    def release_run_lock(self, token: str) -> None:
-        """
-        功能说明：仅当 Redis 中的锁仍属于当前调用时释放锁。
-
-        参数：
-            token：acquire_run_lock 成功时返回的唯一 token。
-
-        返回值：无。
-        """
-        self._redis.eval(_RELEASE_LOCK_SCRIPT, 1, self._lock_key, token)
-
-    def get_state(self, record_id: str, source_token: str) -> SyncedSheetState | None:
-        """
-        功能说明：读取一条多维表记录与真实电子表格对应的最新监听状态。
-
-        参数：
-            record_id：多维表记录 ID。
-            source_token：真实电子表格 token。
-
-        返回值：
-            当前监听状态；Key 不存在、已过期或内容无效时返回 None。
-        """
-        key = self._state_key(record_id, source_token)
-        raw = self._redis.get(key)
-        if not raw:
-            return None
-        state = self._parse_state(key, raw)
-        if state is None:
-            return None
-        if self._is_expired(state):
-            self._redis.delete(key)
-            return None
-        return state
-
-    def is_synced(self, record_id: str, source_token: str, source_revision: int) -> bool:
-        """
-        功能说明：判断指定源表格 revision 是否已经成功搬运。
-
-        参数：
-            record_id：多维表记录 ID。
-            source_token：真实电子表格 token。
-            source_revision：电子表格 revision。
-
-        返回值：
-            当前状态的版本列表中是否存在对应 revision。
-        """
-        state = self.get_state(record_id, source_token)
-        if state is None:
-            return False
-        return state.synced_revision == source_revision or any(
-            _optional_int(version.get("revision")) == source_revision
-            for version in state.versions
-        )
-
-    def save_synced(self, record: SyncedRecord) -> None:
-        """
-        功能说明：将一次成功搬运追加到 String Value 的版本列表并更新最新状态。
-
-        参数：
-            record：本次源表格、目标副本、版本号和同步时间。
-
-        返回值：无。
-        """
-        current = self.get_state(record.record_id, record.source_token)
-        versions = list(current.versions if current else ())
-        versions.append(
-            {
-                "revision": record.source_revision,
-                "copy_version": record.copy_version,
-                "target_name": record.target_name,
-                "target_url": record.target_url,
-                "synced_at": record.synced_at,
-            }
-        )
-        monitor_started_at = (
-            current.monitor_started_at
-            if current
-            else record.monitor_started_at or record.synced_at
-        )
-        monitor_expires_at = (
-            current.monitor_expires_at
-            if current
-            else record.monitor_expires_at
-            or format_state_time(self._monitor_expiration(monitor_started_at))
-        )
-        state = SyncedSheetState(
-            record_id=record.record_id,
-            source_token=record.source_token,
-            synced_revision=record.source_revision,
-            source_name=record.source_name,
-            source_url=record.source_url,
-            record_url=record.record_url,
-            target_name=record.target_name,
-            target_url=record.target_url,
-            synced_at=record.synced_at,
-            copy_version=record.copy_version,
-            monitor_started_at=monitor_started_at,
-            monitor_expires_at=monitor_expires_at,
-            versions=tuple(versions),
-        )
-        self._write_state(state)
-
-    def next_copy_version(self, record_id: str, source_token: str) -> int:
-        """
-        功能说明：读取当前 String Value 并计算下一次成功搬运版本号。
-
-        参数：
-            record_id：多维表记录 ID。
-            source_token：真实电子表格 token。
-
-        返回值：
-            首次搬运返回 1，后续返回当前最高搬运版本号加一。
-        """
-        state = self.get_state(record_id, source_token)
-        if state is None:
-            return 1
-        recorded_versions = [
-            version
-            for item in state.versions
-            if (version := _positive_int(item.get("copy_version"))) is not None
-        ]
-        highest = max(recorded_versions, default=state.copy_version)
-        return max(highest, len(state.versions)) + 1
-
-    def get_synced(
-        self, record_id: str, source_token: str, source_revision: int
-    ) -> dict[str, str] | None:
-        state = self.get_state(record_id, source_token)
-        if state is None:
-            return None
-        for version in state.versions:
-            if _optional_int(version.get("revision")) == source_revision:
-                return {
-                    str(key): str(item)
-                    for key, item in version.items()
-                    if isinstance(key, str)
-                }
-        return None
-
-    def list_latest_synced(self) -> list[SyncedSheetState]:
-        """
-        功能说明：扫描当前命名空间内所有未过期的表格监听状态。
-
-        参数：无。
-
-        返回值：
-            每个 record_id 与 source_token 组合对应的一条最新状态。
-        """
-        states: list[SyncedSheetState] = []
-        for key in self._redis.scan_iter(match=f"{self._key_prefix}:*"):
-            if key == self._lock_key:
-                continue
-            raw = self._redis.get(key)
-            if not raw:
-                continue
-            state = self._parse_state(key, raw)
-            if state is None:
-                continue
-            if self._is_expired(state):
-                self._redis.delete(key)
-                continue
-            states.append(state)
-        return sorted(states, key=lambda item: (item.record_id, item.source_token))
-
-    def save_pending(
-        self,
-        state: SyncedSheetState,
-        pending_revision: int | None,
-        pending_since: str = "",
-    ) -> None:
-        """
-        功能说明：保存或清除一张已监听表格的静默观察状态。
-
-        参数：
-            state：当前监听状态。
-            pending_revision：观察中的 revision；传入 None 时清除。
-            pending_since：该 revision 最近一次变化时间。
-
-        返回值：无。
-        """
-        current = self.get_state(state.record_id, state.source_token)
-        if current is None:
-            raise ValueError(
-                f"Redis 监听状态不存在：{state.record_id}:{state.source_token}"
-            )
-        updated = replace(
-            current,
-            pending_revision=pending_revision,
-            pending_since=pending_since if pending_revision is not None else "",
-        )
-        self._write_state(updated)
-
-    def delete_state(self, record_id: str, source_token: str) -> None:
-        """
-        功能说明：删除指定多维表记录与电子表格的监听状态。
-
-        参数：
-            record_id：已经删除的多维表记录 ID。
-            source_token：该记录原先对应的真实电子表格 token。
-
-        返回值：无。
-        """
-        self._redis.delete(self._state_key(record_id, source_token))
-
-    def close(self) -> None:
-        self._redis.close()
+        self._logger.info("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
 
     @property
     def _lock_key(self) -> str:
@@ -281,126 +69,139 @@ class RedisStateStore:
     def _state_key(self, record_id: str, source_token: str) -> str:
         return f"{self._key_prefix}:{record_id}:{source_token}"
 
-    def _write_state(self, state: SyncedSheetState, *, nx: bool = False) -> bool:
-        key = self._state_key(state.record_id, state.source_token)
-        value = {
-            "record_id": state.record_id,
-            "source_token": state.source_token,
-            "source_name": state.source_name,
-            "source_url": state.source_url,
-            "record_url": state.record_url,
-            "synced_revision": state.synced_revision,
-            "copy_version": state.copy_version,
-            "target_name": state.target_name,
-            "target_url": state.target_url,
-            "synced_at": state.synced_at,
-            "monitor_started_at": state.monitor_started_at,
-            "monitor_expires_at": state.monitor_expires_at,
-            "pending_revision": state.pending_revision,
-            "pending_since": state.pending_since,
-            "versions": list(state.versions),
-        }
-        written = bool(
+    def acquire_run_lock(self, ttl_seconds: int) -> str | None:
+        """获取搬运锁；ttl_seconds 为有效秒数，返回锁凭证或 None。"""
+        token = uuid.uuid4().hex
+        return token if self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds) else None
+
+    def release_run_lock(self, token: str) -> None:
+        """释放属于 token 的搬运锁，无返回值。"""
+        self._redis.eval(_COMPARE_DELETE, 1, self._lock_key, token)
+
+    def get_state(self, record_id: str, source_token: str) -> CopyState | None:
+        """读取 record_id 与 source_token 的去重状态，返回状态或 None；损坏时抛错。"""
+        key = self._state_key(record_id, source_token)
+        raw = self._redis.get(key)
+        if raw is None:
+            return None
+        return self._decode_state(key, raw)
+
+    def begin_copy(self, state: CopyState) -> bool:
+        """
+        功能说明：复制前原子写入永久占位，防止锁过期或进程退出造成重复复制。
+
+        参数：
+            state：含源记录信息、唯一 attempt_id 和 copying 状态的本次搬运记录。
+
+        返回值：成功占位返回 True；已有记录时返回 False。
+        """
+        if state.status != "copying" or not state.attempt_id:
+            raise ValueError("复制占位必须包含 copying 状态和 attempt_id")
+        return bool(
             self._redis.set(
-                key,
-                json.dumps(value, ensure_ascii=False, separators=(",", ":")),
-                nx=nx,
+                self._state_key(state.record_id, state.source_token), _encode(state), nx=True
             )
         )
-        if written:
-            expires_at = parse_state_time(state.monitor_expires_at)
-            if expires_at is not None:
-                self._redis.expireat(key, math.ceil(expires_at.timestamp()))
-        return written
 
-    def _parse_state(self, key: str, raw: str) -> SyncedSheetState | None:
-        parsed_key = self._parse_state_key(key)
-        if parsed_key is None:
-            return None
-        record_id, source_token = parsed_key
-        try:
-            value = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            self._logger.warning("忽略内容无效的 Redis String：key=%s", key)
-            return None
-        if not isinstance(value, dict):
-            self._logger.warning("忽略非对象类型的 Redis String：key=%s", key)
-            return None
-        raw_versions = value.get("versions", [])
-        versions = tuple(item for item in raw_versions if isinstance(item, dict))
-        synced_revision = _optional_int(value.get("synced_revision"))
-        if synced_revision is None:
-            self._logger.warning("忽略缺少 synced_revision 的 Redis String：key=%s", key)
-            return None
-        return SyncedSheetState(
-            record_id=record_id,
-            source_token=source_token,
-            synced_revision=synced_revision,
-            source_name=_string_value(value.get("source_name")),
-            source_url=_string_value(value.get("source_url")),
-            record_url=_string_value(value.get("record_url")),
-            target_name=_string_value(value.get("target_name")),
-            target_url=_string_value(value.get("target_url")),
-            synced_at=_string_value(value.get("synced_at")),
-            copy_version=_positive_int(value.get("copy_version")) or max(len(versions), 1),
-            monitor_started_at=_string_value(value.get("monitor_started_at")),
-            monitor_expires_at=_string_value(value.get("monitor_expires_at")),
-            pending_revision=_optional_int(value.get("pending_revision")),
-            pending_since=_string_value(value.get("pending_since")),
-            versions=versions,
+    def finish_copy(self, state: CopyState, result: CopyResult, copied_at: str) -> None:
+        """
+        功能说明：将本次占位原子替换为永久的成功搬运记录。
+
+        参数：
+            state：复制前成功写入的占位状态。
+            result：飞书返回的目标副本信息。
+            copied_at：确认复制成功的时间。
+
+        返回值：无；占位不匹配时抛错，避免覆盖其他处理结果。
+        """
+        completed = replace(
+            state,
+            status="copied",
+            target_token=result.token,
+            target_name=result.name,
+            target_url=result.url,
+            copied_at=copied_at,
+        )
+        if not self._redis.eval(
+            _COMPARE_SET,
+            1,
+            self._state_key(state.record_id, state.source_token),
+            _encode(state),
+            _encode(completed),
+        ):
+            raise RuntimeError("搬运占位已变化，无法保存副本结果，请人工核对")
+
+    def cancel_copy(self, state: CopyState) -> None:
+        """仅在复制被明确拒绝时删除 state 对应的本次占位，无返回值。"""
+        self._redis.eval(
+            _COMPARE_DELETE, 1, self._state_key(state.record_id, state.source_token), _encode(state)
         )
 
-    def _parse_state_key(self, key: str) -> tuple[str, str] | None:
-        prefix = f"{self._key_prefix}:"
-        if not key.startswith(prefix) or key == self._lock_key:
-            return None
-        remainder = key[len(prefix) :]
-        record_id, separator, source_token = remainder.partition(":")
-        if not separator or not record_id or not source_token:
-            return None
-        return record_id, source_token
+    def migrate_legacy_records(self) -> None:
+        """
+        功能说明：启动时将命名空间内仍存在的历史成功记录转换为永久去重状态。
 
-    def _monitor_expiration(self, started_at: str) -> datetime:
-        parsed = parse_state_time(started_at) or self._now()
-        local_date = parsed.astimezone(_SHANGHAI_TIMEZONE).date()
-        expires_on = local_date + timedelta(days=self._monitor_days)
-        return datetime.combine(expires_on, time.min, tzinfo=_SHANGHAI_TIMEZONE)
+        参数：无。
 
-    def _is_expired(self, state: SyncedSheetState) -> bool:
-        expires_at = parse_state_time(state.monitor_expires_at)
-        return expires_at is not None and expires_at <= self._now()
+        返回值：无；损坏记录保留供人工核对，Redis 故障时抛错阻止服务启动。
+        """
+        converted = 0
+        for key in self._redis.scan_iter(match=f"{self._key_prefix}:*"):
+            if (
+                key == self._lock_key
+                or len(key.removeprefix(f"{self._key_prefix}:").split(":")) != 2
+            ):
+                continue
+            raw = self._redis.get(key)
+            if raw is None:
+                continue
+            try:
+                state = self._decode_state(key, raw)
+                desired = _encode(state)
+            except (ValueError, TypeError, KeyError) as error:
+                self._logger.error("去重状态无效，保留并阻止重复搬运：key=%s reason=%s", key, error)
+                desired = raw
+            converted += bool(self._redis.eval(_COMPARE_SET, 1, key, raw, desired))
+        self._logger.info("永久去重记录加载完成：record_count=%d", converted)
 
-    def _now(self) -> datetime:
-        value = self._now_provider()
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
+    def _decode_state(self, key: str, raw: str) -> CopyState:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError(f"去重记录不是对象：{key}")
+        if "status" not in data:
+            if not all(
+                isinstance(data.get(name), str) and data[name]
+                for name in ("record_id", "source_token", "target_name", "target_url", "synced_at")
+            ):
+                raise ValueError(f"历史搬运结果不完整：{key}")
+            data = {
+                "record_id": data["record_id"],
+                "source_token": data["source_token"],
+                "source_name": data.get("source_name", ""),
+                "source_url": data.get("source_url", ""),
+                "record_url": data.get("record_url", ""),
+                "status": "copied",
+                "target_token": urlsplit(data["target_url"]).path.rstrip("/").rsplit("/", 1)[-1],
+                "target_name": data["target_name"],
+                "target_url": data["target_url"],
+                "copied_at": data["synced_at"],
+            }
+        state = CopyState(**data)
+        if key != self._state_key(state.record_id, state.source_token):
+            raise ValueError(f"去重记录身份与键不匹配：{key}")
+        if state.status not in {"copying", "copied"}:
+            raise ValueError(f"去重状态无效：{key}")
+        if state.status == "copying" and not state.attempt_id:
+            raise ValueError(f"搬运占位缺少凭证：{key}")
+        if state.status == "copied" and not all(
+            (state.target_token, state.target_url, state.copied_at)
+        ):
+            raise ValueError(f"搬运结果不完整：{key}")
+        return state
 
-def format_state_time(value: datetime) -> str:
-    return value.astimezone(_SHANGHAI_TIMEZONE).isoformat(timespec="seconds")
+    def close(self) -> None:
+        self._redis.close()
 
 
-def parse_state_time(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed
-
-
-def _string_value(value: object) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def _optional_int(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
-
-
-def _positive_int(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return None
-    return value
+def _encode(state: CopyState) -> str:
+    return json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)

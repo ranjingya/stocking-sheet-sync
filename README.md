@@ -1,58 +1,26 @@
 # Stocking Sheet Sync
 
-将飞书多维表中的备货电子表格同步到指定共享文件夹，并向配置的人员发送成功或失败卡片。
+下单需求表格填充项目。当前提供飞书表格的一次性搬运：由多维表自动化触发，将源电子表格复制到指定共享文件夹，并发送结果卡片。
 
 ## 工作方式
 
-程序由 Webhook 服务和定时 Worker 共同完成同步：
+1. 多维表自动化将触发记录的 `record_id` 发送给 Webhook。
+2. 服务读取该记录，检查 `source.required_fields`，解析配置的链接字段，支持直接 Sheet 链接和 Wiki 节点。
+3. 按“记录 ID + 真实电子表格 token”查询 Redis。已有成功记录时返回 `unchanged`；同一记录更换为另一张源表格时可以搬运。
+4. 在 Redis 写入永久的 `copying` 占位后，复制表格到目标文件夹，副本名为配置前缀加源名称。
+5. 保存目标 token、名称、链接和搬运时间，将状态设为 `copied`，然后发送绿色成功卡片。
 
-1. 多维表自动化将新增或修改记录的 `record_id` 发送给 Webhook。
-2. Webhook 解析“下单表格”字段，兼容 Wiki 链接和直接 Sheet 链接，并立即创建首次副本。
-3. 已监听表格再次触发 Webhook 时只进入静默观察，不立即创建更新副本。
-4. 每张表格使用一个带三自然日有效期的 Redis String 保存监听状态和全部搬运版本。
-5. Worker 每 30 分钟检查状态合格且记录仍指向同一表格的监听对象。
-6. 发现变化的表格进入每分钟一次的静默观察；revision 再次变化时重新计时。
-7. revision 连续 10 分钟不变后再次校验记录状态，创建新副本并发送通知。
+源表格的内容修改不会触发追加副本。程序通过 Webhook 处理指定记录。
 
-Worker 只监控 Redis 中已经登记且未过期的表格，不扫描多维表历史记录。同一 revision
-最多复制一次；程序不会自动删除历史副本。
+## 环境与授权
 
-首次副本保持 `市场部-原标题`；后续更新副本按成功搬运次数依次命名为 `市场部-原标题-v2`、
-`市场部-原标题-v3`。源标题带 `.xlsx` 等表格扩展名时，版本号位于扩展名前，例如
-`市场部-原标题-v2.xlsx`。
+- Python 3.12 或更高版本、uv、Redis 6 或更高版本。
+- 数据应用：读取多维表记录、解析 Wiki 节点、读取源表格并复制文件到目标共享文件夹。
+- 消息应用：启用机器人能力并发布，允许向通知接收人发送消息。
 
-首次搬运成功卡片使用绿色主题，更新同步成功卡片使用黄色主题，失败卡片使用红色主题。
-所有卡片都提供原始记录和目标共享文件夹入口，成功卡片还提供本次同步副本入口。
+数据应用需要实际获得多维表、源文件及目标文件夹权限。多维表启用高级权限时，应为应用分配可读取记录的角色。通知人员必须在消息应用可用范围内，且使用消息应用对应的 `open_id`。
 
-## 环境要求
-
-- Python 3.12 或更高版本
-- [uv](https://docs.astral.sh/uv/)
-- Redis 6 或更高版本
-- 两个飞书企业自建应用：数据应用和消息应用
-
-数据应用负责读取和复制资源，需要具备以下能力，并实际获得对应资源的访问权限：
-
-- 读取目标多维表记录
-- 读取 Wiki 节点信息
-- 读取电子表格元信息
-- 复制云空间文件到目标文件夹
-
-消息应用负责通知，需要具备以下能力：
-
-- 以应用机器人身份发送消息
-
-还需要完成以下资源授权：
-
-- 将数据应用加入目标多维表；启用高级权限时，为数据应用分配可读取记录的角色。
-- 确保数据应用可以读取源 Wiki/电子表格。
-- 确保数据应用可以向目标共享文件夹写入文件。
-- 为消息应用启用机器人能力并发布，让通知接收人在消息应用可用范围内。
-
-`open_id` 与应用有关。`notifications.open_ids` 和 `notifications.failure_open_ids`
-必须使用消息应用获取的 `open_id`，不能直接复用集成平台生成的 `anycross_user_*` ID。
-
-## 安装
+## 安装与配置
 
 ```bash
 uv sync
@@ -60,40 +28,23 @@ cp .env.example .env
 cp config.example.toml config.toml
 ```
 
-配置分为两部分：
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`，可用 `CONFIG_PATH` 指定 TOML 配置位置。配置文件与凭证文件均应保存在 Git 管理范围之外。
 
-- `.env`：保存两套飞书应用凭证、`REDIS_URL` 和 Webhook 密钥。
-- `config.toml`：保存多维表、目标文件夹、通知人员和运行参数。
+| 配置区块 | 用途 |
+| --- | --- |
+| `feishu` | 飞书 OpenAPI 地址 |
+| `source` | 多维表、链接字段、搬运条件；`required_fields = {}` 表示不按字段过滤 |
+| `target` | 目标文件夹及副本名前缀 |
+| `notifications` | `open_ids` 接收成功通知，`failure_open_ids` 接收失败通知 |
+| `redis` | 去重记录命名空间 `key_prefix` |
+| `web` | Webhook 对外 HTTPS 地址 |
+| `runtime` | 锁有效期、接口超时、重试次数及日志级别 |
 
-`config.toml` 已加入 `.gitignore`，可以直接填写实际业务参数；项目提交的是
-`config.example.toml` 模板。如需将配置放在其他位置，在 `.env` 中设置 `CONFIG_PATH`。
+`runtime.lock_ttl_seconds` 默认为 300 秒，只控制并发锁。去重记录与复制占位永久保存。`runtime.max_retries` 默认为 3，适用于读取等接口；复制请求只发送一次。
 
-配置区块说明：
+`INFO` 日志记录每条记录的处理结果、副本 token 和链接、通知结果、状态加载及异常。可通过 `openssl rand -hex 32` 生成 Webhook 密钥并写入 `.env`。
 
-- `[source]`：源多维表、链接字段、监听状态条件和监听自然日数。
-- `[target]`：目标共享文件夹及副本名前缀。
-- `[notifications]`：`open_ids` 接收成功通知，`failure_open_ids` 接收失败通知。
-- `[redis]`：Redis 键命名空间。
-- `[runtime]`：常规检查间隔、变动检查间隔、静默时间、超时、重试和日志级别。
-- `[web]`：Webhook 对外 HTTPS 地址。
-
-`runtime.log_level = "INFO"` 适用于生产环境，记录服务启动、Webhook 收到与处理结果、
-Worker 每轮汇总、静默观察进度、搬运结果、跳过原因以及异常。设置为 `DEBUG` 时会额外记录
-接口请求、解析、去重、复制和通知等排障明细。
-
-生成 Webhook 密钥并写入 `.env`：
-
-```bash
-openssl rand -hex 32
-```
-
-```dotenv
-WEBHOOK_SECRET=上一步生成的随机字符串
-```
-
-## 多维表自动化 Webhook
-
-项目使用 Flask 接收多维表自动化请求，线上由 Gunicorn 运行：
+## Webhook 服务
 
 ```bash
 uv run gunicorn \
@@ -106,150 +57,75 @@ uv run gunicorn \
   'stocking_sheet_sync.web:create_app()'
 ```
 
-当前服务地址和接口为：
-
-```text
-https://stock-sync.kktree.cn/webhooks/base-record
-```
-
 多维表自动化中的“发送 HTTP 请求”节点填写：
 
 ```text
 请求方式：POST
-请求地址：https://stock-sync.kktree.cn/webhooks/base-record
+请求地址：https://<服务域名>/webhooks/base-record
 请求头：Authorization: Bearer <WEBHOOK_SECRET>
 请求头：Content-Type: application/json
 ```
 
-请求体中的 `record_id` 选择触发记录的“记录 ID”变量：
+请求体中的 `record_id` 使用触发记录的“记录 ID”变量：
 
 ```json
-{
-  "record_id": "recxxxxxxxxxxxx"
-}
+{"record_id": "recxxxxxxxxxxxx"}
 ```
 
-Webhook 只读取并处理指定记录。以下地址用于负载均衡器或部署平台健康检查：
+| result | 含义 | HTTP 状态码 |
+| --- | --- | --- |
+| `copied` | 已完成搬运 | 200 |
+| `unchanged` | 该记录的源表格已有成功副本 | 200 |
+| `skipped` | 记录条件不符或链接不受支持 | 200 |
+| `busy` | 搬运锁已被占用，可稍后重试 | 409 |
+| `failed` | 处理失败，详见 `reason` 和日志 | 500 |
 
-响应中的 `result` 使用六种统一结果：`copied`、`unchanged`、`observing`、`skipped`、
-`busy`、`failed`。未搬运或处理失败时，`reason` 会说明原因。
+`GET /healthz` 用于进程健康检查。
+
+## Redis 去重与异常处理
+
+每个源表格对应一个永久 Redis String：
 
 ```text
-GET https://stock-sync.kktree.cn/healthz
+<key_prefix>:<record_id>:<source_token>
 ```
 
-本机测试 Webhook：
+JSON 包含源记录及源表格信息、`status`、本次操作的 `attempt_id` 和 `started_at`，成功后包含 `target_token`、`target_name`、`target_url`、`copied_at`。时间以 UTC+8 保存。并发锁使用 `<key_prefix>:lock:scan`，带有效期且只允许持有者释放。
 
-```bash
-set -a
-source .env
-set +a
+服务启动时会将仍存在的历史成功搬运记录转换为永久去重记录，以其最新目标副本作为搬运结果。已过期或丢失的记录无法自动恢复。损坏记录保留供核对，对应源表格的请求会失败。
 
-curl --request POST 'http://127.0.0.1:8000/webhooks/base-record' \
-  --header "Authorization: Bearer $WEBHOOK_SECRET" \
-  --header 'Content-Type: application/json' \
-  --data '{"record_id":"recxxxxxxxxxxxx"}'
-```
+飞书明确拒绝复制时，服务释放本次占位，可以在解决权限等问题后重新触发。复制超时、服务端异常、成功响应缺少文件信息，或复制后的 Redis 写入失败时，服务保留 `copying` 占位。再次触发会返回失败并要求核对，避免生成重复副本。
 
-Gunicorn 负责即时接收新增或修改记录。常驻 Worker 只检测 Redis 中已登记电子表格的
-`revision` 变化；两种入口共享 Redis 锁和同步状态，不会重复搬运同一版本。
+处理长期停留在 `copying` 的记录时：
 
-## 运行
+1. 确认对应请求已结束，暂停该记录的自动化触发。
+2. 根据日志、目标文件夹及副本内容核对复制是否成功。
+3. 已成功时，将原状态中的 `status` 设为 `copied`，补齐目标 token、名称、链接及 `copied_at`，永久保存；明确未生成副本时，删除该条占位后重新触发。
+4. 恢复自动化触发。
 
-执行一轮 Redis 已登记表格检查：
+成功状态先于通知保存。通知失败写日志，后续 Webhook 会按成功记录去重；需要补发时使用手动通知命令。
 
-```bash
-uv run stocking-sheet-sync --once
-```
+Redis 应开启持久化并配置备份，避免淘汰这些键。去重依赖 Redis 状态的保留；清空或丢失记录后，程序无法识别已有副本。
 
-启动常驻 Worker：
+## 手动补发搬运通知
 
-```bash
-uv run stocking-sheet-sync
-```
-
-也可以直接运行：
-
-```bash
-uv run python main.py --once
-```
-
-## 手动发送同步通知
-
-需要手动补发卡片时，可以直接指定原始记录和目标表格的名称与链接。
-该命令仅向 `notifications.open_ids` 发送卡片，不复制文件，也不读写 Redis。
-
-首次搬运通知：
+以下命令向 `notifications.open_ids` 发送绿色成功卡片，只处理通知：
 
 ```bash
 uv run stocking-sheet-sync-notify \
-  --mode copy \
   --original-name '原始记录名称' \
   --original-url 'https://example.feishu.cn/record/record-token' \
   --target-name '市场部-目标表格名称' \
   --target-url 'https://example.feishu.cn/sheets/target-token'
 ```
 
-更新搬运通知：
-
-```bash
-uv run stocking-sheet-sync-notify \
-  --mode update \
-  --original-name '原始记录名称' \
-  --original-url 'https://example.feishu.cn/record/record-token' \
-  --target-name '市场部-目标表格名称-v2' \
-  --target-url 'https://example.feishu.cn/sheets/target-token'
-```
-
-## Redis 状态
-
-每个已监听表格保存在一个 Redis String：
-
-```text
-ss:<record_id>:<source_token>
-```
-
-Value 是 JSON，包含：
-
-- 多维表记录 ID、真实电子表格 token、名称和链接
-- 原多维表记录链接
-- 最新 revision、搬运版本号、目标副本及 UTC+8 同步时间
-- 首次监听时间、过期时间和静默观察状态
-- `versions`：全部成功搬运版本及其目标链接
-
-Key 在首次同步日期后的第三个自然日零点过期，后续搬运不会延长有效期。
-
-如果多维表原始记录已删除，Worker 会向 `failure_open_ids` 发送红色通知卡片，保留全部
-目标副本，并删除该记录对应的 Redis Key 以停止后续监听。
-
-复制失败时不写 Redis，下次扫描会继续尝试。通知失败只写日志，不额外保存通知状态。
-
-扫描锁保存为带自动过期时间的 Redis String：
-
-```text
-ss:lock:scan
-```
-
-可以通过以下命令查看同步记录：
-
-```bash
-redis-cli -u "$REDIS_URL" --scan --pattern 'ss:*'
-redis-cli -u "$REDIS_URL" GET 'ss:<record_id>:<source_token>'
-```
-
-Redis 需要开启持久化或使用可靠的托管实例。清空这些键会让程序失去历史去重依据。
-
 ## Docker Compose
 
-`docker-compose.yaml` 使用同一个镜像运行两个长期服务：
-
-- `stocking-sheet-sync`：Gunicorn Webhook 服务，通过 Traefik 对外提供 HTTPS 接口。
-- `stocking-sheet-sync-worker`：单进程定时 Worker，不开放端口。
-
-两个服务共用 `.env`、`config.toml` 和 Redis。启动或更新服务：
+`docker-compose.yaml` 运行 `stocking-sheet-sync` Webhook 服务，使用外部 Redis，通过 Traefik 提供 HTTPS 接口。准备好镜像、`.env` 和 `config.toml` 后启动：
 
 ```bash
-docker compose up -d --force-recreate
+docker compose pull stocking-sheet-sync
+docker compose up -d --remove-orphans stocking-sheet-sync
 ```
 
 ## 检查与测试
@@ -258,3 +134,5 @@ docker compose up -d --force-recreate
 uv run pytest
 uv run --group lint ruff check .
 ```
+
+测试使用隔离的状态存储和 HTTP 模拟响应，不连接业务 Redis 或飞书。

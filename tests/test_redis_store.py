@@ -1,119 +1,71 @@
-import json
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 
-from stocking_sheet_sync.models import SyncedRecord
+import pytest
+
+from stocking_sheet_sync.models import CopyResult, CopyState
 from stocking_sheet_sync.redis_store import RedisStateStore
 from tests.fakes import FakeRedis
 
 
-class MutableClock:
-    def __init__(self) -> None:
-        self.value = datetime(2026, 8, 21, 2, 0, tzinfo=UTC)
-
-    def __call__(self) -> datetime:
-        return self.value
-
-
-def make_record(revision: int, copy_version: int = 1) -> SyncedRecord:
-    return SyncedRecord(
-        record_id="rec_test",
-        source_token="source-token",
-        source_revision=revision,
-        source_name="备货测试表",
-        source_url="https://example.feishu.cn/sheets/source-token",
-        record_url="https://example.feishu.cn/record/rec_test",
-        target_name=f"市场部-备货测试表-v{copy_version}",
-        target_url=f"https://example.feishu.cn/sheets/target-{revision}",
-        synced_at="2026-08-21T10:00:00+08:00",
-        copy_version=copy_version,
+def fixture_store():
+    redis = FakeRedis()
+    store = RedisStateStore("redis://unused", "test", client=redis)
+    state = CopyState(
+        "rec_a",
+        "source",
+        "名称",
+        "https://example.feishu.cn/sheets/source",
+        "https://example.feishu.cn/record/a",
+        "copying",
+        attempt_id="attempt-1",
     )
+    return store, redis, state
 
 
-def test_redis_store_saves_one_string_with_complete_versions() -> None:
-    client = FakeRedis()
-    clock = MutableClock()
-    store = RedisStateStore(
-        "redis://localhost:6379/0",
-        "ss",
-        client=client,
-        now_provider=clock,
-    )
-
-    store.save_synced(make_record(12))
-    state = store.get_state("rec_test", "source-token")
-
-    assert state is not None
-    assert state.source_name == "备货测试表"
-    assert state.synced_revision == 12
-    assert len(state.versions) == 1
-    assert store.is_synced("rec_test", "source-token", 12) is True
-    assert store.is_synced("rec_test", "source-token", 13) is False
-    assert store.next_copy_version("rec_test", "source-token") == 2
-    raw = json.loads(client.strings["ss:rec_test:source-token"])
-    assert raw["copy_version"] == 1
-    assert raw["versions"][0]["revision"] == 12
-    assert "ss:rec_test:source-token" in client.expirations
+def test_lock_release_checks_owner():
+    store, redis, _ = fixture_store()
+    first = store.acquire_run_lock(30)
+    assert redis.expirations["test:lock:scan"] == 30
+    assert store.acquire_run_lock(30) is None
+    redis.delete("test:lock:scan")
+    second = store.acquire_run_lock(30)
+    store.release_run_lock(first)
+    assert redis.get("test:lock:scan") == second
+    store.release_run_lock(second)
+    assert redis.get("test:lock:scan") is None
 
 
-def test_redis_store_appends_versions_and_persists_pending_state() -> None:
-    client = FakeRedis()
-    clock = MutableClock()
-    store = RedisStateStore(
-        "redis://localhost:6379/0",
-        "ss",
-        client=client,
-        now_provider=clock,
-    )
-    store.save_synced(make_record(4, 1))
-    store.save_synced(make_record(7, 2))
-
-    latest = store.list_latest_synced()
-    assert len(latest) == 1
-    assert latest[0].synced_revision == 7
-    assert len(latest[0].versions) == 2
-    assert store.next_copy_version("rec_test", "source-token") == 3
-
-    store.save_pending(latest[0], 8, "2026-08-21T10:05:00+08:00")
-    observed = store.list_latest_synced()[0]
-    assert observed.pending_revision == 8
-    assert observed.pending_since == "2026-08-21T10:05:00+08:00"
-
-    store.save_pending(observed, None)
-    cleared = store.list_latest_synced()[0]
-    assert cleared.pending_revision is None
-    assert cleared.pending_since == ""
+def test_claims_are_permanent_and_compare_ownership():
+    store, redis, state = fixture_store()
+    assert store.begin_copy(state)
+    assert not store.begin_copy(replace(state, attempt_id="attempt-2"))
+    store.cancel_copy(replace(state, attempt_id="attempt-2"))
+    result = CopyResult("目标", "target", "sheet", "https://example.feishu.cn/sheets/target")
+    with pytest.raises(RuntimeError, match="占位已变化"):
+        store.finish_copy(replace(state, attempt_id="attempt-2"), result, "today")
+    store.finish_copy(state, result, "2026-09-14T10:00:00+08:00")
+    store.cancel_copy(state)
+    saved = store.get_state(state.record_id, state.source_token)
+    assert saved.status == "copied"
+    assert saved.target_token == "target"
+    assert redis.expirations == {}
 
 
-def test_redis_store_expires_after_three_natural_days_without_extension() -> None:
-    client = FakeRedis()
-    clock = MutableClock()
-    store = RedisStateStore(
-        "redis://localhost:6379/0",
-        "ss",
-        monitor_days=3,
-        client=client,
-        now_provider=clock,
-    )
-    store.save_synced(make_record(4, 1))
-    first_expiration = client.expirations["ss:rec_test:source-token"]
-
-    clock.value += timedelta(days=1)
-    store.save_synced(make_record(7, 2))
-    assert client.expirations["ss:rec_test:source-token"] == first_expiration
-
-    clock.value = datetime(2026, 8, 23, 16, 0, tzinfo=UTC)
-    assert store.get_state("rec_test", "source-token") is None
-    assert "ss:rec_test:source-token" not in client.strings
+def test_startup_preserves_current_claim_and_lock():
+    store, redis, state = fixture_store()
+    store.begin_copy(state)
+    lock = store.acquire_run_lock(30)
+    store.migrate_legacy_records()
+    assert store.get_state(state.record_id, state.source_token) == state
+    assert redis.expirations == {"test:lock:scan": 30}
+    assert redis.get("test:lock:scan") == lock
 
 
-def test_redis_lock_is_released_only_by_owner() -> None:
-    client = FakeRedis()
-    store = RedisStateStore("redis://localhost:6379/0", "ss", client=client)
-
-    owner_token = store.acquire_run_lock(1)
-    assert isinstance(owner_token, str)
-    assert store.acquire_run_lock(1) is None
-    store.release_run_lock("not-the-owner")
-    assert "ss:lock:scan" in client.strings
-    store.release_run_lock(owner_token)
-    assert isinstance(store.acquire_run_lock(1), str)
+def test_invalid_history_is_retained_without_expiry():
+    store, redis, state = fixture_store()
+    redis.set("test:rec_a:source", "{}", ex=10)
+    store.migrate_legacy_records()
+    with pytest.raises(ValueError, match="不完整"):
+        store.get_state(state.record_id, state.source_token)
+    assert redis.get("test:rec_a:source") == "{}"
+    assert not redis.expirations

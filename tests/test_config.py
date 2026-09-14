@@ -11,11 +11,8 @@ api_base_url = "https://open.feishu.cn"
 [source]
 app_token = "base-token"
 table_id = "table-id"
-view_id = "view-id"
 link_field_name = "下单表格"
 required_fields = { "状态" = "需求收集" }
-monitor_required_fields = { "状态" = "需求收集" }
-monitor_days = 3
 
 [target]
 folder_token = "folder-token"
@@ -32,9 +29,7 @@ key_prefix = "ss-test"
 public_base_url = "https://stock-sync.example.com"
 
 [runtime]
-poll_interval_minutes = 30
-change_check_interval_minutes = 1
-change_quiet_minutes = 10
+lock_ttl_seconds = 180
 request_timeout_seconds = 20
 max_retries = 4
 log_level = "WARNING"
@@ -63,15 +58,11 @@ def test_load_config_separates_credentials_and_business_settings(tmp_path: Path)
     assert config.feishu_message_app_secret == "message-secret"
     assert config.base_app_token == "base-token"
     assert config.required_fields == {"状态": "需求收集"}
-    assert config.monitor_required_fields == {"状态": "需求收集"}
-    assert config.monitor_days == 3
     assert config.notify_open_ids == ("ou_first", "ou_second")
     assert config.failure_notify_open_ids == ("ou_failure",)
     assert config.redis_url == "redis://redis.example:6379/2"
     assert config.redis_key_prefix == "ss-test"
-    assert config.poll_interval_minutes == 30
-    assert config.change_check_interval_minutes == 1
-    assert config.change_quiet_minutes == 10
+    assert config.lock_ttl_seconds == 180
     assert config.log_level == "WARNING"
     assert config.public_base_url == "https://stock-sync.example.com"
     assert config.webhook_secret == "webhook-secret"

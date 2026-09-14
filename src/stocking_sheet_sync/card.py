@@ -10,8 +10,7 @@ def build_sync_card(
     *,
     original_name: str,
     record_url: str,
-    status: Literal["success", "failure", "deleted"],
-    sync_type: Literal["initial", "update"],
+    status: Literal["success", "failure"],
     target_folder_token: str,
     target_name: str = "",
     target_url: str = "",
@@ -23,8 +22,7 @@ def build_sync_card(
     参数：
         original_name：原文档名称。
         record_url：原多维表记录链接。
-        status：同步状态，支持 success、failure 或 deleted。
-        sync_type：同步场景，支持 initial 首次同步或 update 更新同步。
+        status：搬运状态，支持 success 或 failure。
         target_folder_token：目标共享文件夹 token。
         target_name：同步后表格名称，成功时必填。
         target_url：同步后表格链接，成功时必填。
@@ -34,11 +32,8 @@ def build_sync_card(
         可直接发送为 interactive 消息的 Card 2.0 对象。
     """
     success = status == "success"
-    deleted = status == "deleted"
-    if status not in {"success", "failure", "deleted"}:
-        raise ValueError("status 必须填写 success、failure 或 deleted")
-    if sync_type not in {"initial", "update"}:
-        raise ValueError("sync_type 必须填写 initial 或 update")
+    if status not in {"success", "failure"}:
+        raise ValueError("status 必须填写 success 或 failure")
 
     original_name = _escape_markdown(_clean_text(original_name))
     record_url = _validate_url(record_url, "原始记录链接")
@@ -49,38 +44,22 @@ def build_sync_card(
 
     if not original_name:
         raise ValueError("原文档名称不能为空")
-    if (success or deleted) and (not target_name or not target_url):
-        raise ValueError("同步成功或原记录删除时目标表格名称和链接不能为空")
-    if not success and not deleted and not reason:
+    if success and (not target_name or not target_url):
+        raise ValueError("同步成功时目标表格名称和链接不能为空")
+    if not success and not reason:
         raise ValueError("同步失败时失败原因不能为空")
 
-    if deleted:
-        result_text = "原记录已删除"
-    else:
-        result_text = (
-            f"同步{'成功' if success else '失败'}"
-            if sync_type == "initial"
-            else f"更新{'成功' if success else '失败'}"
-        )
+    result_text = f"搬运{'成功' if success else '失败'}"
     if success:
-        target_label = "同步副本" if sync_type == "initial" else "最新副本"
         detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n"
-            f"{target_label}： [{target_name}]({target_url})"
+            f"原始记录： [{original_name}]({record_url})\n同步副本： [{target_name}]({target_url})"
         )
-        action_text = "查看同步副本" if sync_type == "initial" else "查看最新副本"
-        action_url = target_url
-    elif deleted:
-        detail_content = (
-            f"原始记录： {original_name}\n"
-            f"最近副本： [{target_name}]({target_url})"
-        )
-        action_text = "查看最近副本"
+        action_text = "查看同步副本"
         action_url = target_url
     else:
         detail_content = (
             f"原始记录： [{original_name}]({record_url})\n"
-            "同步副本： 未生成\n"
+            "同步副本： 请核对目标文件夹\n"
             f"失败原因： <font color='red'>{reason}</font>"
         )
         action_text = "查看原始记录"
@@ -95,9 +74,7 @@ def build_sync_card(
         },
         "header": {
             "title": {"tag": "plain_text", "content": f"产品下单同步 · {result_text}"},
-            "template": (
-                "yellow" if success and sync_type == "update" else "green" if success else "red"
-            ),
+            "template": ("green" if success else "red"),
         },
         "body": {
             "direction": "vertical",
@@ -123,12 +100,10 @@ def build_sync_card(
                         {
                             "tag": "column",
                             "width": "auto",
-                            "elements": [
-                                _build_button("打开目标文件夹", folder_url, "default")
-                            ],
+                            "elements": [_build_button("打开目标文件夹", folder_url, "default")],
                         },
                     ],
-                }
+                },
             ],
         },
     }

@@ -45,10 +45,10 @@ def create_app(
         store = RedisStateStore(
             app_config.redis_url,
             app_config.redis_key_prefix,
-            monitor_days=app_config.monitor_days,
             socket_timeout_seconds=app_config.request_timeout_seconds,
             logger=logger,
         )
+        store.migrate_legacy_records()
         data_client = FeishuClient(
             app_config,
             app_config.feishu_data_app_id,

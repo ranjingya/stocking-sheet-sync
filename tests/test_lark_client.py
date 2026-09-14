@@ -1,0 +1,130 @@
+import time
+
+import httpx
+import pytest
+
+from stocking_sheet_sync.lark_client import CopyOutcomeUnknown, CopyRejected, FeishuClient
+from tests.test_sync_service import make_config
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ["timeout", "server_error", "missing_file", "invalid_json", "null_fields", "gateway_timeout"],
+)
+def test_copy_uncertain_response_is_never_retried(tmp_path, outcome):
+    client = FeishuClient(make_config(tmp_path), "test-app", "test-secret", "test")
+    client._client.close()
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("响应超时", request=request)
+        if outcome == "server_error":
+            return httpx.Response(503, json={"code": 1, "msg": "服务异常"})
+        if outcome == "null_fields":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "file": {
+                            "token": None,
+                            "url": None,
+                        }
+                    },
+                },
+            )
+        if outcome == "gateway_timeout":
+            return httpx.Response(408, json={"code": 1, "msg": "请求超时"})
+        if outcome == "invalid_json":
+            return httpx.Response(200, text="<html>异常响应</html>")
+        return httpx.Response(200, json={"code": 0, "data": {}})
+
+    client._client = httpx.Client(
+        base_url="https://example.invalid", transport=httpx.MockTransport(handler)
+    )
+    client._access_token = "test-token"
+    client._token_expires_at = time.monotonic() + 3600
+    try:
+        with pytest.raises(CopyOutcomeUnknown):
+            client.copy_spreadsheet("source", "目标")
+        assert len(requests) == 1
+        assert requests[0].url.path.endswith("/source/copy")
+    finally:
+        client.close()
+
+
+def test_explicit_copy_rejection_can_be_reported_for_retry(tmp_path):
+    client = FeishuClient(make_config(tmp_path), "test-app", "test-secret", "test")
+    client._client.close()
+    client._client = httpx.Client(
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(403, json={"code": 99991672, "msg": "没有权限"})
+        ),
+    )
+    client._access_token = "test-token"
+    client._token_expires_at = time.monotonic() + 3600
+    try:
+        with pytest.raises(CopyRejected, match="没有权限"):
+            client.copy_spreadsheet("source", "目标")
+    finally:
+        client.close()
+
+
+def test_read_request_still_retries(tmp_path, monkeypatch):
+    client = FeishuClient(make_config(tmp_path), "test-app", "test-secret", "test")
+    client._client.close()
+    attempts = []
+
+    def handler(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return httpx.Response(503, json={"code": 1})
+        return httpx.Response(200, json={"code": 0, "data": {"ok": True}})
+
+    client._client = httpx.Client(
+        base_url="https://example.invalid", transport=httpx.MockTransport(handler)
+    )
+    client._access_token = "test-token"
+    client._token_expires_at = time.monotonic() + 3600
+    monkeypatch.setattr("stocking_sheet_sync.lark_client.time.sleep", lambda _: None)
+    try:
+        assert client._request("GET", "/test") == {"ok": True}
+        assert len(attempts) == 2
+    finally:
+        client.close()
+
+
+def test_successful_copy_returns_target_identity(tmp_path):
+    client = FeishuClient(make_config(tmp_path), "test-app", "test-secret", "test")
+    client._client.close()
+    client._client = httpx.Client(
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "file": {
+                            "token": "target",
+                            "url": "https://example.feishu.cn/sheets/target",
+                            "name": "目标",
+                            "type": "sheet",
+                        }
+                    },
+                },
+            )
+        ),
+    )
+    client._access_token = "test-token"
+    client._token_expires_at = time.monotonic() + 3600
+    try:
+        result = client.copy_spreadsheet("source", "目标")
+        assert result.token == "target"
+        assert result.name == "目标"
+        assert result.url == "https://example.feishu.cn/sheets/target"
+    finally:
+        client.close()
