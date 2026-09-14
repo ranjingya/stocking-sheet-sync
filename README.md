@@ -25,10 +25,12 @@
 ```bash
 uv sync
 cp .env.example .env
-cp config.example.toml config.toml
+cp config/config.example.toml config/config.toml
 ```
 
-`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET` 和历史销量检查使用的 `WAREHOUSE_*` 数仓参数，可用 `CONFIG_PATH` 指定 TOML 配置位置。配置文件与凭证文件均应保存在 Git 管理范围之外。
+在项目根目录运行程序，主配置默认读取 `config/config.toml`，历史销量来源配置默认读取 `config/sales-sources.toml`。两份 TOML 分别维护搬运设置和数仓表、字段、平台映射。
+
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET` 和历史销量检查使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例和销量来源配置随项目维护。
 
 | 配置区块 | 用途 |
 | --- | --- |
@@ -121,12 +123,29 @@ uv run stocking-sheet-sync-notify \
 
 ## Docker Compose
 
-`docker-compose.yaml` 运行 `stocking-sheet-sync` Webhook 服务，使用外部 Redis，通过 Traefik 提供 HTTPS 接口。准备好镜像、`.env` 和 `config.toml` 后启动：
+`docker-compose.yaml` 运行 `stocking-sheet-sync` Webhook 服务，使用外部 Redis，通过 Traefik 提供 HTTPS 接口。宿主机按以下结构准备配置：
+
+```text
+/home/yatui/stocking-sheet-sync/
+├── docker-compose.yaml
+├── .env
+└── config/
+    ├── config.toml
+    └── sales-sources.toml
+```
+
+将 `config/config.example.toml` 复制为宿主机的 `config/config.toml` 并填写业务设置，将项目的 `config/sales-sources.toml` 放入同一目录。Compose 将整个宿主机目录 `/home/yatui/stocking-sheet-sync/config` 只读挂载到容器的 `/app/config`；该目录需要包含上述两份 TOML。容器工作目录为 `/app`，程序按默认相对路径读取配置，凭证通过 `.env` 注入。
+
+在部署目录启动：
 
 ```bash
 docker compose pull stocking-sheet-sync
 docker compose up -d --remove-orphans stocking-sheet-sync
 ```
+
+宿主机修改 TOML 后，执行 `docker compose restart stocking-sheet-sync` 使常驻服务加载配置；手动检查命令每次启动时读取销量来源配置。更新配置无需构建镜像。修改 `.env` 后，执行 `docker compose up -d --force-recreate stocking-sheet-sync` 重新注入环境变量。
+
+CD 发布镜像并更新 Compose 文件，宿主机的 `.env` 和 `config/` 由部署人员维护。
 
 ## 检查与测试
 

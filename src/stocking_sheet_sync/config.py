@@ -46,7 +46,7 @@ def load_config(
 
     参数：
         env：可选环境变量映射；未传入时加载 .env 并读取当前进程环境。
-        config_path：可选 TOML 配置路径；优先级高于 CONFIG_PATH 环境变量。
+        config_path：可选 TOML 配置路径；默认读取当前工作目录下的 config/config.toml。
 
     返回值：
         完成类型转换和校验的 AppConfig。
@@ -57,9 +57,7 @@ def load_config(
     else:
         environment = env
 
-    selected_path = Path(
-        config_path or environment.get("CONFIG_PATH", "./config.toml")
-    ).expanduser()
+    selected_path = Path(config_path or "config/config.toml").expanduser()
     selected_path = selected_path.resolve()
     document = _read_toml(selected_path)
 

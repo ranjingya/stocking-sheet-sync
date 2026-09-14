@@ -29,7 +29,7 @@ def create_app(
     功能说明：创建接收飞书多维表自动化请求的 Flask 应用。
 
     参数：
-        config：可选的应用配置；未传入时从 .env 和 config.toml 加载。
+        config：可选的应用配置；未传入时从 .env 和 config/config.toml 加载。
         service：可选的同步服务；测试时可传入替代实现。
 
     返回值：配置完成的 Flask 应用实例。
