@@ -31,36 +31,35 @@ class WarehouseSettings:
     @classmethod
     def load(cls, env_file: Path | None = None, env: Mapping[str, str] | None = None):
         """
-        功能说明：读取与 jd-insight 一致的 DB_* 连接参数，环境变量优先。
+        功能说明：读取本项目的 WAREHOUSE_* 数仓连接参数，环境变量优先。
 
         参数：
-            env_file：可选凭证文件路径，只读加载。
+            env_file：可选凭证文件路径；默认只读当前目录的 .env，不搜索父目录。
             env：可选环境变量映射，默认使用进程环境。
 
         返回值：经过校验且隐藏密码展示的连接设置。
         """
         if env_file is not None and not env_file.is_file():
             raise ValueError("数仓凭证文件不存在")
+        selected_file = env_file if env_file is not None else Path(".env")
         values = {
-            **(dotenv_values(env_file) if env_file else {}),
+            **(dotenv_values(selected_file) if selected_file.is_file() else {}),
             **(os.environ if env is None else env),
         }
-        if values.get("DB_DRIVER", "mysql+pymysql") != "mysql+pymysql":
-            raise ValueError("数仓驱动需要使用 mysql+pymysql")
-        names = ("DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD")
+        names = ("WAREHOUSE_HOST", "WAREHOUSE_DATABASE", "WAREHOUSE_USER", "WAREHOUSE_PASSWORD")
         if any(not values.get(name) for name in names):
-            raise ValueError("数仓连接配置不完整，需要 DB_HOST、DB_NAME、DB_USER、DB_PASSWORD")
-        port = int(values.get("DB_PORT", "3306"))
-        connect = int(values.get("DB_CONNECT_TIMEOUT", "10"))
-        read = int(values.get("DB_READ_TIMEOUT", "30"))
+            raise ValueError("数仓连接配置不完整，请填写本项目的 WAREHOUSE_* 必填参数")
+        port = int(values.get("WAREHOUSE_PORT", "3306"))
+        connect = int(values.get("WAREHOUSE_CONNECT_TIMEOUT", "10"))
+        read = int(values.get("WAREHOUSE_READ_TIMEOUT", "30"))
         if not 1 <= port <= 65535 or not 1 <= connect <= 60 or not 1 <= read <= 120:
             raise ValueError("数仓端口或超时设置无效")
         return cls(
-            values["DB_HOST"],
+            values["WAREHOUSE_HOST"],
             port,
-            values["DB_NAME"],
-            values["DB_USER"],
-            values["DB_PASSWORD"],
+            values["WAREHOUSE_DATABASE"],
+            values["WAREHOUSE_USER"],
+            values["WAREHOUSE_PASSWORD"],
             connect,
             read,
         )

@@ -28,7 +28,7 @@ cp .env.example .env
 cp config.example.toml config.toml
 ```
 
-`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`，可用 `CONFIG_PATH` 指定 TOML 配置位置。配置文件与凭证文件均应保存在 Git 管理范围之外。
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET` 和历史销量检查使用的 `WAREHOUSE_*` 数仓参数，可用 `CONFIG_PATH` 指定 TOML 配置位置。配置文件与凭证文件均应保存在 Git 管理范围之外。
 
 | 配置区块 | 用途 |
 | --- | --- |

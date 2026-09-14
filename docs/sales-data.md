@@ -16,7 +16,7 @@
 
 多维表中的视图名带有 `MySQL ` 前缀，部分还带有连接器名称后缀数字。实际数据库表名以数仓元数据为准，保存在 `config/sales-sources.toml` 中。
 
-京东自营的 ADS 表提供当前汇总，BWD 表保留历史日快照，可按指定截止日期读取。出库件数字段与成交件数字段是不同口径。本实现复用 `jd-insight` 的 PyMySQL 连接方式与 `DB_*` 参数约定，读取业务出库字段。
+京东自营的 ADS 表提供当前汇总，BWD 表保留历史日快照，可按指定截止日期读取。出库件数字段与成交件数字段是不同口径。本项目的 `SalesReader` 独立管理 PyMySQL 连接、参数化查询、出库统计和异常处理，连接参数使用 `WAREHOUSE_*`。
 
 其他四个平台按 `outstock_time >= 开始日零点 AND outstock_time < 预估日零点` 查询，要求 `outstock_type = 销售出库`、`outstock_status = 已出库`、`document_status = 已出库`。日期直接采用数仓保存的业务时间，不对无时区字段做 UTC 平移。
 
@@ -48,14 +48,15 @@
 
 ## 命令
 
-在项目根目录运行，先安装 Python 依赖，并准备已登录用户身份的 `lark-cli`。数仓凭证放在环境变量或独立 `.env` 文件中。
+在项目根目录运行，先安装 Python 依赖，并准备已登录用户身份的 `lark-cli`。数仓凭证放在本项目的 `.env` 或部署环境变量中。默认仅加载当前目录的 `.env`，环境变量优先；可通过 `--db-env-file` 显式指定其他独立凭证文件。
+
+必填参数为 `WAREHOUSE_HOST`、`WAREHOUSE_DATABASE`、`WAREHOUSE_USER`、`WAREHOUSE_PASSWORD`。可选参数包括 `WAREHOUSE_PORT`、`WAREHOUSE_CONNECT_TIMEOUT`、`WAREHOUSE_READ_TIMEOUT`，完整模板见 `.env.example`。
 
 ```bash
 uv sync
 uv run stocking-sheet-sync-inspect \
   --spreadsheet-token '<电子表格 token>' \
   --sheet-id '<工作表 ID>' \
-  --db-env-file '/path/to/warehouse.env' \
   --as-of 2026-09-05 \
   --output artifacts/check
 ```

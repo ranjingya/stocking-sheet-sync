@@ -128,9 +128,12 @@ def test_invalid_identifiers_rejected(value):
 
 def test_settings_file_is_read_only_and_env_takes_precedence(tmp_path):
     file = tmp_path / "db.env"
-    text = "DB_HOST=example.invalid\nDB_NAME=base\nDB_USER=user\nDB_PASSWORD=private-secret\n"
+    text = (
+        "WAREHOUSE_HOST=example.invalid\nWAREHOUSE_DATABASE=base\n"
+        "WAREHOUSE_USER=user\nWAREHOUSE_PASSWORD=private-secret\n"
+    )
     file.write_text(text)
-    settings = WarehouseSettings.load(file, {"DB_NAME": "override"})
+    settings = WarehouseSettings.load(file, {"WAREHOUSE_DATABASE": "override"})
     assert settings.database == "override"
     assert "private-secret" not in repr(settings)
     assert file.read_text() == text
@@ -182,3 +185,35 @@ def test_detail_deduplication_executes_against_real_sql_engine(monkeypatch):
         assert result["rows"][0]["quantity"] is None
     finally:
         db.close()
+
+
+def test_settings_default_to_current_project_env_only(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (tmp_path / ".env").write_text(
+        "WAREHOUSE_HOST=parent.invalid\nWAREHOUSE_DATABASE=parent\n"
+        "WAREHOUSE_USER=user\nWAREHOUSE_PASSWORD=parent-secret\n"
+    )
+    monkeypatch.chdir(project)
+    with pytest.raises(ValueError, match="配置不完整"):
+        WarehouseSettings.load(env={})
+    (project / ".env").write_text(
+        "WAREHOUSE_HOST=own.invalid\nWAREHOUSE_DATABASE=own\n"
+        "WAREHOUSE_USER=user\nWAREHOUSE_PASSWORD=own-secret\n"
+    )
+    settings = WarehouseSettings.load(env={})
+    assert settings.host == "own.invalid"
+    assert settings.database == "own"
+
+
+def test_unrelated_database_environment_cannot_supply_warehouse_credentials(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="配置不完整"):
+        WarehouseSettings.load(
+            env={
+                "DB_HOST": "unrelated.invalid",
+                "DB_NAME": "unrelated",
+                "DB_USER": "user",
+                "DB_PASSWORD": "unrelated-secret",
+            }
+        )

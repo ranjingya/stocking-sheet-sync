@@ -212,7 +212,7 @@ def run(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="只读检查下单表商品匹配与历史发货数据")
     parser.add_argument("--source-config", type=Path, default=Path("config/sales-sources.toml"))
-    parser.add_argument("--db-env-file", type=Path)
+    parser.add_argument("--db-env-file", type=Path, help="数仓凭证文件，默认读取当前目录 .env")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--spreadsheet-token")
     group.add_argument("--snapshot", type=Path)
