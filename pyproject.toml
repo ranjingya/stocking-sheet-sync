@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 stocking-sheet-sync-layout = "stocking_sheet_sync.layout_preview:main"
+stocking-sheet-sync-layout-apply = "stocking_sheet_sync.layout_apply:main"
 stocking-sheet-sync-inspect = "stocking_sheet_sync.sales_inspect:main"
 stocking-sheet-sync-notify = "stocking_sheet_sync.manual_notify:main"
 

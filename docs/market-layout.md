@@ -1,4 +1,4 @@
-# 市场部结构预览
+# 市场部结构准备
 
 `stocking-sheet-sync-layout` 读取工作表，按款式编码识别新品或老品，输出市场部现有字段、目标字段及调整建议。它不连接数仓，不填充销量或预测需求，不执行表头写入。库存、其他部门、需求汇总和采购信息均不参与调整。
 
@@ -80,7 +80,36 @@ uv run stocking-sheet-sync-layout \
 
 状态 `ready` 表示结构符合规则；`changes_proposed` 表示已生成结构建议；`needs_review` 表示存在待核对事项，操作清单为空。命令退出码 0 表示报告生成成功，读取或配置失败返回 1。
 
-操作清单是结构层面的建议，不是可以直接提交给飞书的批量请求。原列坐标对应快照，目标列对应拟议结构；插入和移动的位置按操作顺序解释。后续执行需要根据最新版本重新检查合并、样式和行列变化。插入市场部列会让右侧列位置顺移；其他部门内容及汇总公式的编辑不在本功能范围。
+操作清单是结构层面的建议，不是可以直接提交给飞书的批量请求。原列坐标对应快照，目标列对应拟议结构；插入和移动的位置按操作顺序解释。实际补列命令会根据最新版本检查合并、样式和行列变化。插入市场部列会让右侧列位置顺移；其他部门内容及汇总公式的编辑不在本功能范围。
+
+## 新品实际补列
+
+`stocking-sheet-sync-layout-apply` 适用于五个平台需求列齐全、平台顺序明确的新品表。它在各需求列前补销量列，复制对应需求列的字体、对齐、边框等格式，设置销量标题与列宽，并合并市场部分组。原需求数量随列移动；新增销量列的商品行和合计行保持空白。
+
+默认仅生成请求并进行接口预检。先在测试副本运行：
+
+```bash
+uv run stocking-sheet-sync-layout-apply \
+  --spreadsheet-token '<测试副本 token>' \
+  --sheet-id '<工作表 ID>' \
+  --output artifacts/layout-apply-preview
+```
+
+查看 `before.json` 中的 `revision` 和 `request.json` 中的操作后，指定该版本执行，例如读取版本为 0 时：
+
+```bash
+uv run stocking-sheet-sync-layout-apply \
+  --spreadsheet-token '<测试副本 token>' \
+  --sheet-id '<工作表 ID>' \
+  --apply --expected-revision 0 \
+  --output artifacts/layout-applied
+```
+
+命令在提交前再次核对版本，以单个批量请求执行，并回读完整工作表。校验包括原单元格的值与格式、公式及计算结果、新列样式与空值、行高和合并范围。飞书会随插列自动调整公式引用，调整记录保存在核验结果中。请在表格无人同时编辑时执行；版本预检不提供并发写入锁。
+
+执行目录保留 `before.json`、`request.json`、`dry-run.json`、`response.json`、`after.json` 与 `result.json`。出错时保存 `error.json`，需要结合前后快照核对实际状态。网络异常或核验失败均不自动重试写入。再次运行时传入当前版本；结构符合规则则返回 `status: unchanged`，不提交批量请求。
+
+执行命令只支持新品补列及标准表头、分组整理。老品、需要移动平台列、缺少需求列或存在识别问题时停止并输出错误。线上命令依赖运行环境中的 `lark-cli` 与用户登录，当前 Docker 镜像用于搬运服务，未包含该 CLI。
 
 ## 样本验证
 
@@ -97,4 +126,4 @@ uv run stocking-sheet-sync-layout \
 | 啵啵软糖雨靴 | 21 | 老品 | 16 列；保留自营与其他平台不同的历史区间 |
 | 棉花糖咩咩绒 T | 21 | 新品 | 特殊日期和近 7 天字段进入待核对 |
 
-[结构预览测试副本](https://kocotree.feishu.cn/sheets/ADgjsfbJXhXGJQtewNpcFDuxn7c)采用小云暖马甲样本，已确认 56 行商品、10 个市场部目标字段。预览建议涉及唯品、猫超两个销量表头和市场部合并范围，副本内单元格保持复制时的内容。
+[新品补列测试副本](https://kocotree.feishu.cn/sheets/BIeZsvTjEhhMvDt37frcl1ZUn3d)包含 56 行商品。市场部已补齐 5 个销量列，共 10 列；分组为 `N2:W2`。全量回读核对原有内容、样式、行高及合并范围，重复执行无需写入。销量及需求数量保持模板中的空值。

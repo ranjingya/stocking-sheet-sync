@@ -36,13 +36,14 @@ def _lark_read(command: str, args: list[str]) -> dict:
     return payload
 
 
-def read_sheet(token: str, sheet_id: str) -> dict:
+def read_sheet(token: str, sheet_id: str, *, include_style: bool = False) -> dict:
     """
     功能说明：读取完整工作表值、公式和合并范围，校验分页及读取期间版本一致。
 
     参数：
         token：飞书电子表格 token。
         sheet_id：需要检查的工作表 ID。
+        include_style：是否同时读取样式、数据验证和布局，用于结构变更核验。
 
     返回值：带完整坐标的本地快照，含原始数据和表格身份。
     """
@@ -55,9 +56,18 @@ def read_sheet(token: str, sheet_id: str) -> dict:
     if not 1 <= rows <= 50000 or not 1 <= cols <= 1000:
         raise ValueError("工作表尺寸超出检查工具支持范围")
     locator += ["--sheet-id", sheet_id]
-    layout = _lark_read("+sheet-info", [*locator, "--include", "merges"])["data"]
+    layout = _lark_read(
+        "+sheet-info",
+        [
+            *locator,
+            "--include",
+            "merges,row_heights,col_widths,hidden_rows,hidden_cols,frozen"
+            if include_style
+            else "merges",
+        ],
+    )["data"]
     cells = {}
-    chunk = max(1, min(200, 8000 // cols))
+    chunk = max(1, min(200, (800 if include_style else 8000) // cols))
     for start in range(1, rows + 1, chunk):
         stop = min(rows, start + chunk - 1)
         block = _lark_read(
@@ -67,7 +77,7 @@ def read_sheet(token: str, sheet_id: str) -> dict:
                 "--range",
                 f"A{start}:{column_name(cols)}{stop}",
                 "--include",
-                "value,formula",
+                "value,formula,style,data_validation" if include_style else "value,formula",
                 "--max-chars",
                 "500000",
             ],
@@ -92,6 +102,7 @@ def read_sheet(token: str, sheet_id: str) -> dict:
         "revision": book["revision"],
         "cells": cells,
         "merges": [item["range"] for item in layout["merged_cells"]],
+        **({"layout": layout, "sheet_metadata": sheet} if include_style else {}),
     }
 
 

@@ -161,6 +161,6 @@ uv run --group lint ruff check .
 
 `stocking-sheet-sync-inspect` 按指定日期读取五个平台的发货数据，核对商品及目标列，输出本地 JSON、CSV。使用方法、来源、去重与日期覆盖规则见 [历史发货数据读取与表格匹配](docs/sales-data.md)。
 
-## 市场部结构预览
+## 市场部结构准备
 
-`stocking-sheet-sync-layout` 按款号分类，预览市场部新增列、标题和分组调整，输出 Markdown 与 JSON。支持线上表格和离线完整快照，不连接数仓或修改表格。使用方法与字段规则见 [市场部结构预览](docs/market-layout.md)。
+`stocking-sheet-sync-layout` 按款号分类，预览市场部新增列、标题和分组调整，输出 Markdown 与 JSON。支持线上表格和离线完整快照，不连接数仓或修改表格。`stocking-sheet-sync-layout-apply` 支持为新品实际补齐销量列、继承需求列样式及调整市场部合并表头；默认预览，实际执行需指定版本，并在写入后回读核验。使用方法与字段规则见 [市场部结构准备](docs/market-layout.md)。
