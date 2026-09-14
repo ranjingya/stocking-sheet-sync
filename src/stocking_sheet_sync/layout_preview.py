@@ -57,7 +57,7 @@ def write_preview(output: Path, report: dict, snapshot: dict) -> None:
         report["category"]
     ]
     metrics = {
-        "sales": "近 30 天销量",
+        "sales": "近30天销量",
         "demand": "需求数量",
         "history": "往年区间销量",
         "history_net": "往年实发－实退",

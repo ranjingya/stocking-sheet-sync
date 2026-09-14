@@ -117,6 +117,7 @@ def test_other_department_merged_span_blocks_orphan_recovery():
 def test_aliases_are_renamed_and_orders_are_mapped_without_data_rewrite():
     data = sheet()
     data["cells"]["F3"]["value"] = "唯品会近30天"
+    data["cells"]["G3"]["value"] = "唯品"
     data["cells"]["L3"]["value"] = "天猫超市近30天"
     data["cells"]["N3"]["value"] = "京东pop近30天"
     data["cells"]["G3"], data["cells"]["I3"] = data["cells"]["I3"], data["cells"]["G3"]
@@ -124,8 +125,9 @@ def test_aliases_are_renamed_and_orders_are_mapped_without_data_rewrite():
     result = preview(data)
     assert result["status"] == "changes_proposed"
     assert result["target_fields"][1]["source_column"] == "I"
+    assert result["target_fields"][1]["header"] == "唯品"
     assert any(o["action"] == "move_market_column" for o in result["operations"])
-    assert any(o.get("after") == "唯品近 30 天" for o in result["operations"])
+    assert any(o.get("after") == "唯品近30天" for o in result["operations"])
     assert data == before
 
 

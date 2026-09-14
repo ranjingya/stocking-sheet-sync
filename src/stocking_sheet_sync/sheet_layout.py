@@ -266,7 +266,7 @@ def plan_market_layout(snapshot: dict, config: dict, rules: dict) -> dict:
             period = next(iter(periods)) if len(periods) == 1 else None
             for metric in metrics:
                 source = mapped.get((pid, metric))
-                title = titles[metric]
+                title = source["header"] if source and metric == "demand" else titles[metric]
                 if metric in HISTORY_METRICS:
                     title = (
                         source["header"]
