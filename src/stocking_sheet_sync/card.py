@@ -27,7 +27,7 @@ def build_sync_card(
         target_folder_token：目标共享文件夹 token。
         target_name：同步后表格名称，成功时必填。
         target_url：同步后表格链接，成功时必填。
-        reason：失败原因，失败时必填。
+        reason：失败或填充降级原因，失败时必填。
         fill_summary：可选的历史与预测填充阶段说明。
 
     返回值：
@@ -54,10 +54,14 @@ def build_sync_card(
     result_text = f"搬运{'成功' if success else '失败'}"
     if not success and target_url:
         result_text = "搬运成功，填充待处理"
+    if success and fill_summary and reason:
+        result_text = "搬运成功，填充未完成"
     if success:
         detail_content = (
             f"原始记录： [{original_name}]({record_url})\n同步副本： [{target_name}]({target_url})"
         )
+        if fill_summary and reason:
+            detail_content += f"\n处理说明： {reason}"
         action_text = "查看同步副本"
         action_url = target_url
     elif target_url:

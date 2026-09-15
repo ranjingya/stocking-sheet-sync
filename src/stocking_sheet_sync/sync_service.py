@@ -151,7 +151,7 @@ class SyncService:
             self.logger.exception("搬运处理失败：record_id=%s", record_id)
             if current is not None and current.status == "copied":
                 summary.target_url = current.target_url
-                summary.reason = "副本已搬运；" + str(error)
+                self._degrade_fill(summary, str(error))
                 if self.config.fill_history_enabled and summary.history_status == "disabled":
                     summary.history_status = "needs_review"
                 if self.config.fill_forecast_enabled:
@@ -248,9 +248,7 @@ class SyncService:
             reasons.append("预测规则尚未实现，需求数量未写入")
             active = True
         if reasons:
-            summary.failed = 1
-            summary.result = "failed"
-            summary.reason = "副本已搬运；" + "；".join(reasons)
+            self._degrade_fill(summary, "；".join(reasons))
         self.logger.info(
             "副本填充阶段状态：target=%s history=%s forecast=%s report=%s",
             state.target_token,
@@ -259,6 +257,21 @@ class SyncService:
             summary.fill_report_path,
         )
         return active
+
+    def _degrade_fill(self, summary: SyncSummary, reason: str) -> None:
+        """
+        功能说明：填充未完成时按搬运成功降级，保留阶段状态与执行证据。
+
+        参数：
+            summary：已确认副本存在的结果汇总，原位更新整体结果。
+            reason：填充未完成的具体原因。
+        返回值：无；不修改副本内容或 Redis 中的填充占位。
+        """
+        summary.fill_degraded = True
+        summary.failed = 0
+        summary.result = "copied" if summary.copied else "unchanged"
+        summary.reason = "已降级为仅搬运，填充未完成：" + reason
+        self.logger.warning("填充降级：target=%s reason=%s", summary.target_url, reason)
 
     def _notify_result(self, state: CopyState, summary: SyncSummary) -> None:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
@@ -284,7 +297,7 @@ class SyncService:
                 target_folder_token=self.config.target_folder_token,
                 target_name=state.target_name,
                 target_url=state.target_url,
-                reason=summary.reason,
+                reason=summary.reason if summary.fill_degraded or summary.failed else "",
                 fill_summary=fill_summary,
             )
             self._notify(

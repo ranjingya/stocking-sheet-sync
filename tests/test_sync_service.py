@@ -332,11 +332,12 @@ def test_fill_flags_copy_once_and_report_each_stage(tmp_path, history, forecast)
     assert first.history_status == second.history_status == ("completed" if history else "disabled")
     assert first.forecast_status == ("unsupported" if forecast else "disabled")
     assert first.copied == 1 and second.copied == 0
-    assert first.failed == int(forecast)
+    assert first.failed == 0
+    assert first.fill_degraded == forecast
     assert calls == ([("target-1", "2026-08-21")] if history else [])
     if forecast:
         assert "预测规则尚未实现" in first.reason
-        assert "搬运成功，填充待处理" in json.dumps(client.sent_cards, ensure_ascii=False)
+        assert "搬运成功，填充未完成" in json.dumps(client.sent_cards, ensure_ascii=False)
 
 
 def test_can_enable_history_on_existing_copy_and_retry_fixed_window(tmp_path):
@@ -371,7 +372,8 @@ def test_uncertain_fill_is_not_repeated_even_after_lock_expires(tmp_path):
         calls.append(claim.attempt_id)
         redis.delete("test:lock:scan")
         concurrent = service.run_record("rec_test")
-        assert concurrent.failed == 1 and concurrent.history_status == "running"
+        assert concurrent.failed == 0 and concurrent.history_status == "running"
+        assert concurrent.fill_degraded
         assert concurrent.copied == 0
         raise RuntimeError("连接超时，写入结果不确定")
 
@@ -394,7 +396,7 @@ def test_fill_state_save_failure_keeps_running_claim(tmp_path, monkeypatch):
         raise RuntimeError("Redis 保存失败")
 
     monkeypatch.setattr(service.store, "finish_fill", fail)
-    assert service.run_record("rec_test").failed == 1
+    assert service.run_record("rec_test").fill_degraded
     assert service.run_record("rec_test").history_status == "running"
     assert client.copy_count == len(calls) == 1
 
@@ -408,9 +410,45 @@ def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypat
 
     monkeypatch.setattr(service.store, "get_fill", fail)
     result = service.run_record("rec_test")
-    assert result.copied == result.failed == 1
+    assert result.copied == 1 and result.failed == 0
+    assert result.fill_degraded
     assert result.history_status == "needs_review"
     assert result.target_url.endswith("target-1")
     card = json.dumps(client.sent_cards[-1], ensure_ascii=False)
-    assert "搬运成功，填充待处理" in card
+    assert "搬运成功，填充未完成" in card
     assert "sheets/target-1" in card
+
+
+@pytest.mark.parametrize("outcome", ["retryable", "needs_review", "exception"])
+def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome):
+    from stocking_sheet_sync.web import create_app
+
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    calls = []
+
+    def fill(state, claim):
+        calls.append(claim)
+        if outcome == "exception":
+            raise RuntimeError("写入结果未知")
+        return {"status": outcome, "reason": "历史数据检查未通过"}
+
+    service.history_filler = fill
+    app = create_app(config=service.config, service=service).test_client()
+    headers = {"Authorization": "Bearer webhook-secret"}
+    response = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["status"] == "success" and result["result"] == "copied"
+    assert result["summary"]["failed"] == 0
+    assert result["summary"]["fill_degraded"] is True
+    assert "填充未完成" in result["reason"]
+    assert client.sent_to == ["ou_test"]
+    card = client.sent_cards[0]
+    assert card["header"]["template"] == "green"
+    assert "填充未完成" in card["header"]["title"]["content"]
+    assert "处理说明" in json.dumps(card, ensure_ascii=False)
+    again = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
+    assert again.status_code == 200 and again.get_json()["result"] == "unchanged"
+    assert client.copy_count == 1
+    assert len(calls) == (2 if outcome == "retryable" else 1)

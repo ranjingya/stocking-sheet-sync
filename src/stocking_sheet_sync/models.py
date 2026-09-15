@@ -58,6 +58,7 @@ class SyncSummary:
     forecast_status: str = "disabled"
     target_url: str = ""
     fill_report_path: str = ""
+    fill_degraded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
