@@ -9,8 +9,9 @@ from pathlib import Path
 from .logging_config import configure_logging
 from .sales_config import load_sales_config
 from .sales_inspect import _lark_read, read_sheet
+from .sales_totals import column_total_rows
 from .sheet_layout import _bounds, load_layout_config, plan_market_layout
-from .sheet_matching import column_name, column_number
+from .sheet_matching import column_name, column_number, inspect_sheet
 
 LOG = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
     if "layout" not in snapshot:
         raise ValueError("执行前必须读取完整布局和样式")
     operations = []
+    total_formulas = {}
+    product_rows = [r["row"] for r in inspect_sheet(snapshot, config)["rows"]]
     sid = snapshot["sheet_id"]
 
     def add(shortcut, **values):
@@ -69,6 +72,9 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
             target_range=f"{target}{top}",
             paste_type="formats",
         )
+        for total in column_total_rows(snapshot, demand["source_column"], target, product_rows):
+            total_formulas[total["target_cell"]] = total["formula"]
+            add("+cells-set", range=total["target_cell"], cells=[[{"formula": total["formula"]}]])
         old_index = column_number(demand["source_column"])
         widths = snapshot["layout"].get("column_widths", [])
         original_width = next(
@@ -108,6 +114,7 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         "operations": operations,
         "column_mapping": {k: column_name(v) for k, v in mapping.items()},
         "inserted_columns": [i["position"] for i in inserts],
+        "total_formulas": total_formulas,
     }
 
 
@@ -178,8 +185,12 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
         )
         for row in range(header_row, after["row_count"] + 1):
             cell = after["cells"][f"{target}{row}"]
-            if row > header_row and (cell.get("value") not in (None, "") or cell.get("formula")):
-                raise ValueError(f"新增销量列不应带入数量或公式：{target}{row}")
+            total_formula = update.get("total_formulas", {}).get(f"{target}{row}")
+            if total_formula:
+                if cell.get("formula") != total_formula or cell.get("value") != 0:
+                    raise ValueError(f"新增销量列合计公式或结果不符合预期：{target}{row}")
+            elif row > header_row and (cell.get("value") not in (None, "") or cell.get("formula")):
+                raise ValueError(f"新增销量列商品行不应带入数量或公式：{target}{row}")
             for key in ("cell_styles", "border_styles"):
                 if cell.get(key) != after["cells"][f"{demand}{row}"].get(key):
                     raise ValueError(f"新增销量列未继承需求列样式：{target}{row}")

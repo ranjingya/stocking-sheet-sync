@@ -100,7 +100,7 @@ uv run stocking-sheet-sync-sales-fill \
   --output artifacts/sales-applied
 ```
 
-写入范围为商品行对应的销量单元格，数量以整数类型填写，数字格式、字体、对齐、边框等原样式保留。空白分隔行、合计行、需求列及其他部门不参与写入；表内原公式可因输入变化自动重算，公式文本保持一致。
+写入范围为商品行对应的销量单元格，数量以整数类型填写，数字格式、字体、对齐、边框等原样式保留。空白分隔行、需求列及其他部门不参与写入；平台需求列存在覆盖全部商品的单列 SUM 合计时，在对应销量列的空白合计格补充公式。已有合计公式保留，已有非公式数值进入待核对；表内原公式可因输入变化自动重算，公式文本保持一致。
 
 逐项状态与整批行为：
 
@@ -131,3 +131,6 @@ uv run stocking-sheet-sync-sales-fill \
 客户端复用项目的应用认证和 HTTP 连接配置。数值通过[读取多个范围](https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/reading-multiple-ranges.md)以未格式化值获取，写入使用[向多个范围写入数据](https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/write-data-to-multiple-ranges.md)。样式和公式类型由[导出任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/export_task/create.md)生成的 XLSX 补充；读取前后检查版本一致，导出合并范围与工作表元数据一致。
 
 2026-09-15 在[测试副本](https://kocotree.feishu.cn/sheets/BIeZsvTjEhhMvDt37frcl1ZUn3d)完成服务端填充：预估日 2026-09-12，统计 2026-08-13 至 2026-09-11，56 个商品 × 5 个平台，共 280 个单元格。全量回读核对 9,165 个单元格，五个平台合计为唯品会 142、自营 81、拼多多 131、猫超 70、POP 70。再次执行时 280 项全部为 `unchanged`，无写入，工作簿版本保持 2；Sheet2 的内容和样式也通过前后导出比对。核对证据保存在本地 `artifacts/sales-native-test/`。
+
+
+平台合计依据现有需求列公式的行范围识别：例如需求列 `=SUM(O4:O59)` 对应销量列 `=SUM(N4:N59)`。只识别覆盖本表全部商品行的单列 SUM，局部小计或其他复杂公式不作为自动复制模板。销量合计使用原生公式对象写入，回读确认公式文本及计算值与该平台逐商品销量合计一致，原有需求合计公式与样式保持不变。

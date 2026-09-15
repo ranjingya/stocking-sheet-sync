@@ -133,3 +133,18 @@ def test_expected_revision_rejected_before_batch(monkeypatch, tmp_path):
         )
         == 1
     )
+
+
+def test_new_sales_column_inherits_total_formula_without_demand_values():
+    before = incoming()
+    before["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 100}
+    update = build_update(before, config(), rules())
+    assert update["total_formulas"] == {"F7": "=SUM(F4:F6)"}
+    assert before["cells"]["F7"]["value"] == 100
+    assert any(
+        op["input"].get("cells") == [[{"formula": "=SUM(F4:F6)"}]] for op in update["operations"]
+    )
+    after = completed(before, update)
+    after["cells"]["G7"]["formula"] = "=SUM(G4:G6)"
+    after["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 0}
+    assert verify_update(before, after, update, config(), rules())["verified"]

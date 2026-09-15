@@ -137,3 +137,30 @@ def test_native_writer_rejects_oversized_or_overlapping_ranges_before_access(
     with pytest.raises(ValueError):
         write_sales_ranges("token", "test", operations, expected_revision=1)
     create.assert_not_called()
+
+
+def test_native_writer_sends_typed_formula_and_rejects_circular_total(monkeypatch):
+    _, requests = transport_client(monkeypatch)
+    formula = {"type": "formula", "text": "=SUM(N1:N3)"}
+    operations = [{"range": "test!N4:N5", "values": [[formula], [7]]}]
+    write_sales_ranges("token", "test", operations, expected_revision=1)
+    assert requests[-1][2]["json_body"]["valueRanges"][0]["values"][0][0] == formula
+    formula["text"] = "=SUM(N1:N4)"
+    with pytest.raises(ValueError, match="SUM"):
+        write_sales_ranges("token", "test", operations, expected_revision=1)
+
+
+def test_dimension_snapshot_compares_style_definitions_instead_of_export_ids():
+    from openpyxl.styles import Font
+
+    from stocking_sheet_sync.sheets_api import dimension_snapshot
+
+    first, second = Workbook(), Workbook()
+    first.active.row_dimensions[1].font = Font(name="宋体", size=14)
+    second.active["A1"].font = Font(name="Arial", size=10)
+    second.active.row_dimensions[1].font = Font(name="宋体", size=14)
+    left, right = first.active.row_dimensions[1], second.active.row_dimensions[1]
+    assert left._style.fontId != right._style.fontId
+    assert dimension_snapshot(left) == dimension_snapshot(right)
+    right.font = Font(name="宋体", size=16)
+    assert dimension_snapshot(left) != dimension_snapshot(right)

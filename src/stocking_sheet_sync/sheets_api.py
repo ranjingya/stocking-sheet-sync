@@ -92,6 +92,20 @@ def _xml(value) -> str:
     return tostring(value.to_tree(), encoding="unicode")
 
 
+def dimension_snapshot(value) -> dict:
+    """提取行列维度 value 的尺寸和实际样式，使用内容比较而非导出文件内的样式编号。"""
+    result = {k: v for k, v in dict(value).items() if k not in {"s", "style"}}
+    result["style_definition"] = {
+        "font": _xml(value.font),
+        "fill": _xml(value.fill),
+        "border": _xml(value.border),
+        "alignment": _xml(value.alignment),
+        "protection": _xml(value.protection),
+        "number_format": value.number_format,
+    }
+    return result
+
+
 def read_sheet(
     token: str, sheet_id: str, *, include_style: bool = True, archive_path: Path | None = None
 ) -> dict:
@@ -193,8 +207,10 @@ def read_sheet(
             "revision": initial,
             "grid_properties": sheet["grid_properties"],
             "hidden": sheet["hidden"],
-            "row_dimensions": {str(k): dict(v) for k, v in ws.row_dimensions.items()},
-            "column_dimensions": {k: dict(v) for k, v in ws.column_dimensions.items()},
+            "row_dimensions": {str(k): dimension_snapshot(v) for k, v in ws.row_dimensions.items()},
+            "column_dimensions": {
+                k: dimension_snapshot(v) for k, v in ws.column_dimensions.items()
+            },
             "sheet_format": _xml(ws.sheet_format),
             "freeze_panes": ws.freeze_panes,
             "data_validations": _xml(ws.data_validations),
@@ -226,7 +242,7 @@ def write_sales_ranges(
     参数：
         token：目标电子表格 token。
         sheet_id：目标工作表 ID。
-        operations：原生 valueRanges 数组，每项包含 range 与整数 values。
+        operations：原生 valueRanges 数组，包含整数或单平台 SUM 合计公式。
         expected_revision：读取并核对过的工作簿版本。
 
     返回值：服务端批量写入结果；写请求仅发送一次，异常时必须回读确认。
@@ -251,8 +267,24 @@ def write_sales_ranges(
         ):
             raise ValueError("销量写入范围重叠或矩阵尺寸不匹配")
         claimed.update(addresses)
-        if any(type(v) is not int or v < 0 for row in item["values"] for v in row):
-            raise ValueError("销量写入只接受非负整数")
+        for offset, row in enumerate(item["values"]):
+            value = row[0]
+            if type(value) is int and value >= 0:
+                continue
+            match = (
+                re.fullmatch(
+                    r"=SUM\(([A-Z]+)([1-9][0-9]*):\1([1-9][0-9]*)\)", value.get("text", "")
+                )
+                if isinstance(value, dict)
+                else None
+            )
+            if (
+                not match
+                or value.get("type") != "formula"
+                or match.group(1) != col
+                or not 1 <= int(match.group(2)) <= int(match.group(3)) < int(first) + offset
+            ):
+                raise ValueError("仅支持非负整件数或引用本列上方范围的SUM合计公式")
     client = create_client()
     try:
         path = f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}"

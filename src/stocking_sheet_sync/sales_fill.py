@@ -13,6 +13,7 @@ from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_inspect import inspect_sales, write_report
 from .sales_reader import SalesReader, units
+from .sales_totals import column_total_rows
 from .sheet_matching import column_number, inspect_sheet
 from .sheets_api import current_revision, read_sheet, write_sales_ranges
 
@@ -21,7 +22,7 @@ LOG = logging.getLogger(__name__)
 
 def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
     """
-    功能说明：核对完整销量候选清单，只为商品行的空白销量单元格生成请求。
+    功能说明：核对完整销量候选清单，为空白销量单元格及对应平台合计生成请求。
 
     参数：
         snapshot：本次读取的完整表格值、公式与样式快照。
@@ -93,27 +94,69 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
                 operations.append(
                     {
                         "range": (
-                            f"{snapshot['sheet_id']}!{col}{block[0]['row']}:"
-                            f"{col}{block[-1]['row']}"
+                            f"{snapshot['sheet_id']}!{col}{block[0]['row']}:{col}{block[-1]['row']}"
                         ),
                         "values": [[e["quantity"]] for e in block],
                     }
                 )
+    total_entries = []
+    if not counts["needs_review"]:
+        for platform, columns in layout["columns"].items():
+            for total in column_total_rows(
+                snapshot,
+                columns["demand"],
+                columns["sales"],
+                [row["row"] for row in layout["rows"]],
+            ):
+                cell = snapshot["cells"][total["target_cell"]]
+                if cell.get("formula"):
+                    status = "preserved"
+                    total["formula"] = cell["formula"]
+                elif cell.get("value") not in (None, ""):
+                    status = "needs_review"
+                else:
+                    status = "write"
+                    address = total["target_cell"]
+                    operations.append(
+                        {
+                            "range": f"{snapshot['sheet_id']}!{address}:{address}",
+                            "values": [[{"type": "formula", "text": total["formula"]}]],
+                        }
+                    )
+                total_entries.append(
+                    {
+                        **total,
+                        "platform": platform,
+                        "status": status,
+                        "expected_quantity": totals[platform],
+                    }
+                )
+                LOG.info(
+                    "平台合计核对：platform=%s cell=%s status=%s",
+                    platform,
+                    total["target_cell"],
+                    status,
+                )
+    total_conflicts = sum(e["status"] == "needs_review" for e in total_entries)
+    if total_conflicts:
+        operations = []
     summary = {
         "expected_cells": len(expected),
         "write": counts["write"],
         "unchanged": counts["unchanged"],
-        "needs_review": counts["needs_review"],
+        "needs_review": counts["needs_review"] + total_conflicts,
+        "total_formulas_to_write": sum(e["status"] == "write" for e in total_entries),
         "platform_totals": dict(totals) if not counts["needs_review"] else None,
     }
     LOG.info("销量填充请求生成：operations=%d summary=%s", len(operations), summary)
     return {
         "as_of": report["as_of"],
         "entries": entries,
+        "total_entries": total_entries,
         "operations": operations,
         "summary": summary,
         "status": "needs_review"
-        if counts["needs_review"]
+        if counts["needs_review"] or total_conflicts
         else "changes_proposed"
         if operations
         else "unchanged",
@@ -140,6 +183,7 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
         if key != "revision" and before["layout"][key] != after["layout"].get(key):
             raise ValueError(f"写入后布局发生变化：{key}")
     targets = {e["target_cell"]: e for e in update["entries"]}
+    total_cells = {e["target_cell"]: e for e in update.get("total_entries", [])}
     totals, recalculated = defaultdict(int), []
     for address, old in before["cells"].items():
         new = after["cells"][address]
@@ -152,6 +196,18 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
             totals[entry["platform"]] += value
             old_rest.pop("value", None)
             new_rest.pop("value", None)
+        elif address in total_cells:
+            total = total_cells[address]
+            if (
+                new.get("formula") != total["formula"]
+                or new.get("value") != total["expected_quantity"]
+            ):
+                raise ValueError(f"平台合计公式或计算值不符合预期：{address}")
+            if type(new.get("value")) not in (int, float):
+                raise ValueError(f"平台合计没有返回数值：{address}")
+            for key in ("formula", "value"):
+                old_rest.pop(key, None)
+                new_rest.pop(key, None)
         elif old.get("formula"):
             # 仅允许原公式计算结果随输入更新，公式文本及格式必须保留。
             old_value, new_value = old_rest.pop("value", None), new_rest.pop("value", None)
@@ -174,6 +230,7 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
         "verified": True,
         "as_of": update["as_of"],
         "checked_sales_cells": len(targets),
+        "checked_total_formulas": len(total_cells),
         "checked_all_cells": len(before["cells"]),
         "platform_totals": dict(totals),
         "recalculated_formulas": recalculated,
@@ -239,11 +296,17 @@ def run(argv: list[str] | None = None) -> int:
             LOG.warning("销量存在待核对项，本次不写入：count=%d", update["summary"]["needs_review"])
             return 2
         if not update["operations"]:
+            result = verify_sales_update(before, before, update)
             save(
                 "result.json",
-                {"status": "unchanged", "revision": before["revision"], **update["summary"]},
+                {
+                    **result,
+                    "status": "unchanged",
+                    "revision": before["revision"],
+                    **update["summary"],
+                },
             )
-            LOG.info("销量与数仓一致，无需写入")
+            LOG.info("销量及平台合计与数仓一致，无需写入")
             return 0
         save("payload.json", {"valueRanges": update["operations"]})
         if not args.apply:

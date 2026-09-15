@@ -224,3 +224,39 @@ def test_cli_source_gap_blocks_even_when_target_is_already_zero(monkeypatch, tmp
         == 2
     )
     writer.assert_not_called()
+
+
+def test_sales_totals_follow_existing_platform_total_ranges_and_keep_formulas():
+    before, report = ready()
+    for columns in report["layout"]["columns"].values():
+        col = columns["demand"]
+        before["cells"][f"{col}7"] = {"formula": f"=SUM({col}4:{col}6)", "value": 0}
+    before["cells"]["E7"] = {"formula": "=sum($E$4:$E$6)", "value": 0}
+    update = build_sales_update(before, report, config())
+    assert len(update["total_entries"]) == 5
+    assert update["summary"]["total_formulas_to_write"] == 4
+    assert update["total_entries"][0]["formula"] == "=sum($E$4:$E$6)"
+    assert all(op["range"] != "test!E7:E7" for op in update["operations"])
+    after = applied(before, update)
+    for total in update["total_entries"]:
+        after["cells"][total["target_cell"]] = {"formula": total["formula"], "value": 1}
+    result = verify_sales_update(before, after, update)
+    assert result["checked_total_formulas"] == 5
+    for col in ("F", "H", "J", "L", "N"):
+        assert after["cells"][f"{col}7"] == before["cells"][f"{col}7"]
+    repeated = inspect_sales(CompleteReader(), after, config(), date(2026, 9, 12))
+    assert build_sales_update(after, repeated, config())["operations"] == []
+    after["cells"]["G7"]["value"] = "#REF!"
+    with pytest.raises(ValueError, match="平台合计"):
+        verify_sales_update(before, after, update)
+
+
+def test_numeric_total_is_not_overwritten_and_partial_subtotals_are_not_copied():
+    before, report = ready()
+    before["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 90}
+    before["cells"]["E7"] = {"value": 99}
+    plan = build_sales_update(before, report, config())
+    assert plan["status"] == "needs_review" and not plan["operations"]
+    before["cells"]["F7"]["formula"] = "=SUM(F4:F4)"
+    plan = build_sales_update(before, report, config())
+    assert plan["total_entries"] == []
