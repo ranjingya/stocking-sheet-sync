@@ -22,6 +22,7 @@ class DataClient(Protocol):
     def copy_spreadsheet(
         self, spreadsheet_token: str, copy_name: str, *, folder_token: str | None = None
     ) -> CopyResult: ...
+    def rename_spreadsheet(self, spreadsheet_token: str, title: str) -> None: ...
 
 
 class MessageClient(Protocol):
@@ -132,6 +133,8 @@ class SyncService:
             if not record_url:
                 raise RuntimeError("多维表记录缺少原始记录链接")
             batch_id = uuid.uuid4().hex
+            started_at = self._now_text()
+            batch_time = datetime.fromisoformat(started_at).strftime("%Y%m%d-%H%M%S")
             state = CopyState(
                 record_id=record_id,
                 source_token=source_token,
@@ -140,14 +143,15 @@ class SyncService:
                 record_url=record_url,
                 status="copying",
                 attempt_id=batch_id,
-                started_at=self._now_text(),
+                started_at=started_at,
                 request_id=request_id,
                 workflow="triple" if self.config.backup_folder_token else "single",
                 backup_folder_token=self.config.backup_folder_token,
                 delivery_folder_token=self.config.target_folder_token,
                 history_enabled=self.config.fill_history_enabled,
                 forecast_enabled=self.config.fill_forecast_enabled,
-                target_name=f"{self.config.copy_name_prefix}{source_name}-{batch_id[:8]}",
+                target_name=f"{self.config.copy_name_prefix}{source_name}",
+                backup_name=f"{source_name}-{batch_time}",
             )
             if not self.store.begin_copy(state):
                 raise RuntimeError("该源表格已被其他任务接管，请重新检查搬运状态")

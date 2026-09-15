@@ -27,6 +27,8 @@ def setup(tmp_path, *, history=True, forecast=False):
         return CopyResult(name, token, "sheet", f"https://example.feishu.cn/sheets/{token}")
 
     client.copy_spreadsheet = copy
+    client.renames = []
+    client.rename_spreadsheet = lambda token, title: client.renames.append((token, title))
     calls = []
 
     def fill(state, claim):
@@ -233,3 +235,85 @@ def test_forecast_unavailable_delivers_original_even_when_history_completed(tmp_
     assert result.history_status == "completed" and result.forecast_status == "unsupported"
     assert result.fill_degraded and result.delivery_source == "original"
     assert files["copy-3"] == files["source-token"] and "sales" in files["copy-2"]
+
+
+def test_names_freeze_timestamp_and_keep_delivery_prefix(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    assert service.run_record("rec_test").copied == 1
+    assert [op[3] for op in ops] == [
+        "备货测试表-20260821-100000-原始备份",
+        "备货测试表-20260821-100000-填充未完成",
+        "市场部-备货测试表",
+    ]
+    assert client.renames == [("copy-2", "备货测试表-20260821-100000-填充完成")]
+    state = service.store.get_state("rec_test", "source-token")
+    assert service.store.get_step(state, "filled").name == client.renames[0][1]
+    clock.advance(minutes=10)
+    assert service.run_record("rec_test").unchanged == 1
+    assert len(client.renames) == 1
+    assert service.run_record("rec_test", force=True, request_id="new").copied == 1
+    assert ops[3][3] == "备货测试表-20260821-101000-原始备份"
+    assert ops[2][3] == ops[5][3] == "市场部-备货测试表"
+
+
+@pytest.mark.parametrize("mode", ["failure", "disabled"])
+def test_backup_title_reflects_failure_or_disabled_fill(tmp_path, mode):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, history=mode != "disabled")
+    service.history_filler = lambda *a: {"status": "retryable", "reason": "缺数据"}
+    assert service.run_record("rec_test").copied == 1
+    state = service.store.get_state("rec_test", "source-token")
+    suffix = "未填充" if mode == "disabled" else "填充未完成"
+    assert service.store.get_step(state, "filled").name.endswith("-" + suffix)
+    assert ops[-1][3] == "市场部-备货测试表"
+
+
+@pytest.mark.parametrize("failure", ["api", "state"])
+def test_rename_failure_retries_without_refilling_or_recopying(tmp_path, monkeypatch, failure):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    target, attr = (
+        (client, "rename_spreadsheet")
+        if failure == "api"
+        else (service.store, "finish_step_rename")
+    )
+    actual = getattr(target, attr)
+    monkeypatch.setattr(target, attr, lambda *a: (_ for _ in ()).throw(RuntimeError("改名失败")))
+    assert service.run_record("rec_test").failed == 1
+    assert len(ops) == 2 and fills == ["copy-2"]
+    clock.advance(minutes=10)
+    service.config = replace(service.config, copy_name_prefix="changed-")
+    monkeypatch.setattr(target, attr, actual)
+    assert service.run_record("rec_test").copied == 1
+    assert len(ops) == 3 and fills == ["copy-2"]
+    assert ops[-1][3] == "市场部-备货测试表"
+    assert client.renames[-1][1] == "备货测试表-20260821-100000-填充完成"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_existing_three_copy_names_remain_unchanged(tmp_path, monkeypatch, force):
+    import json
+
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    begin = service.store.begin_copy
+    monkeypatch.setattr(
+        service.store,
+        "begin_copy",
+        lambda state: begin(
+            replace(state, backup_name="", target_name="市场部-备货测试表-oldbatch")
+        ),
+    )
+    copy = client.copy_spreadsheet
+    client.copy_spreadsheet = lambda *a, **k: (_ for _ in ()).throw(CopyRejected("首次拒绝"))
+    options = {"force": True, "request_id": "old"} if force else {}
+    assert service.run_record("rec_test", **options).failed == 1
+    key = "test:force:rec_test:old" if force else "test:rec_test:source-token"
+    raw = json.loads(redis.get(key))
+    raw.pop("backup_name")
+    redis.set(key, json.dumps(raw, ensure_ascii=False, sort_keys=True))
+    client.copy_spreadsheet = copy
+    assert service.run_record("rec_test", **options).copied == 1
+    assert [op[3] for op in ops] == [
+        "原始备份-市场部-备货测试表-oldbatch",
+        "处理备份-市场部-备货测试表-oldbatch",
+        "市场部-备货测试表-oldbatch",
+    ]
+    assert not client.renames

@@ -102,6 +102,11 @@ class RedisStateStore:
         state = self._decode_state(key, raw)
         if state.source_token != source_token:
             raise ValueError("该 request_id 已绑定另一份源表格，请使用新的 request_id")
+        if "backup_name" not in json.loads(raw):
+            # 为历史普通及强制批次补齐默认字段，使后续比较更新保持一致。
+            if not self._redis.eval(_COMPARE_SET, 1, key, raw, _encode(state)):
+                raise RuntimeError("历史批次状态已变化，请重试读取")
+            self._logger.info("历史批次命名字段已补齐：key=%s", key)
         return state
 
     def begin_copy(self, state: CopyState) -> bool:
@@ -320,6 +325,25 @@ class RedisStateStore:
         ):
             raise RuntimeError("复制步骤占位变化，请核对已创建文件")
         return completed
+
+    def finish_step_rename(self, state: CopyState, step: CopyStep, name: str) -> CopyStep:
+        """
+        功能说明：原子保存已核验的阶段文件名，保留原复制身份及去重记录。
+
+        参数：
+            state：所属批次。
+            step：改名前的已完成复制步骤。
+            name：服务端已核验的标题。
+        返回值：更新后的步骤；状态变化时抛错，供同批次重试重新核对。
+        """
+        if step.status != "copied" or not name:
+            raise ValueError("只能更新已完成复制步骤的有效名称")
+        updated = replace(step, name=name)
+        if not self._redis.eval(
+            _COMPARE_SET, 1, self._step_key(state, step.stage), _encode(step), _encode(updated)
+        ):
+            raise RuntimeError("备份改名状态保存失败，请重试同一批次核对")
+        return updated
 
     def cancel_step(self, state: CopyState, step: CopyStep) -> None:
         """只在明确拒绝复制时删除 state 的 step 占位。"""

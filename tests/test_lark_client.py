@@ -146,3 +146,46 @@ def test_copy_uses_explicit_backup_folder_without_changing_default(tmp_path, mon
         assert all(c["retry"] is False for c in calls)
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("mode", ["success", "timeout", "mismatch", "already_named"])
+def test_native_rename_verifies_title_and_recovers_lost_response(tmp_path, mode):
+    import json
+
+    client = FeishuClient(make_config(tmp_path), "app", "secret", "test")
+    client._client.close()
+    title = "完成" if mode == "already_named" else "未完成"
+    patches = []
+
+    def handler(request):
+        nonlocal title
+        assert request.url.path == "/open-apis/sheets/v3/spreadsheets/backup"
+        if request.method == "PATCH":
+            patches.append(json.loads(request.content))
+            if mode != "mismatch":
+                title = patches[-1]["title"]
+            if mode == "timeout":
+                raise httpx.ReadTimeout("响应丢失", request=request)
+            return httpx.Response(200, json={"code": 0, "data": {}})
+        assert request.method == "GET"
+        return httpx.Response(200, json={"code": 0, "data": {"spreadsheet": {"title": title}}})
+
+    client._client = httpx.Client(
+        base_url="https://example.invalid", transport=httpx.MockTransport(handler)
+    )
+    client._access_token = "test-token"
+    client._token_expires_at = time.monotonic() + 3600
+    try:
+        if mode in {"timeout", "mismatch"}:
+            with pytest.raises((httpx.ReadTimeout, RuntimeError)):
+                client.rename_spreadsheet("backup", "完成")
+            assert len(patches) == 1
+            if mode == "timeout":
+                client.rename_spreadsheet("backup", "完成")
+                assert len(patches) == 1
+        else:
+            client.rename_spreadsheet("backup", "完成")
+            assert len(patches) == (0 if mode == "already_named" else 1)
+        assert all(body == {"title": "完成"} for body in patches)
+    finally:
+        client.close()

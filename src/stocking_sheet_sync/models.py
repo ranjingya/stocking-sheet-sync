@@ -49,6 +49,7 @@ class CopyState:
     delivery_folder_token: str = ""
     history_enabled: bool = False
     forecast_enabled: bool = False
+    backup_name: str = ""
 
 
 @dataclass(slots=True)

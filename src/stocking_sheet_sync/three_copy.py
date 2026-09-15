@@ -78,7 +78,9 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         "original",
         state.source_token,
         state.backup_folder_token,
-        "原始备份-" + state.target_name,
+        state.backup_name + "-原始备份"
+        if state.backup_name
+        else "原始备份-" + state.target_name,
     )
     summary.original_backup_url = original.target_url
     filled = copy_step(
@@ -87,7 +89,9 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         "filled",
         original.target_token,
         state.backup_folder_token,
-        "处理备份-" + state.target_name,
+        state.backup_name + "-填充未完成"
+        if state.backup_name
+        else "处理备份-" + state.target_name,
     )
     summary.filled_backup_url = filled.target_url
     outcome = service.store.get_outcome(state)
@@ -157,6 +161,16 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         "delivery_source",
     ):
         setattr(summary, key, outcome[key])
+    if state.backup_name and state.status != "copied":
+        if not state.history_enabled and not state.forecast_enabled:
+            suffix = "未填充"
+        else:
+            suffix = "填充未完成" if outcome["fill_degraded"] else "填充完成"
+        final_name = f"{state.backup_name}-{suffix}"
+        if filled.name != final_name:
+            service.data_client.rename_spreadsheet(filled.target_token, final_name)
+            filled = service.store.finish_step_rename(state, filled, final_name)
+            LOG.info("备份命名已保存：token=%s name=%s", filled.target_token, final_name)
     delivered = copy_step(
         service,
         state,

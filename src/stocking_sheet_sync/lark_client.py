@@ -165,6 +165,29 @@ class FeishuClient:
         except Exception as error:
             raise CopyOutcomeUnknown("复制结果不确定，请核对目标文件夹") from error
 
+    def rename_spreadsheet(self, spreadsheet_token: str, title: str) -> None:
+        """
+        功能说明：通过服务端接口设置电子表格标题，并回读核验；标题相同时跳过写入。
+
+        参数：
+            spreadsheet_token：待改名的处理备份 token。
+            title：完整目标标题。
+        返回值：无；接口失败或回读不一致时抛错，可在同一批次中再次核对。
+        """
+        if not spreadsheet_token or not title.strip():
+            raise ValueError("表格 token 和标题不能为空")
+        path = f"/open-apis/sheets/v3/spreadsheets/{quote(spreadsheet_token, safe='')}"
+        current = self._request("GET", path)["spreadsheet"]["title"]
+        if current == title:
+            self.logger.info("备份标题已匹配：token=%s title=%s", spreadsheet_token, title)
+            return
+        self.logger.info("更新备份标题：token=%s title=%s", spreadsheet_token, title)
+        self._request("PATCH", path, retry=False, json_body={"title": title})
+        actual = self._request("GET", path)["spreadsheet"]["title"]
+        if actual != title:
+            raise RuntimeError("备份标题回读不一致，请重试同一批次核对")
+        self.logger.info("备份标题核验完成：token=%s", spreadsheet_token)
+
     def send_card(self, open_id: str, card: dict[str, Any]) -> None:
         """
         功能说明：以应用机器人身份向一个用户发送交互式卡片。
