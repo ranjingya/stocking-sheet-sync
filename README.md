@@ -235,6 +235,10 @@ uv run --group lint ruff check .
 
 `stocking-sheet-sync-sales-fill` 使用飞书服务端 API 和数据应用认证，读取本项目配置的数仓来源，在市场部商品行填充近30天销量。必须指定预估日，默认预览；实际写入需加 `--apply --expected-revision`。支持商品与覆盖检查、非空冲突保护、相同值跳过、批量写入和全量回读，日期缺口不会作为零销量填入。使用方法见 [历史销量读取与填充](docs/sales-data.md#实际填充近30天销量)。
 
+## 预测规则
+
+预测业务口径、数据缺口、待确认参数及实施顺序见 [市场部下单需求预测规则与实施计划](docs/forecast-rules.md)。
+
 ## 文件命名
 
 批次时间使用任务开始时的上海时间，格式为 `YYYYMMDD-HHMMSS`，在创建批次时保存。
