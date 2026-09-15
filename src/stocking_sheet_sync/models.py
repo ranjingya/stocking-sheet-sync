@@ -44,6 +44,11 @@ class CopyState:
     target_url: str = ""
     copied_at: str = ""
     request_id: str = ""
+    workflow: str = "single"
+    backup_folder_token: str = ""
+    delivery_folder_token: str = ""
+    history_enabled: bool = False
+    forecast_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -59,6 +64,9 @@ class SyncSummary:
     forecast_status: str = "disabled"
     target_url: str = ""
     fill_report_path: str = ""
+    original_backup_url: str = ""
+    filled_backup_url: str = ""
+    delivery_source: str = ""
     fill_degraded: bool = False
     force: bool = False
     request_id: str = ""
@@ -74,3 +82,16 @@ class FillState:
     status: Literal["running", "completed", "retryable", "needs_review"] = "running"
     reason: str = ""
     report_path: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CopyStep:
+    stage: str
+    source_token: str
+    folder_token: str
+    name: str
+    attempt_id: str
+    status: Literal["copying", "copied"] = "copying"
+    target_token: str = ""
+    target_url: str = ""
+    copied_at: str = ""

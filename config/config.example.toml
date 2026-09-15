@@ -13,6 +13,8 @@ required_fields = { "状态" = "需求收集", "下单状态" = "未完成" }
 
 # 目标共享文件夹
 [target]
+# 原始备份及填充处理备份目录
+backup_folder_token = "xxxxxxxxxxxxxxxx"
 folder_token = "xxxxxxxxxxxxxxxx"
 copy_name_prefix = "市场部-"
 

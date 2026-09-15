@@ -1,0 +1,235 @@
+from dataclasses import replace
+
+import pytest
+
+from stocking_sheet_sync.lark_client import CopyRejected
+from stocking_sheet_sync.models import CopyResult
+from tests.test_sync_service import make_service
+
+
+def setup(tmp_path, *, history=True, forecast=False):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(
+        service.config,
+        backup_folder_token="backup",
+        target_folder_token="delivery",
+        fill_history_enabled=history,
+        fill_forecast_enabled=forecast,
+    )
+    operations = []
+    files = {"source-token": {"original": 1}}
+
+    def copy(source, name, *, folder_token=None):
+        client.copy_count += 1
+        token = f"copy-{client.copy_count}"
+        operations.append((source, folder_token, token, name))
+        files[token] = dict(files[source])
+        return CopyResult(name, token, "sheet", f"https://example.feishu.cn/sheets/{token}")
+
+    client.copy_spreadsheet = copy
+    calls = []
+
+    def fill(state, claim):
+        calls.append(state.target_token)
+        files[state.target_token]["sales"] = 10
+        return {"status": "completed"}
+
+    service.history_filler = fill
+    return service, client, redis, clock, operations, files, calls
+
+
+def test_three_files_preserve_original_and_deliver_identical_filled_copy(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    first = service.run_record("rec_test")
+    assert first.result == "copied" and first.copied == 1
+    assert [(o[0], o[1]) for o in ops] == [
+        ("source-token", "backup"),
+        ("copy-1", "backup"),
+        ("copy-2", "delivery"),
+    ]
+    assert files["copy-1"] == files["source-token"] == {"original": 1}
+    assert files["copy-2"] == files["copy-3"] == {"original": 1, "sales": 10}
+    assert first.original_backup_url.endswith("copy-1")
+    assert first.filled_backup_url.endswith("copy-2")
+    assert first.target_url.endswith("copy-3") and first.delivery_source == "filled"
+    files["copy-3"]["manual"] = 99
+    saved = dict(redis.strings)
+    service.config = replace(
+        service.config,
+        backup_folder_token="changed",
+        target_folder_token="changed",
+        fill_history_enabled=False,
+    )
+    again = service.run_record("rec_test")
+    assert again.result == "unchanged" and again.target_url == first.target_url
+    assert redis.strings == saved and len(ops) == 3 and fills == ["copy-2"]
+    assert files["copy-3"]["manual"] == 99
+
+
+@pytest.mark.parametrize("status", ["needs_review", "retryable", "exception"])
+def test_fill_failure_delivers_original_and_freezes_fallback(tmp_path, status):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+
+    def fail(state, claim):
+        files[state.target_token]["partial"] = True
+        if status == "exception":
+            raise RuntimeError("部分写入失败")
+        return {"status": status, "reason": "填充未完成"}
+
+    service.history_filler = fail
+    result = service.run_record("rec_test")
+    assert result.result == "copied" and result.fill_degraded and result.failed == 0
+    assert result.delivery_source == "original" and ops[-1][0] == "copy-1"
+    assert files["copy-3"] == files["copy-1"] == {"original": 1}
+    assert files["copy-2"]["partial"]
+    service.history_filler = lambda *a: pytest.fail("已交付后不能重填")
+    assert service.run_record("rec_test").result == "unchanged"
+    assert len(ops) == 3
+
+
+@pytest.mark.parametrize("failed_stage", [1, 2, 3])
+def test_known_copy_rejection_only_retries_incomplete_stage(tmp_path, failed_stage):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    actual = client.copy_spreadsheet
+    rejected = False
+
+    def copy(*a, **k):
+        nonlocal rejected
+        if len(ops) + 1 == failed_stage and not rejected:
+            rejected = True
+            raise CopyRejected("明确拒绝")
+        return actual(*a, **k)
+
+    client.copy_spreadsheet = copy
+    assert service.run_record("rec_test").failed == 1
+    assert len(ops) == failed_stage - 1
+    assert service.run_record("rec_test").result == "copied"
+    assert len(ops) == 3 and fills == ["copy-2"]
+
+
+def test_delivery_rejection_does_not_retry_filling_or_change_selected_source(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    service.history_filler = lambda *a: {"status": "retryable", "reason": "缺数据"}
+    actual = client.copy_spreadsheet
+
+    def copy(*a, **k):
+        if len(ops) == 2:
+            raise CopyRejected("交付被拒绝")
+        return actual(*a, **k)
+
+    client.copy_spreadsheet = copy
+    assert service.run_record("rec_test").failed == 1
+    service.history_filler = lambda *a: pytest.fail("已固定交付内容，不应再次填充")
+    client.copy_spreadsheet = actual
+    result = service.run_record("rec_test")
+    assert result.fill_degraded and result.delivery_source == "original"
+    assert ops[-1][0] == "copy-1"
+
+
+@pytest.mark.parametrize("failed_stage", [1, 2, 3])
+def test_unknown_copy_result_blocks_duplicate_even_after_lock_expiry(tmp_path, failed_stage):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    actual = client.copy_spreadsheet
+
+    def copy(*a, **k):
+        result = actual(*a, **k)
+        if len(ops) == failed_stage:
+            redis.delete("test:lock:scan")
+            assert service.run_record("rec_test").failed == 1
+            raise RuntimeError("响应丢失")
+        return result
+
+    client.copy_spreadsheet = copy
+    assert service.run_record("rec_test").failed == 1
+    assert service.run_record("rec_test").failed == 1
+    assert len(ops) == failed_stage
+
+
+def test_concurrent_fill_cannot_deliver_while_first_run_is_writing(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+
+    def fill(state, claim):
+        redis.delete("test:lock:scan")
+        assert service.run_record("rec_test").failed == 1
+        assert len(ops) == 2
+        return {"status": "completed"}
+
+    service.history_filler = fill
+    assert service.run_record("rec_test").result == "copied"
+    assert len(ops) == 3
+
+
+def test_delivery_completed_but_batch_save_failed_does_not_recopy(tmp_path, monkeypatch):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    actual = service.store.finish_copy
+    monkeypatch.setattr(
+        service.store, "finish_copy", lambda *a: (_ for _ in ()).throw(RuntimeError("状态保存失败"))
+    )
+    assert service.run_record("rec_test").failed == 1
+    monkeypatch.setattr(service.store, "finish_copy", actual)
+    assert service.run_record("rec_test").result == "copied"
+    assert len(ops) == 3 and fills == ["copy-2"]
+
+
+def test_force_creates_another_three_file_batch(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    assert service.run_record("rec_test").copied == 1
+    assert service.run_record("rec_test", force=True, request_id="new").copied == 1
+    assert service.run_record("rec_test", force=True, request_id="new").unchanged == 1
+    assert len(ops) == 6 and fills == ["copy-2", "copy-5"]
+
+
+def test_disabled_fill_still_makes_three_copies(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, history=False)
+    assert service.run_record("rec_test").result == "copied"
+    assert len(ops) == 3 and not fills
+    assert files["copy-1"] == files["copy-2"] == files["copy-3"]
+
+
+def test_existing_single_copy_is_reused_after_enabling_backups(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    original = service.run_record("rec_test")
+    service.config = replace(service.config, backup_folder_token="backup")
+    assert service.run_record("rec_test").target_url == original.target_url
+    assert client.copy_count == 1
+
+
+@pytest.mark.parametrize("suffix", [":step:original", ":step:filled", ":step:delivery", ":outcome"])
+def test_completed_batch_missing_stage_never_creates_more_files(tmp_path, suffix):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    assert service.run_record("rec_test").copied == 1
+    redis.delete("test:rec_test:source-token" + suffix)
+    assert service.run_record("rec_test").failed == 1
+    assert len(ops) == 3 and fills == ["copy-2"]
+
+
+def test_fill_state_commit_failure_prevents_premature_delivery(tmp_path, monkeypatch):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    monkeypatch.setattr(
+        service.store, "finish_fill", lambda *a: (_ for _ in ()).throw(RuntimeError("状态保存失败"))
+    )
+    assert service.run_record("rec_test").failed == 1
+    assert service.run_record("rec_test").failed == 1
+    assert len(ops) == 2 and fills == ["copy-2"]
+
+
+def test_notification_contains_all_three_links_and_delivery_source(tmp_path):
+    import json
+
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    service.history_filler = lambda *a: {"status": "needs_review", "reason": "填充失败"}
+    result = service.run_record("rec_test")
+    card = json.dumps(client.sent_cards[-1], ensure_ascii=False)
+    assert all(
+        link in card
+        for link in [result.original_backup_url, result.filled_backup_url, result.target_url]
+    )
+    assert "交付内容：原始备份" in card and "填充未完成" in card
+
+
+def test_forecast_unavailable_delivers_original_even_when_history_completed(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, forecast=True)
+    result = service.run_record("rec_test")
+    assert result.history_status == "completed" and result.forecast_status == "unsupported"
+    assert result.fill_degraded and result.delivery_source == "original"
+    assert files["copy-3"] == files["source-token"] and "sales" in files["copy-2"]

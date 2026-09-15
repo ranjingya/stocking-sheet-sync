@@ -128,3 +128,21 @@ def test_successful_copy_returns_target_identity(tmp_path):
         assert result.url == "https://example.feishu.cn/sheets/target"
     finally:
         client.close()
+
+
+def test_copy_uses_explicit_backup_folder_without_changing_default(tmp_path, monkeypatch):
+    client = FeishuClient(make_config(tmp_path), "app", "secret", "test")
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(kwargs)
+        return {"file": {"token": "copied", "url": "https://example.feishu.cn/sheets/copied"}}
+
+    monkeypatch.setattr(client, "_request", request)
+    try:
+        client.copy_spreadsheet("source", "原始备份", folder_token="backup")
+        client.copy_spreadsheet("source", "交付")
+        assert [c["json_body"]["folder_token"] for c in calls] == ["backup", "folder-token"]
+        assert all(c["retry"] is False for c in calls)
+    finally:
+        client.close()

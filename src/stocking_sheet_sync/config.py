@@ -38,6 +38,7 @@ class AppConfig:
     fill_history_enabled: bool = False
     fill_forecast_enabled: bool = False
     fill_report_dir: str = "artifacts/fill"
+    backup_folder_token: str = ""
 
 
 def load_config(
@@ -96,6 +97,9 @@ def load_config(
         required_fields=required_fields,
         target_folder_token=_required_text(target, "folder_token", "target.folder_token"),
         copy_name_prefix=_text(target.get("copy_name_prefix", "市场部-")),
+        backup_folder_token=_required_text(
+            target, "backup_folder_token", "target.backup_folder_token"
+        ),
         notify_open_ids=_parse_open_ids(
             notifications.get("open_ids", []),
             "notifications.open_ids",

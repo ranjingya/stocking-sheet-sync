@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from redis import Redis
 
-from .models import CopyResult, CopyState, FillState
+from .models import CopyResult, CopyState, CopyStep, FillState
 
 _COMPARE_DELETE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -202,6 +202,12 @@ class RedisStateStore:
         state = CopyState(**data)
         if key != self._copy_key(state):
             raise ValueError(f"去重记录身份与键不匹配：{key}")
+        if state.workflow not in {"single", "triple"}:
+            raise ValueError(f"批次工作流程无效：{key}")
+        if state.workflow == "triple" and not all(
+            (state.backup_folder_token, state.delivery_folder_token, state.target_name)
+        ):
+            raise ValueError(f"三份文件批次配置不完整：{key}")
         if state.status not in {"copying", "copied"}:
             raise ValueError(f"去重状态无效：{key}")
         if state.status == "copying" and not state.attempt_id:
@@ -268,9 +274,97 @@ class RedisStateStore:
     def _fill_key(self, state: CopyState) -> str:
         return self._copy_key(state) + ":history"
 
+    def get_step(self, state: CopyState, stage: str) -> CopyStep | None:
+        """读取 state 的 stage 复制步骤，校验阶段、状态和成功结果后返回。"""
+        raw = self._redis.get(self._step_key(state, stage))
+        if raw is None:
+            return None
+        step = CopyStep(**json.loads(raw))
+        if step.stage != stage or step.status not in {"copying", "copied"} or not step.attempt_id:
+            raise ValueError("复制步骤记录无效")
+        if step.status == "copied" and not all(
+            (step.target_token, step.target_url, step.copied_at)
+        ):
+            raise ValueError("复制步骤成功记录不完整")
+        return step
+
+    def begin_step(self, state: CopyState, step: CopyStep) -> bool:
+        """为 state 的 step 创建永久占位；已有步骤时返回 False。"""
+        if step.status != "copying" or not step.attempt_id:
+            raise ValueError("复制步骤必须以有效占位开始")
+        return bool(self._redis.set(self._step_key(state, step.stage), _encode(step), nx=True))
+
+    def finish_step(
+        self, state: CopyState, step: CopyStep, result: CopyResult, at: str
+    ) -> CopyStep:
+        """
+        功能说明：将阶段占位原子替换为复制结果，防止重试重复创建文件。
+
+        参数：
+            state：所属批次。
+            step：本次已占位的步骤。
+            result：服务端返回的副本信息。
+            at：确认复制成功的时间。
+        返回值：完成的步骤；占位变化时抛错，不重试复制。
+        """
+        completed = replace(
+            step,
+            status="copied",
+            target_token=result.token,
+            target_url=result.url,
+            name=result.name,
+            copied_at=at,
+        )
+        if not self._redis.eval(
+            _COMPARE_SET, 1, self._step_key(state, step.stage), _encode(step), _encode(completed)
+        ):
+            raise RuntimeError("复制步骤占位变化，请核对已创建文件")
+        return completed
+
+    def cancel_step(self, state: CopyState, step: CopyStep) -> None:
+        """只在明确拒绝复制时删除 state 的 step 占位。"""
+        self._redis.eval(_COMPARE_DELETE, 1, self._step_key(state, step.stage), _encode(step))
+
+    def get_outcome(self, state: CopyState) -> dict | None:
+        """读取 state 已冻结的填充结果及交付来源；返回 None 或结果字典。"""
+        raw = self._redis.get(self._copy_key(state) + ":outcome")
+        if raw is None:
+            return None
+        result = json.loads(raw)
+        required = {
+            "history_status",
+            "forecast_status",
+            "fill_degraded",
+            "reason",
+            "fill_report_path",
+            "delivery_source",
+            "source_token",
+        }
+        if (
+            not isinstance(result, dict)
+            or not required <= result.keys()
+            or result["delivery_source"] not in {"original", "filled"}
+        ):
+            raise ValueError("交付决策记录无效")
+        return result
+
+    def save_outcome(self, state: CopyState, outcome: dict) -> dict:
+        """首次保存 state 的 outcome，后续读取已冻结的决定，避免重试更换交付内容。"""
+        self._redis.set(
+            self._copy_key(state) + ":outcome",
+            json.dumps(outcome, ensure_ascii=False, sort_keys=True),
+            nx=True,
+        )
+        return self.get_outcome(state)
+
+    def _step_key(self, state: CopyState, stage: str) -> str:
+        if stage not in {"original", "filled", "delivery"}:
+            raise ValueError("复制步骤名称无效")
+        return self._copy_key(state) + ":step:" + stage
+
     def close(self) -> None:
         self._redis.close()
 
 
-def _encode(state: CopyState | FillState) -> str:
+def _encode(state: CopyState | FillState | CopyStep) -> str:
     return json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)

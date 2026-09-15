@@ -19,7 +19,9 @@ from .redis_store import RedisStateStore
 class DataClient(Protocol):
     def get_base_record(self, record_id: str) -> BaseRecord: ...
     def resolve_wiki_node(self, wiki_token: str) -> tuple[str, str, str]: ...
-    def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult: ...
+    def copy_spreadsheet(
+        self, spreadsheet_token: str, copy_name: str, *, folder_token: str | None = None
+    ) -> CopyResult: ...
 
 
 class MessageClient(Protocol):
@@ -115,6 +117,10 @@ class SyncService:
                 else self.store.get_state(record_id, source_token)
             )
             if current is not None:
+                if current.workflow == "triple":
+                    from .three_copy import run_three_copy
+
+                    return run_three_copy(self, current, summary)
                 if current.status == "copied":
                     summary.unchanged = 1
                     summary.result, summary.reason = "unchanged", "源表格已搬运"
@@ -125,6 +131,7 @@ class SyncService:
                 raise RuntimeError("该源表格已有未确认的搬运，请核对目标文件夹及 Redis 状态")
             if not record_url:
                 raise RuntimeError("多维表记录缺少原始记录链接")
+            batch_id = uuid.uuid4().hex
             state = CopyState(
                 record_id=record_id,
                 source_token=source_token,
@@ -132,12 +139,23 @@ class SyncService:
                 source_url=source.source_url,
                 record_url=record_url,
                 status="copying",
-                attempt_id=uuid.uuid4().hex,
+                attempt_id=batch_id,
                 started_at=self._now_text(),
                 request_id=request_id,
+                workflow="triple" if self.config.backup_folder_token else "single",
+                backup_folder_token=self.config.backup_folder_token,
+                delivery_folder_token=self.config.target_folder_token,
+                history_enabled=self.config.fill_history_enabled,
+                forecast_enabled=self.config.fill_forecast_enabled,
+                target_name=f"{self.config.copy_name_prefix}{source_name}-{batch_id[:8]}",
             )
             if not self.store.begin_copy(state):
                 raise RuntimeError("该源表格已被其他任务接管，请重新检查搬运状态")
+            if state.workflow == "triple":
+                from .three_copy import run_three_copy
+
+                current = state
+                return run_three_copy(self, state, summary)
             copy_name = f"{self.config.copy_name_prefix}{source_name}"
             self.logger.info("开始复制表格：record_id=%s target_name=%s", record_id, copy_name)
             try:
@@ -161,7 +179,7 @@ class SyncService:
             summary.failed = 1
             summary.result, summary.reason = "failed", str(error)
             self.logger.exception("搬运处理失败：record_id=%s", record_id)
-            if current is not None and current.status == "copied":
+            if current is not None and current.status == "copied" and current.workflow == "single":
                 summary.target_url = current.target_url
                 self._degrade_fill(summary, str(error))
                 if self.config.fill_history_enabled and summary.history_status == "disabled":
@@ -178,6 +196,8 @@ class SyncService:
                         status="failure",
                         target_folder_token=self.config.target_folder_token,
                         reason=str(error),
+                        original_backup_url=summary.original_backup_url,
+                        filled_backup_url=summary.filled_backup_url,
                     )
                     self._notify(self.config.failure_notify_open_ids, card)
                 except Exception:
@@ -288,7 +308,11 @@ class SyncService:
     def _notify_result(self, state: CopyState, summary: SyncSummary) -> None:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
         try:
-            enabled = self.config.fill_history_enabled or self.config.fill_forecast_enabled
+            enabled = (
+                state.history_enabled or state.forecast_enabled
+                if state.workflow == "triple"
+                else self.config.fill_history_enabled or self.config.fill_forecast_enabled
+            )
             labels = {
                 "disabled": "关闭",
                 "completed": "完成",
@@ -302,15 +326,21 @@ class SyncService:
                 if enabled
                 else ""
             )
+            if summary.delivery_source:
+                fill_summary += "；交付内容：" + (
+                    "原始备份" if summary.delivery_source == "original" else "处理备份"
+                )
             card = build_sync_card(
                 original_name=state.source_name,
                 record_url=state.record_url,
                 status="failure" if summary.failed else "success",
-                target_folder_token=self.config.target_folder_token,
+                target_folder_token=state.delivery_folder_token or self.config.target_folder_token,
                 target_name=state.target_name,
                 target_url=state.target_url,
                 reason=summary.reason if summary.fill_degraded or summary.failed else "",
                 fill_summary=fill_summary,
+                original_backup_url=summary.original_backup_url,
+                filled_backup_url=summary.filled_backup_url,
             )
             self._notify(
                 self.config.failure_notify_open_ids

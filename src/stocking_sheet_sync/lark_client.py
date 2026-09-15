@@ -116,13 +116,16 @@ class FeishuClient:
             raise RuntimeError(f"Wiki 节点未返回真实文档信息：{wiki_token}")
         return token, document_type, title
 
-    def copy_spreadsheet(self, spreadsheet_token: str, copy_name: str) -> CopyResult:
+    def copy_spreadsheet(
+        self, spreadsheet_token: str, copy_name: str, *, folder_token: str | None = None
+    ) -> CopyResult:
         """
         功能说明：把源电子表格复制到配置的共享文件夹。
 
         参数：
             spreadsheet_token：源电子表格 token。
             copy_name：副本文件名。
+            folder_token：可选目标文件夹；未指定时使用配置的交付文件夹。
 
         返回值：新副本的名称、token、类型和链接。
         """
@@ -132,7 +135,7 @@ class FeishuClient:
                 f"/open-apis/drive/v1/files/{quote(spreadsheet_token, safe='')}/copy",
                 retry=False,
                 json_body={
-                    "folder_token": self.config.target_folder_token,
+                    "folder_token": folder_token or self.config.target_folder_token,
                     "name": copy_name,
                     "type": "sheet",
                 },

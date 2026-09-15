@@ -15,6 +15,7 @@ link_field_name = "下单表格"
 required_fields = { "状态" = "需求收集" }
 
 [target]
+backup_folder_token = "backup-folder"
 folder_token = "folder-token"
 copy_name_prefix = "市场部-"
 

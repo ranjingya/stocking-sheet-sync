@@ -16,6 +16,8 @@ def build_sync_card(
     target_url: str = "",
     reason: str = "",
     fill_summary: str = "",
+    original_backup_url: str = "",
+    filled_backup_url: str = "",
 ) -> dict[str, Any]:
     """
     功能说明：生成统一样式的产品下单同步结果卡片。
@@ -29,6 +31,8 @@ def build_sync_card(
         target_url：同步后表格链接，成功时必填。
         reason：失败或填充降级原因，失败时必填。
         fill_summary：可选的历史与预测填充阶段说明。
+        original_backup_url：可选原始备份链接。
+        filled_backup_url：可选处理备份链接，具体填充结果由阶段状态说明。
 
     返回值：
         可直接发送为 interactive 消息的 Card 2.0 对象。
@@ -79,6 +83,10 @@ def build_sync_card(
         )
         action_text = "查看原始记录"
         action_url = record_url
+
+    for label, url in (("原始备份", original_backup_url), ("处理备份", filled_backup_url)):
+        if url:
+            detail_content += f"\n{label}： [{label}]({_validate_url(url, label)})"
 
     if fill_summary:
         detail_content += "\n" + _escape_markdown(_clean_text(fill_summary))
