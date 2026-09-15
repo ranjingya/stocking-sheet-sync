@@ -35,6 +35,9 @@ class AppConfig:
     log_level: str
     public_base_url: str
     webhook_secret: str
+    fill_history_enabled: bool = False
+    fill_forecast_enabled: bool = False
+    fill_report_dir: str = "artifacts/fill"
 
 
 def load_config(
@@ -113,6 +116,9 @@ def load_config(
         log_level=_parse_log_level(runtime.get("log_level", "INFO")),
         public_base_url=_parse_public_base_url(web.get("public_base_url")),
         webhook_secret=environment.get("WEBHOOK_SECRET", "").strip(),
+        fill_history_enabled=_env_bool(environment, "FILL_HISTORY_ENABLED"),
+        fill_forecast_enabled=_env_bool(environment, "FILL_FORECAST_ENABLED"),
+        fill_report_dir=_text(runtime.get("fill_report_dir", "artifacts/fill")),
     )
 
 
@@ -224,3 +230,13 @@ def _parse_public_base_url(value: object) -> str:
     if not re.fullmatch(r"https://[^\s/]+(?:/[^\s]*)?", url):
         raise ValueError("web.public_base_url 必须是有效的 HTTPS 地址")
     return url
+
+
+def _env_bool(env: Mapping[str, str], name: str) -> bool:
+    """解析环境变量 env 中的开关 name；缺省关闭，非法值阻止启动。"""
+    value = env.get(name, "false").strip().lower()
+    if value in {"true", "1", "yes", "on"}:
+        return True
+    if value in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError(f"{name} 必须是 true/false、1/0、yes/no 或 on/off")

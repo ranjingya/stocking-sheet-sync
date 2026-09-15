@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from redis import Redis
 
-from .models import CopyResult, CopyState
+from .models import CopyResult, CopyState, FillState
 
 _COMPARE_DELETE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -103,7 +103,7 @@ class RedisStateStore:
             )
         )
 
-    def finish_copy(self, state: CopyState, result: CopyResult, copied_at: str) -> None:
+    def finish_copy(self, state: CopyState, result: CopyResult, copied_at: str) -> CopyState:
         """
         功能说明：将本次占位原子替换为永久的成功搬运记录。
 
@@ -112,7 +112,7 @@ class RedisStateStore:
             result：飞书返回的目标副本信息。
             copied_at：确认复制成功的时间。
 
-        返回值：无；占位不匹配时抛错，避免覆盖其他处理结果。
+        返回值：保存后的副本记录；占位不匹配时抛错，避免覆盖其他处理结果。
         """
         completed = replace(
             state,
@@ -130,6 +130,7 @@ class RedisStateStore:
             _encode(completed),
         ):
             raise RuntimeError("搬运占位已变化，无法保存副本结果，请人工核对")
+        return completed
 
     def cancel_copy(self, state: CopyState) -> None:
         """仅在复制被明确拒绝时删除 state 对应的本次占位，无返回值。"""
@@ -199,9 +200,65 @@ class RedisStateStore:
             raise ValueError(f"搬运结果不完整：{key}")
         return state
 
+    def get_fill(self, state: CopyState) -> FillState | None:
+        """读取 state 对应的历史填充状态；身份或状态损坏时阻止写入。"""
+        raw = self._redis.get(self._fill_key(state))
+        if raw is None:
+            return None
+        result = FillState(**json.loads(raw))
+        if (result.record_id, result.source_token, result.target_token) != (
+            state.record_id,
+            state.source_token,
+            state.target_token,
+        ) or result.status not in {"running", "completed", "retryable", "needs_review"}:
+            raise ValueError("历史填充记录身份或状态无效")
+        if not result.attempt_id or not result.as_of:
+            raise ValueError("历史填充记录缺少执行凭证或预估日")
+        return result
+
+    def begin_fill(self, state: CopyState, claim: FillState) -> bool:
+        """
+        功能说明：永久占位历史填充，只允许未开始或明确可重试的记录进入执行。
+
+        参数：
+            state：已保存的副本记录。
+            claim：包含固定预估日和唯一执行凭证的填充占位。
+        返回值：成功接管返回 True；已有执行、完成或待人工核验状态返回 False。
+        """
+        if state.status != "copied" or claim.status != "running":
+            raise ValueError("填充必须针对已确认副本并使用 running 占位")
+        if (claim.record_id, claim.source_token, claim.target_token) != (
+            state.record_id,
+            state.source_token,
+            state.target_token,
+        ):
+            raise ValueError("填充占位与副本身份不符")
+        key = self._fill_key(state)
+        raw = self._redis.get(key)
+        if raw is None:
+            return bool(self._redis.set(key, _encode(claim), nx=True))
+        previous = self.get_fill(state)
+        if previous.status != "retryable" or previous.as_of != claim.as_of:
+            return False
+        return bool(self._redis.eval(_COMPARE_SET, 1, key, raw, _encode(claim)))
+
+    def finish_fill(self, state: CopyState, claim: FillState, result: FillState) -> None:
+        """将 state 的 claim 原子更新为 result；占位变化时抛错，避免覆盖另一执行。"""
+        if replace(result, status=claim.status, reason=claim.reason) != claim:
+            raise ValueError("填充结束状态不能改变执行身份、日期或报告路径")
+        if result.status == "running":
+            raise ValueError("填充结束状态不能为 running")
+        if not self._redis.eval(
+            _COMPARE_SET, 1, self._fill_key(state), _encode(claim), _encode(result)
+        ):
+            raise RuntimeError("填充占位已变化，请保留副本并核对执行报告")
+
+    def _fill_key(self, state: CopyState) -> str:
+        return self._state_key(state.record_id, state.source_token) + ":history"
+
     def close(self) -> None:
         self._redis.close()
 
 
-def _encode(state: CopyState) -> str:
+def _encode(state: CopyState | FillState) -> str:
     return json.dumps(asdict(state), ensure_ascii=False, sort_keys=True)

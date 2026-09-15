@@ -107,7 +107,12 @@ def dimension_snapshot(value) -> dict:
 
 
 def read_sheet(
-    token: str, sheet_id: str, *, include_style: bool = True, archive_path: Path | None = None
+    token: str,
+    sheet_id: str,
+    *,
+    include_style: bool = True,
+    archive_path: Path | None = None,
+    client: FeishuClient | None = None,
 ) -> dict:
     """
     功能说明：通过服务端 API 读取全表数值，以 XLSX 补充公式、样式和布局并核对版本。
@@ -117,10 +122,12 @@ def read_sheet(
         sheet_id：需要读取的工作表 ID。
         include_style：是否包含样式与布局；公式类型始终从导出文件确认。
         archive_path：可选导出文件保存路径，供审阅原始证据。
+        client：可选数据应用客户端；传入时由调用方关闭。
 
     返回值：完整单元格快照，兼容商品和销量匹配流程；任何版本冲突均终止读取。
     """
-    client = create_client()
+    owned = client is None
+    client = client or create_client()
     workbook = None
     try:
         initial = revision(client, token, sheet_id)
@@ -230,11 +237,17 @@ def read_sheet(
     finally:
         if workbook is not None:
             workbook.close()
-        client.close()
+        if owned:
+            client.close()
 
 
 def write_sales_ranges(
-    token: str, sheet_id: str, operations: list[dict], *, expected_revision: int
+    token: str,
+    sheet_id: str,
+    operations: list[dict],
+    *,
+    expected_revision: int,
+    client: FeishuClient | None = None,
 ) -> dict:
     """
     功能说明：复核版本与目标空白状态后，以一次服务端请求写入多个销量范围。
@@ -244,6 +257,7 @@ def write_sales_ranges(
         sheet_id：目标工作表 ID。
         operations：原生 valueRanges 数组，包含整数或单平台 SUM 合计公式。
         expected_revision：读取并核对过的工作簿版本。
+        client：可选数据应用客户端；传入时由调用方关闭。
 
     返回值：服务端批量写入结果；写请求仅发送一次，异常时必须回读确认。
     """
@@ -285,7 +299,8 @@ def write_sales_ranges(
                 or not 1 <= int(match.group(2)) <= int(match.group(3)) < int(first) + offset
             ):
                 raise ValueError("仅支持非负整件数或引用本列上方范围的SUM合计公式")
-    client = create_client()
+    owned = client is None
+    client = client or create_client()
     try:
         path = f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}"
         current = client._request(
@@ -317,4 +332,5 @@ def write_sales_ranges(
     except httpx.TransportError:
         raise RuntimeError("飞书写入连接异常，结果不确定；请回读表格，不要直接重试") from None
     finally:
-        client.close()
+        if owned:
+            client.close()

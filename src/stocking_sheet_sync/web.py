@@ -144,8 +144,7 @@ def create_app(
             ), 409
         except Exception as error:
             logger.error(
-                "多维表自动化 Webhook 处理完成：record_id=%s "
-                "result=failed reason=%s",
+                "多维表自动化 Webhook 处理完成：record_id=%s result=failed reason=%s",
                 record_id,
                 error,
             )
@@ -189,8 +188,10 @@ def create_app(
         ), status_code
 
     logger.info(
-        "Webhook 服务初始化完成：url=%s/webhooks/base-record",
+        "Webhook 服务初始化完成：url=%s/webhooks/base-record history=%s forecast=%s",
         app_config.public_base_url,
+        app_config.fill_history_enabled,
+        app_config.fill_forecast_enabled,
     )
     return app
 

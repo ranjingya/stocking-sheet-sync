@@ -41,7 +41,7 @@ def completed(before, update):
     return after
 
 
-def test_build_only_inserts_sales_and_copies_formats():
+def test_build_only_inserts_sales_and_inherits_demand_styles():
     before = incoming()
     unchanged = deepcopy(before)
     update = build_update(before, config(), rules())
@@ -49,23 +49,17 @@ def test_build_only_inserts_sales_and_copies_formats():
     assert update["column_mapping"]["F"] == "G"
     assert update["column_mapping"]["K"] == "P"
     assert update["inserted_columns"] == ["F", "H", "J", "L", "N"]
-    assert all(
-        o["input"]["inherit_style"] == "before"
-        for o in update["operations"]
-        if o["shortcut"] == "+dim-insert"
-    )
-    assert all(
-        o["input"]["paste_type"] == "formats"
-        for o in update["operations"]
-        if o["shortcut"] == "+range-copy"
-    )
-    assert not any(o["shortcut"] in {"+dim-delete", "+range-move"} for o in update["operations"])
-    assert not any(
-        "formula" in c
-        for o in update["operations"]
-        for row in o["input"].get("cells", [])
-        for c in row
-    )
+    inserts = [o for o in update["operations"] if o["endpoint"] == "insert_dimension_range"]
+    assert [o["body"]["dimension"]["startIndex"] for o in inserts] == [5, 7, 9, 11, 13]
+    assert all(o["body"]["inheritStyle"] == "AFTER" for o in inserts)
+    assert all(o["method"] in {"POST", "PUT"} for o in update["operations"])
+    assert set(o["endpoint"] for o in update["operations"]) == {
+        "insert_dimension_range",
+        "dimension_range",
+        "unmerge_cells",
+        "merge_cells",
+        "values_batch_update",
+    }
 
 
 def test_repeated_execution_is_empty_and_keeps_existing_quantity():
@@ -110,7 +104,7 @@ def test_expected_revision_rejected_before_batch(monkeypatch, tmp_path):
         "stocking_sheet_sync.layout_apply.read_sheet", lambda *args, **kwargs: incoming()
     )
     monkeypatch.setattr(
-        "stocking_sheet_sync.layout_apply._batch",
+        "stocking_sheet_sync.layout_apply.apply_update",
         lambda *args, **kwargs: pytest.fail("版本不符时不应提交"),
     )
     assert (
@@ -142,9 +136,54 @@ def test_new_sales_column_inherits_total_formula_without_demand_values():
     assert update["total_formulas"] == {"F7": "=SUM(F4:F6)"}
     assert before["cells"]["F7"]["value"] == 100
     assert any(
-        op["input"].get("cells") == [[{"formula": "=SUM(F4:F6)"}]] for op in update["operations"]
+        op["body"].get("valueRanges")
+        == [{"range": "test!F7:F7", "values": [[{"type": "formula", "text": "=SUM(F4:F6)"}]]}]
+        for op in update["operations"]
     )
     after = completed(before, update)
     after["cells"]["G7"]["formula"] = "=SUM(G4:G6)"
     after["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 0}
     assert verify_update(before, after, update, config(), rules())["verified"]
+
+
+def test_native_steps_stop_on_uncertain_insert_without_retry():
+    from stocking_sheet_sync.layout_apply import apply_update
+
+    calls = []
+
+    class Client:
+        def _request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            if method == "GET":
+                return {"revision": 1}
+            raise RuntimeError("插列响应未知")
+
+    before = incoming()
+    update = build_update(before, config(), rules())
+    journal = []
+    with pytest.raises(RuntimeError, match="未知"):
+        apply_update(
+            "token",
+            "test",
+            update,
+            1,
+            client=Client(),
+            on_progress=lambda j: journal.append(deepcopy(j)),
+        )
+    assert len([c for c in calls if c[0] != "GET"]) == 1
+    assert calls[-1][2]["retry"] is False
+    assert journal[-1]["steps"][-1]["status"] == "sending"
+
+
+def test_native_layout_rejects_revision_change_before_mutation():
+    from stocking_sheet_sync.layout_apply import apply_update
+
+    class Client:
+        def _request(self, method, path, **kwargs):
+            assert method == "GET"
+            return {"revision": 9}
+
+    with pytest.raises(ValueError, match="版本"):
+        apply_update(
+            "token", "test", build_update(incoming(), config(), rules()), 1, client=Client()
+        )

@@ -306,3 +306,111 @@ def test_corrupt_state_does_not_trigger_copy(tmp_path):
     redis.set("test:rec_test:source-token", "{invalid}")
     assert service.run_record("rec_test").result == "failed"
     assert client.copy_count == 0
+
+
+@pytest.mark.parametrize(
+    "history,forecast", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_fill_flags_copy_once_and_report_each_stage(tmp_path, history, forecast):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(
+        service.config, fill_history_enabled=history, fill_forecast_enabled=forecast
+    )
+    calls = []
+
+    def fill(state, claim):
+        assert service.store.get_state(state.record_id, state.source_token).status == "copied"
+        assert service.store.get_fill(state).status == "running"
+        calls.append((state.target_token, claim.as_of))
+        return {"status": "completed"}
+
+    service.history_filler = fill
+    first = service.run_record("rec_test")
+    clock.advance(minutes=24 * 60 * 10)
+    second = service.run_record("rec_test")
+    assert client.copy_count == 1
+    assert first.history_status == second.history_status == ("completed" if history else "disabled")
+    assert first.forecast_status == ("unsupported" if forecast else "disabled")
+    assert first.copied == 1 and second.copied == 0
+    assert first.failed == int(forecast)
+    assert calls == ([("target-1", "2026-08-21")] if history else [])
+    if forecast:
+        assert "预测规则尚未实现" in first.reason
+        assert "搬运成功，填充待处理" in json.dumps(client.sent_cards, ensure_ascii=False)
+
+
+def test_can_enable_history_on_existing_copy_and_retry_fixed_window(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    assert service.run_record("rec_test").copied == 1
+    clock.advance(minutes=24 * 60 * 10)
+    service.config = replace(service.config, fill_history_enabled=True)
+    dates = []
+
+    def fill(state, claim):
+        dates.append(claim.as_of)
+        return {
+            "status": "retryable" if len(dates) == 1 else "completed",
+            "reason": "数据未同步" if len(dates) == 1 else "",
+        }
+
+    service.history_filler = fill
+    assert service.run_record("rec_test").history_status == "retryable"
+    clock.advance(minutes=24 * 60 * 5)
+    assert service.run_record("rec_test").history_status == "completed"
+    assert service.run_record("rec_test").history_status == "completed"
+    assert dates == ["2026-08-21", "2026-08-21"]
+    assert client.copy_count == 1
+
+
+def test_uncertain_fill_is_not_repeated_even_after_lock_expires(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    calls = []
+
+    def fill(state, claim):
+        calls.append(claim.attempt_id)
+        redis.delete("test:lock:scan")
+        concurrent = service.run_record("rec_test")
+        assert concurrent.failed == 1 and concurrent.history_status == "running"
+        assert concurrent.copied == 0
+        raise RuntimeError("连接超时，写入结果不确定")
+
+    service.history_filler = fill
+    first = service.run_record("rec_test")
+    second = service.run_record("rec_test")
+    assert first.history_status == second.history_status == "needs_review"
+    assert first.copied == 1 and second.copied == 0
+    assert len(calls) == client.copy_count == 1
+    assert not redis.expirations
+
+
+def test_fill_state_save_failure_keeps_running_claim(tmp_path, monkeypatch):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    calls = []
+    service.history_filler = lambda state, claim: calls.append(claim) or {"status": "completed"}
+
+    def fail(*args):
+        raise RuntimeError("Redis 保存失败")
+
+    monkeypatch.setattr(service.store, "finish_fill", fail)
+    assert service.run_record("rec_test").failed == 1
+    assert service.run_record("rec_test").history_status == "running"
+    assert client.copy_count == len(calls) == 1
+
+
+def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypatch):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+
+    def fail(*a):
+        raise RuntimeError("无法读取填充状态")
+
+    monkeypatch.setattr(service.store, "get_fill", fail)
+    result = service.run_record("rec_test")
+    assert result.copied == result.failed == 1
+    assert result.history_status == "needs_review"
+    assert result.target_url.endswith("target-1")
+    card = json.dumps(client.sent_cards[-1], ensure_ascii=False)
+    assert "搬运成功，填充待处理" in card
+    assert "sheets/target-1" in card

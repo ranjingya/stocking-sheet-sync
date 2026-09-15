@@ -52,10 +52,9 @@
 
 ## 使用
 
-线上模式依赖已登录用户身份的 `lark-cli`。先查工作簿，使用实际返回的工作表 ID：
+线上模式通过飞书服务端 API 使用本项目数据应用认证。工作表 ID 可从表格链接中的 `sheet` 参数或服务端 `GET /open-apis/sheets/v3/spreadsheets/{token}/sheets/query` 获取：
 
 ```bash
-lark-cli sheets +workbook-info --spreadsheet-token '<表格 token>' --as user
 uv run stocking-sheet-sync-layout \
   --spreadsheet-token '<表格 token>' \
   --sheet-id '<工作表 ID>' \
@@ -86,7 +85,7 @@ uv run stocking-sheet-sync-layout \
 
 `stocking-sheet-sync-layout-apply` 适用于五个平台需求列齐全、平台顺序明确的新品表。它在各需求列前补销量列，复制对应需求列的字体、对齐、边框等格式，设置销量标题与列宽，并合并市场部分组。原需求数量随列移动；新增销量列的商品行保持空白；平台需求列存在覆盖全部商品行的单列 SUM 合计时，销量列在同行生成对应 SUM 公式。原需求列公式保持不变。
 
-默认仅生成请求并进行接口预检。先在测试副本运行：
+默认读取完整快照、校验结构并生成本地请求计划。先在测试副本运行：
 
 ```bash
 uv run stocking-sheet-sync-layout-apply \
@@ -105,11 +104,11 @@ uv run stocking-sheet-sync-layout-apply \
   --output artifacts/layout-applied
 ```
 
-命令在提交前再次核对版本，以单个批量请求执行，并回读完整工作表。校验包括原单元格的值与格式、公式及计算结果、新列样式与空值、行高和合并范围。飞书会随插列自动调整公式引用，调整记录保存在核验结果中。请在表格无人同时编辑时执行；版本预检不提供并发写入锁。
+命令在提交前再次核对版本，按计划顺序调用插列、列宽、值写入及合并接口，并回读完整工作表。校验包括原单元格的值与格式、公式及计算结果、新列样式与空值、行高和合并范围。飞书会随插列自动调整公式引用，调整记录保存在核验结果中。请在表格无人同时编辑时执行；版本预检不提供并发写入锁。
 
-执行目录保留 `before.json`、`request.json`、`dry-run.json`、`response.json`、`after.json` 与 `result.json`。出错时保存 `error.json`，需要结合前后快照核对实际状态。网络异常或核验失败均不自动重试写入。再次运行时传入当前版本；结构符合规则则返回 `status: unchanged`，不提交批量请求。
+执行目录保留 `before.json`、`request.json`、`journal.json`、`response.json`、`after.json` 与 `result.json`。出错时保存 `error.json`，需要结合前后快照核对实际状态。网络异常或核验失败均不自动重试写入。再次运行时传入当前版本；结构符合规则则返回 `status: unchanged`，不提交批量请求。
 
-执行命令只支持新品补列及标准表头、分组整理。老品、需要移动平台列、缺少需求列或存在识别问题时停止并输出错误。线上命令依赖运行环境中的 `lark-cli` 与用户登录，当前 Docker 镜像用于搬运服务，未包含该 CLI。
+执行命令只支持新品补列及标准表头、分组整理。老品、需要移动平台列、缺少需求列或存在识别问题时停止并输出错误。全部线上读取及补列操作使用数据应用的服务端接口，Docker 镜像包含所需依赖。每个写请求仅提交一次，多步操作不具备整体事务；中断后应根据逐步日志和回读快照核对实际状态。
 
 ## 样本验证
 

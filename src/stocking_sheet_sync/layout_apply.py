@@ -3,29 +3,31 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import subprocess
 from pathlib import Path
+from urllib.parse import quote
+
+import httpx
 
 from .logging_config import configure_logging
 from .sales_config import load_sales_config
-from .sales_inspect import _lark_read, read_sheet
 from .sales_totals import column_total_rows
 from .sheet_layout import _bounds, load_layout_config, plan_market_layout
 from .sheet_matching import column_name, column_number, inspect_sheet
+from .sheets_api import create_client, read_sheet, revision
 
 LOG = logging.getLogger(__name__)
 
 
 def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
     """
-    功能说明：为新品生成补齐销量列和市场部合并表头的原子请求。
+    功能说明：为新品生成补齐销量列和市场部合并表头的顺序执行请求。
 
     参数：
         snapshot：包含完整值、公式、样式和布局的工作表快照。
         config：商品和平台别名配置。
         rules：市场部结构规则。
 
-    返回值：结构预览、原子操作、原列到新列映射及新增列位置。
+    返回值：结构预览、服务端操作、原列到新列映射及新增列位置。
     """
     report = plan_market_layout(snapshot, config, rules)
     if report["category"] != "new" or report["issues"]:
@@ -41,8 +43,15 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
     product_rows = [r["row"] for r in inspect_sheet(snapshot, config)["rows"]]
     sid = snapshot["sheet_id"]
 
-    def add(shortcut, **values):
-        operations.append({"shortcut": shortcut, "input": {"sheet_id": sid, **values}})
+    def add(method, endpoint, **body):
+        operations.append({"method": method, "endpoint": endpoint, "body": body})
+
+    def set_value(cell, value):
+        add(
+            "POST",
+            "values_batch_update",
+            valueRanges=[{"range": f"{sid}!{cell}:{cell}", "values": [[value]]}],
+        )
 
     inserts = [o for o in report["operations"] if o["action"] == "insert_market_column"]
     mapping = {column_name(c): c for c in range(1, snapshot["column_count"] + 1)}
@@ -50,11 +59,20 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
     if group_changes:
         change = group_changes[0]
         if change["before_range"] in snapshot["merges"]:
-            add("+cells-unmerge", range=change["before_range"])
+            add("POST", "unmerge_cells", range=f"{sid}!{change['before_range']}")
     for item in inserts:
         position = column_number(item["position"])
-        # CLI 将此参数映射为原生 side；使用 before 保证在需求列前插入，样式另行复制。
-        add("+dim-insert", position=item["position"], count=1, inherit_style="before")
+        add(
+            "POST",
+            "insert_dimension_range",
+            dimension={
+                "sheetId": sid,
+                "majorDimension": "COLUMNS",
+                "startIndex": position - 1,
+                "endIndex": position,
+            },
+            inheritStyle="AFTER",
+        )
         mapping = {old: new + (new >= position) for old, new in mapping.items()}
     for field in report["target_fields"]:
         if field["source_column"]:
@@ -64,45 +82,40 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
             for f in report["target_fields"]
             if f["platform"] == field["platform"] and f["metric"] == "demand"
         )
-        source, target = demand["target_column"], field["target_column"]
-        top = config["matching"]["header_rows"]
-        add(
-            "+range-copy",
-            source_range=f"{source}{top}:{source}{snapshot['row_count']}",
-            target_range=f"{target}{top}",
-            paste_type="formats",
-        )
+        target = field["target_column"]
         for total in column_total_rows(snapshot, demand["source_column"], target, product_rows):
             total_formulas[total["target_cell"]] = total["formula"]
-            add("+cells-set", range=total["target_cell"], cells=[[{"formula": total["formula"]}]])
-        old_index = column_number(demand["source_column"])
-        widths = snapshot["layout"].get("column_widths", [])
-        original_width = next(
-            (
-                w["width"]
-                for w in widths
-                if column_number(w["cols"].split(":")[0])
-                <= old_index
-                <= column_number(w["cols"].split(":")[-1])
-            ),
-            None,
-        )
-        if original_width is None:
-            raise ValueError("需求列列宽读取不完整")
+            set_value(total["target_cell"], {"type": "formula", "text": total["formula"]})
         label_width = sum(2 if ord(c) > 127 else 1 for c in field["header"]) * 8 + 16
-        add("+cols-resize", range=f"{target}:{target}", width=max(original_width, label_width))
+        add(
+            "PUT",
+            "dimension_range",
+            dimension={
+                "sheetId": sid,
+                "majorDimension": "COLUMNS",
+                "startIndex": column_number(target),
+                "endIndex": column_number(target),
+            },
+            dimensionProperties={"fixedSize": label_width},
+        )
     for item in report["operations"]:
         if item["action"] == "set_market_field_header":
-            add("+cells-set", range=item["cell"], cells=[[{"value": item["after"]}]])
+            set_value(item["cell"], item["after"])
     if group_changes:
         change = group_changes[0]
-        add("+cells-clear", range=change["after_range"], scope="content")
+        left, top, right, _ = _bounds(change["after_range"])
+        # 只清理经过结构规划确认的市场部组表头，保留其他部门内容。
         add(
-            "+cells-set",
-            range=change["after_range"].split(":")[0],
-            cells=[[{"value": change["header"]}]],
+            "POST",
+            "values_batch_update",
+            valueRanges=[
+                {
+                    "range": f"{sid}!{change['after_range']}",
+                    "values": [[change["header"], *["" for _ in range(right - left)]]],
+                }
+            ],
         )
-        add("+cells-merge", range=change["after_range"], merge_type="all")
+        add("POST", "merge_cells", range=f"{sid}!{change['after_range']}", mergeType="MERGE_ALL")
     LOG.info(
         "新品补列请求生成：sheet_id=%s inserted=%d operations=%d",
         sid,
@@ -125,7 +138,7 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     参数：
         before：写入前完整快照。
         after：写入后完整快照。
-        update：本次原子请求及列映射。
+        update：本次顺序执行请求及列映射。
         config：商品与平台别名配置。
         rules：市场部结构规则。
 
@@ -135,6 +148,16 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
         "column_count"
     ] + len(update["inserted_columns"]):
         raise ValueError("插列后的行列数量不符合预期")
+    for key in ("spreadsheet_token", "sheet_id", "title"):
+        if before.get(key) != after.get(key):
+            raise ValueError(f"回读表格身份变化：{key}")
+    for key in ("hidden", "sheet_format", "data_validations"):
+        if before["layout"].get(key) != after["layout"].get(key):
+            raise ValueError(f"原工作表布局发生变化：{key}")
+    if "column_dimensions" in before["layout"]:
+        for old, new in update["column_mapping"].items():
+            if _column_dimension(before, old) != _column_dimension(after, new):
+                raise ValueError(f"原列宽、隐藏状态或列样式发生变化：{old}")
     plan = plan_market_layout(after, config, rules)
     if plan["status"] != "ready" or plan["operations"]:
         raise ValueError("回读后的市场部结构不符合规则")
@@ -194,7 +217,9 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
             for key in ("cell_styles", "border_styles"):
                 if cell.get(key) != after["cells"][f"{demand}{row}"].get(key):
                     raise ValueError(f"新增销量列未继承需求列样式：{target}{row}")
-    if before["layout"].get("row_heights") != after["layout"].get("row_heights"):
+    if before["layout"].get("row_dimensions", before["layout"].get("row_heights")) != after[
+        "layout"
+    ].get("row_dimensions", after["layout"].get("row_heights")):
         raise ValueError("原行高发生变化")
     expected_merges = set()
     changed_groups = {
@@ -227,38 +252,65 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     }
 
 
-def _batch(token: str, operations: list[dict], *, dry_run: bool) -> dict:
-    """向 token 提交 operations；dry_run 为真时仅校验请求，返回成功信封。"""
-    command = [
-        "lark-cli",
-        "sheets",
-        "+batch-update",
-        "--spreadsheet-token",
-        token,
-        "--as",
-        "user",
-        "--operations",
-        "-",
-        "--dry-run" if dry_run else "--yes",
-    ]
-    result = subprocess.run(
-        command,
-        input=json.dumps(operations, ensure_ascii=False),
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
-    if result.returncode:
-        raise RuntimeError(
-            "批量请求未成功；请保留记录并回读表格，不要直接重试：" + result.stderr[-1500:]
-        )
-    payload = json.loads(result.stdout)
-    if payload.get("ok") is not True:
-        raise RuntimeError("批量请求未返回成功状态，请回读核对")
-    if payload.get("data", {}).get("failed", 0):
-        raise RuntimeError("批量请求存在失败操作，请回读核对，不要直接重试")
-    return payload
+def _column_dimension(snapshot: dict, col: str) -> dict:
+    """提取 snapshot 中 col 的列尺寸及格式，排除随插列变化的位置属性。"""
+    number = column_number(col)
+    for dimension in snapshot["layout"]["column_dimensions"].values():
+        if int(dimension["min"]) <= number <= int(dimension["max"]):
+            return {k: v for k, v in dimension.items() if k not in {"min", "max"}}
+    return {}
+
+
+def apply_update(
+    token: str,
+    sheet_id: str,
+    update: dict,
+    expected_revision: int,
+    *,
+    client=None,
+    on_progress=None,
+) -> dict:
+    """
+    功能说明：通过飞书服务端接口顺序执行补列，逐步保存结果并检查版本。
+
+    参数：
+        token：目标副本 token。
+        sheet_id：工作表 ID。
+        update：由 build_update 生成的请求计划。
+        expected_revision：执行前已审阅的版本。
+        client：可选数据应用客户端；传入时由调用方关闭。
+        on_progress：可选回调，每次请求前后保存执行日志。
+    返回值：各步骤结果；任一步失败立即停止，已提交步骤不自动重试或回滚。
+    """
+    owned = client is None
+    client = client or create_client()
+    journal = {"status": "running", "steps": [], "revision": expected_revision}
+    base = f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}"
+    try:
+        for index, operation in enumerate(update["operations"]):
+            if revision(client, token, sheet_id) != journal["revision"]:
+                raise ValueError("补列期间版本发生变化，请回读核对，不要直接重试")
+            step = {"index": index, "operation": operation, "status": "sending"}
+            journal["steps"].append(step)
+            if on_progress:
+                on_progress(journal)
+            LOG.info("补列开始：token=%s step=%d endpoint=%s", token, index, operation["endpoint"])
+            step["response"] = client._request(
+                operation["method"],
+                base + "/" + operation["endpoint"],
+                json_body=operation["body"],
+                retry=False,
+            )
+            step["status"] = "acknowledged"
+            # 部分结构接口不返回版本；下一步前再次读取，最终以全表核验确认。
+            journal["revision"] = revision(client, token, sheet_id)
+            if on_progress:
+                on_progress(journal)
+        journal["status"] = "submitted"
+        return journal
+    finally:
+        if owned:
+            client.close()
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -302,23 +354,26 @@ def run(argv: list[str] | None = None) -> int:
             save("result.json", {"status": "unchanged", "revision": before["revision"]})
             LOG.info("表头已符合规则，无需插列或写入")
             return 0
-        save("dry-run.json", _batch(args.spreadsheet_token, update["operations"], dry_run=True))
         if not args.apply:
             LOG.info("执行预览完成：revision=%s output=%s", before["revision"], args.output)
             return 0
-        current = _lark_read("+workbook-info", ["--spreadsheet-token", args.spreadsheet_token])[
-            "data"
-        ]
-        if current["revision"] != before["revision"]:
-            raise ValueError("提交前版本发生变化，请重新预览")
-        save("response.json", _batch(args.spreadsheet_token, update["operations"], dry_run=False))
+        save(
+            "response.json",
+            apply_update(
+                args.spreadsheet_token,
+                args.sheet_id,
+                update,
+                before["revision"],
+                on_progress=lambda journal: save("journal.json", journal),
+            ),
+        )
         after = read_sheet(args.spreadsheet_token, args.sheet_id, include_style=True)
         save("after.json", after)
         result = verify_update(before, after, update, config, rules)
         save("result.json", result)
         LOG.info("市场部补列完成并通过回读核验：inserted=%d", len(update["inserted_columns"]))
         return 0
-    except (ValueError, RuntimeError, KeyError, OSError, subprocess.SubprocessError) as error:
+    except (ValueError, RuntimeError, KeyError, OSError, httpx.TransportError) as error:
         LOG.error("市场部补列未完成：%s", error)
         save("error.json", {"error": str(error)})
         return 1

@@ -105,3 +105,34 @@ def test_load_config_supports_legacy_message_credentials(tmp_path: Path) -> None
 
     assert config.feishu_message_app_id == "cli_message"
     assert config.feishu_message_app_secret == "message-secret"
+
+
+@pytest.mark.parametrize(
+    "history,forecast,expected",
+    [
+        ("true", "false", (True, False)),
+        ("false", "true", (False, True)),
+        ("ON", "yes", (True, True)),
+        ("0", "no", (False, False)),
+    ],
+)
+def test_fill_switches_are_independent(tmp_path, history, forecast, expected):
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG_TEXT)
+    env = {
+        "FEISHU_DATA_APP_ID": "data",
+        "FEISHU_DATA_APP_SECRET": "secret",
+        "FEISHU_MESSAGE_APP_ID": "message",
+        "FEISHU_MESSAGE_APP_SECRET": "secret",
+        "FILL_HISTORY_ENABLED": history,
+        "FILL_FORECAST_ENABLED": forecast,
+    }
+    cfg = load_config(env=env, config_path=path)
+    assert (cfg.fill_history_enabled, cfg.fill_forecast_enabled) == expected
+    env.pop("FILL_HISTORY_ENABLED")
+    env.pop("FILL_FORECAST_ENABLED")
+    cfg = load_config(env=env, config_path=path)
+    assert not cfg.fill_history_enabled and not cfg.fill_forecast_enabled
+    env["FILL_HISTORY_ENABLED"] = "flase"
+    with pytest.raises(ValueError, match="FILL_HISTORY_ENABLED"):
+        load_config(env=env, config_path=path)

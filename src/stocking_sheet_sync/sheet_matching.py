@@ -50,7 +50,7 @@ def cells_from_envelope(envelope: dict) -> dict[str, dict]:
     功能说明：从飞书单元格读取结果提取精确坐标，并拒绝截断数据。
 
     参数：
-        envelope：lark-cli sheets +cells-get 返回的 JSON 信封。
+        envelope：归档单元格快照的 JSON 信封。
 
     返回值：以 A1 坐标为键的单元格字典。
     """

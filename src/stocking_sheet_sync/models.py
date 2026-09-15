@@ -54,3 +54,19 @@ class SyncSummary:
     failed: int = 0
     result: SyncResult = "unchanged"
     reason: str = ""
+    history_status: str = "disabled"
+    forecast_status: str = "disabled"
+    target_url: str = ""
+    fill_report_path: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class FillState:
+    record_id: str
+    source_token: str
+    target_token: str
+    as_of: str
+    attempt_id: str
+    status: Literal["running", "completed", "retryable", "needs_review"] = "running"
+    reason: str = ""
+    report_path: str = ""

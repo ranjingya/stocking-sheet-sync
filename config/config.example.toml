@@ -38,6 +38,8 @@ public_base_url = "https://stock-sync.example.com"
 
 # 程序运行参数
 [runtime]
+# 每次历史填充保存独立执行证据目录
+fill_report_dir = "artifacts/fill"
 lock_ttl_seconds = 300
 request_timeout_seconds = 15
 max_retries = 3

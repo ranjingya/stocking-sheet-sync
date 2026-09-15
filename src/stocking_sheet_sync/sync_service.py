@@ -4,13 +4,15 @@ import logging
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Protocol
 
 from .card import build_sync_card
 from .config import AppConfig
 from .lark_client import CopyRejected
-from .models import BaseRecord, CopyResult, CopyState, SourceSheet, SyncSummary
+from .models import BaseRecord, CopyResult, CopyState, FillState, SourceSheet, SyncSummary
 from .redis_store import RedisStateStore
 
 
@@ -38,6 +40,7 @@ class SyncService:
         logger: logging.Logger | None = None,
         *,
         now_provider: Callable[[], datetime] | None = None,
+        history_filler=None,
     ) -> None:
         """
         功能说明：组装一次性搬运服务及其依赖。
@@ -49,6 +52,7 @@ class SyncService:
             store：保存搬运状态和并发锁的 Redis 存储。
             logger：可选日志记录器。
             now_provider：可选时间提供函数，默认使用当前 UTC 时间。
+            history_filler：可选历史填充流程，接收副本记录与执行占位。
 
         返回值：无。
         """
@@ -58,6 +62,7 @@ class SyncService:
         self.store = store
         self.logger = logger or logging.getLogger(__name__)
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
+        self.history_filler = history_filler
 
     def run_record(self, record_id: str) -> SyncSummary:
         """
@@ -76,6 +81,7 @@ class SyncService:
         summary = SyncSummary(scanned=1)
         record_url = ""
         source_name = "未知表格"
+        current = None
         try:
             record = self.data_client.get_base_record(record_id)
             record_url = record.shared_url
@@ -101,6 +107,9 @@ class SyncService:
                 if current.status == "copied":
                     summary.unchanged = 1
                     summary.result, summary.reason = "unchanged", "源表格已搬运"
+                    active = self._fill_copy(current, summary)
+                    if active:
+                        self._notify_result(current, summary)
                     return summary
                 raise RuntimeError("该源表格已有未确认的搬运，请核对目标文件夹及 Redis 状态")
             if not record_url:
@@ -130,26 +139,25 @@ class SyncService:
                 copied.token,
                 copied.url,
             )
-            self.store.finish_copy(state, copied, self._now_text())
+            current = self.store.finish_copy(state, copied, self._now_text())
             summary.copied = 1
             summary.result = "copied"
-            try:
-                card = build_sync_card(
-                    original_name=source_name,
-                    record_url=record_url,
-                    status="success",
-                    target_folder_token=self.config.target_folder_token,
-                    target_name=copied.name,
-                    target_url=copied.url,
-                )
-                self._notify(self.config.notify_open_ids, card)
-            except Exception:
-                self.logger.exception("搬运已完成，生成通知卡片失败：record_id=%s", record_id)
+            self._fill_copy(current, summary)
+            self._notify_result(current, summary)
             return summary
         except Exception as error:
             summary.failed = 1
             summary.result, summary.reason = "failed", str(error)
             self.logger.exception("搬运处理失败：record_id=%s", record_id)
+            if current is not None and current.status == "copied":
+                summary.target_url = current.target_url
+                summary.reason = "副本已搬运；" + str(error)
+                if self.config.fill_history_enabled and summary.history_status == "disabled":
+                    summary.history_status = "needs_review"
+                if self.config.fill_forecast_enabled:
+                    summary.forecast_status = "unsupported"
+                self._notify_result(current, summary)
+                return summary
             if record_url and self.config.failure_notify_open_ids:
                 try:
                     card = build_sync_card(
@@ -174,6 +182,119 @@ class SyncService:
                 summary.result,
                 summary.reason,
             )
+
+    def _fill_copy(self, state: CopyState, summary: SyncSummary) -> bool:
+        """
+        功能说明：分别执行环境变量启用的填充阶段，保留已创建的副本和永久去重记录。
+
+        参数：
+            state：已确认创建成功的副本记录。
+            summary：本次结果汇总，原位补充阶段状态、目标链接与报告路径。
+        返回值：本次是否实际启动历史填充或需要报告预测未支持状态。
+        """
+        summary.target_url = state.target_url
+        active = False
+        reasons = []
+        if self.config.fill_history_enabled:
+            previous = self.store.get_fill(state)
+            if previous is not None and previous.status != "retryable":
+                summary.history_status = previous.status
+                summary.fill_report_path = previous.report_path
+                if previous.status != "completed":
+                    reasons.append(previous.reason or "历史填充已有执行占位，请核对报告后处理")
+            else:
+                as_of = (
+                    previous.as_of
+                    if previous
+                    else datetime.fromisoformat(state.copied_at)
+                    .astimezone(timezone(timedelta(hours=8)))
+                    .date()
+                    .isoformat()
+                )
+                attempt_id = uuid.uuid4().hex
+                claim = FillState(
+                    state.record_id,
+                    state.source_token,
+                    state.target_token,
+                    as_of,
+                    attempt_id,
+                    report_path=str(Path(self.config.fill_report_dir) / attempt_id),
+                )
+                if not self.store.begin_fill(state, claim):
+                    raise RuntimeError("历史填充已由其他任务接管，请核对状态")
+                active = True
+                summary.history_status = "running"
+                summary.fill_report_path = claim.report_path
+                try:
+                    if self.history_filler is None:
+                        from .fill_service import HistoryFiller
+
+                        self.history_filler = HistoryFiller(self.data_client)
+                    result = self.history_filler(state, claim)
+                    completed = replace(
+                        claim, status=result["status"], reason=result.get("reason", "")
+                    )
+                    if completed.status not in {"completed", "retryable", "needs_review"}:
+                        raise ValueError("历史填充返回了未知状态")
+                except Exception as error:
+                    self.logger.exception("历史填充执行异常，保留占位及副本")
+                    completed = replace(claim, status="needs_review", reason=str(error))
+                self.store.finish_fill(state, claim, completed)
+                summary.history_status = completed.status
+                if completed.status != "completed":
+                    reasons.append(completed.reason or "历史填充需要核验")
+        if self.config.fill_forecast_enabled:
+            summary.forecast_status = "unsupported"
+            reasons.append("预测规则尚未实现，需求数量未写入")
+            active = True
+        if reasons:
+            summary.failed = 1
+            summary.result = "failed"
+            summary.reason = "副本已搬运；" + "；".join(reasons)
+        self.logger.info(
+            "副本填充阶段状态：target=%s history=%s forecast=%s report=%s",
+            state.target_token,
+            summary.history_status,
+            summary.forecast_status,
+            summary.fill_report_path,
+        )
+        return active
+
+    def _notify_result(self, state: CopyState, summary: SyncSummary) -> None:
+        """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
+        try:
+            enabled = self.config.fill_history_enabled or self.config.fill_forecast_enabled
+            labels = {
+                "disabled": "关闭",
+                "completed": "完成",
+                "retryable": "待重试",
+                "needs_review": "待核验",
+                "running": "执行结果待确认",
+                "unsupported": "规则未实现",
+            }
+            fill_summary = (
+                f"历史数据：{labels[summary.history_status]}；预测数据：{labels[summary.forecast_status]}"
+                if enabled
+                else ""
+            )
+            card = build_sync_card(
+                original_name=state.source_name,
+                record_url=state.record_url,
+                status="failure" if summary.failed else "success",
+                target_folder_token=self.config.target_folder_token,
+                target_name=state.target_name,
+                target_url=state.target_url,
+                reason=summary.reason,
+                fill_summary=fill_summary,
+            )
+            self._notify(
+                self.config.failure_notify_open_ids
+                if summary.failed
+                else self.config.notify_open_ids,
+                card,
+            )
+        except Exception:
+            self.logger.exception("副本结果通知失败：record_id=%s", state.record_id)
 
     def _now_text(self) -> str:
         value = self._now_provider()

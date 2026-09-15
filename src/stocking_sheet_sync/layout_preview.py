@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import subprocess
 from pathlib import Path
+
+import httpx
 
 from .logging_config import configure_logging
 from .sales_config import load_sales_config
-from .sales_inspect import read_sheet
 from .sheet_layout import load_layout_config, plan_market_layout
+from .sheets_api import read_sheet
 
 LOG = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def run(argv: list[str] | None = None) -> int:
         KeyError,
         TypeError,
         OSError,
-        subprocess.SubprocessError,
+        httpx.TransportError,
     ) as error:
         LOG.error("市场部结构预览未完成：%s", error)
         return 1

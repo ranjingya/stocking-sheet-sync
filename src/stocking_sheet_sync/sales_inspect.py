@@ -4,107 +4,19 @@ import argparse
 import csv
 import json
 import logging
-import subprocess
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 
+import httpx
+
 from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_reader import SalesReader
-from .sheet_matching import cells_from_envelope, column_name, inspect_sheet, match_catalog
+from .sheet_matching import inspect_sheet, match_catalog
 from .sheets_api import read_sheet as read_sheet_api
 
 LOG = logging.getLogger(__name__)
-
-
-def _lark_read(command: str, args: list[str]) -> dict:
-    """使用用户身份执行受限的飞书只读 command 和 args，返回成功 JSON。"""
-    if command not in {"+workbook-info", "+cells-get", "+sheet-info"}:
-        raise ValueError("检查工具只支持飞书读取命令")
-    result = subprocess.run(
-        ["lark-cli", "sheets", command, "--as", "user", *args],
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
-    if result.returncode:
-        raise RuntimeError("飞书读取失败，请检查 lark-cli 用户登录态和表格访问权限")
-    payload = json.loads(result.stdout)
-    if payload.get("ok") is not True:
-        raise RuntimeError("飞书读取未返回成功状态")
-    return payload
-
-
-def read_sheet(token: str, sheet_id: str, *, include_style: bool = False) -> dict:
-    """
-    功能说明：读取完整工作表值、公式和合并范围，校验分页及读取期间版本一致。
-
-    参数：
-        token：飞书电子表格 token。
-        sheet_id：需要检查的工作表 ID。
-        include_style：是否同时读取样式、数据验证和布局，用于结构变更核验。
-
-    返回值：带完整坐标的本地快照，含原始数据和表格身份。
-    """
-    locator = ["--spreadsheet-token", token]
-    book = _lark_read("+workbook-info", locator)["data"]
-    sheet = next((s for s in book["sheets"] if s["sheet_id"] == sheet_id), None)
-    if sheet is None:
-        raise ValueError("指定工作表不存在，请检查 sheet_id")
-    rows, cols = sheet["row_count"], sheet["column_count"]
-    if not 1 <= rows <= 50000 or not 1 <= cols <= 1000:
-        raise ValueError("工作表尺寸超出检查工具支持范围")
-    locator += ["--sheet-id", sheet_id]
-    layout = _lark_read(
-        "+sheet-info",
-        [
-            *locator,
-            "--include",
-            "merges,row_heights,col_widths,hidden_rows,hidden_cols,frozen"
-            if include_style
-            else "merges",
-        ],
-    )["data"]
-    cells = {}
-    chunk = max(1, min(200, (800 if include_style else 8000) // cols))
-    for start in range(1, rows + 1, chunk):
-        stop = min(rows, start + chunk - 1)
-        block = _lark_read(
-            "+cells-get",
-            [
-                *locator,
-                "--range",
-                f"A{start}:{column_name(cols)}{stop}",
-                "--include",
-                "value,formula,style,data_validation" if include_style else "value,formula",
-                "--max-chars",
-                "500000",
-            ],
-        )
-        actual = cells_from_envelope(block)
-        expected = {
-            f"{column_name(c)}{r}" for r in range(start, stop + 1) for c in range(1, cols + 1)
-        }
-        if actual.keys() != expected:
-            raise ValueError("工作表分页读取范围不完整")
-        cells.update(actual)
-        LOG.info("工作表读取完成分页：sheet_id=%s start=%d end=%d", sheet_id, start, stop)
-    after = _lark_read("+workbook-info", ["--spreadsheet-token", token])["data"]
-    if book["revision"] != after["revision"]:
-        raise RuntimeError("读取期间表格有修改，请重新运行检查")
-    return {
-        "spreadsheet_token": token,
-        "title": book["title"],
-        "sheet_id": sheet_id,
-        "row_count": rows,
-        "column_count": cols,
-        "revision": book["revision"],
-        "cells": cells,
-        "merges": [item["range"] for item in layout["merged_cells"]],
-        **({"layout": layout, "sheet_metadata": sheet} if include_style else {}),
-    }
 
 
 def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date) -> dict:
@@ -246,7 +158,7 @@ def run(argv: list[str] | None = None) -> int:
         report = inspect_sales(reader, snapshot, config, args.as_of)
         write_report(args.output, report, snapshot)
         return 0
-    except (ValueError, RuntimeError, KeyError, OSError, subprocess.SubprocessError) as error:
+    except (ValueError, RuntimeError, KeyError, OSError, httpx.TransportError) as error:
         LOG.error("检查未完成：%s", error)
         return 1
 

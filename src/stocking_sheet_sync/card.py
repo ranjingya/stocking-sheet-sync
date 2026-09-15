@@ -15,6 +15,7 @@ def build_sync_card(
     target_name: str = "",
     target_url: str = "",
     reason: str = "",
+    fill_summary: str = "",
 ) -> dict[str, Any]:
     """
     功能说明：生成统一样式的产品下单同步结果卡片。
@@ -27,6 +28,7 @@ def build_sync_card(
         target_name：同步后表格名称，成功时必填。
         target_url：同步后表格链接，成功时必填。
         reason：失败原因，失败时必填。
+        fill_summary：可选的历史与预测填充阶段说明。
 
     返回值：
         可直接发送为 interactive 消息的 Card 2.0 对象。
@@ -50,12 +52,21 @@ def build_sync_card(
         raise ValueError("同步失败时失败原因不能为空")
 
     result_text = f"搬运{'成功' if success else '失败'}"
+    if not success and target_url:
+        result_text = "搬运成功，填充待处理"
     if success:
         detail_content = (
             f"原始记录： [{original_name}]({record_url})\n同步副本： [{target_name}]({target_url})"
         )
         action_text = "查看同步副本"
         action_url = target_url
+    elif target_url:
+        detail_content = (
+            f"原始记录： [{original_name}]({record_url})\n"
+            f"同步副本： [{target_name}]({target_url})\n"
+            f"处理说明： {reason}"
+        )
+        action_text, action_url = "查看同步副本", target_url
     else:
         detail_content = (
             f"原始记录： [{original_name}]({record_url})\n"
@@ -64,6 +75,9 @@ def build_sync_card(
         )
         action_text = "查看原始记录"
         action_url = record_url
+
+    if fill_summary:
+        detail_content += "\n" + _escape_markdown(_clean_text(fill_summary))
 
     return {
         "schema": "2.0",
