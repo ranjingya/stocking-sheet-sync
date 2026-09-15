@@ -14,11 +14,13 @@ from .lark_client import FeishuClient
 from .logging_config import configure_logging
 from .models import SyncSummary
 from .redis_store import RedisStateStore
-from .sync_service import SyncBusyError, SyncService
+from .sync_service import SyncBusyError, SyncService, validate_run_options
 
 
 class WebhookSyncService(Protocol):
-    def run_record(self, record_id: str) -> SyncSummary: ...
+    def run_record(
+        self, record_id: str, *, force: bool = False, request_id: str = ""
+    ) -> SyncSummary: ...
 
 
 def create_app(
@@ -121,12 +123,23 @@ def create_app(
                 }
             ), 400
 
+        force = payload.get("force", False)
+        request_id = payload.get("request_id", "")
+        try:
+            validate_run_options(force, request_id)
+        except ValueError as error:
+            return jsonify({"status": "invalid_request", "message": str(error)}), 400
+
         logger.info(
             "收到多维表自动化 Webhook：record_id=%s",
             record_id,
         )
         try:
-            summary = service.run_record(record_id)
+            summary = (
+                service.run_record(record_id, force=True, request_id=request_id)
+                if force
+                else service.run_record(record_id)
+            )
         except SyncBusyError:
             reason = "已有同步任务正在运行"
             logger.warning(

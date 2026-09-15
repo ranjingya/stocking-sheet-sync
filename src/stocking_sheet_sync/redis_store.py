@@ -66,8 +66,13 @@ class RedisStateStore:
     def _lock_key(self) -> str:
         return f"{self._key_prefix}:lock:scan"
 
-    def _state_key(self, record_id: str, source_token: str) -> str:
+    def _state_key(self, record_id: str, source_token: str, request_id: str = "") -> str:
+        if request_id:
+            return f"{self._key_prefix}:force:{record_id}:{request_id}"
         return f"{self._key_prefix}:{record_id}:{source_token}"
+
+    def _copy_key(self, state: CopyState) -> str:
+        return self._state_key(state.record_id, state.source_token, state.request_id)
 
     def acquire_run_lock(self, ttl_seconds: int) -> str | None:
         """获取搬运锁；ttl_seconds 为有效秒数，返回锁凭证或 None。"""
@@ -78,13 +83,26 @@ class RedisStateStore:
         """释放属于 token 的搬运锁，无返回值。"""
         self._redis.eval(_COMPARE_DELETE, 1, self._lock_key, token)
 
-    def get_state(self, record_id: str, source_token: str) -> CopyState | None:
-        """读取 record_id 与 source_token 的去重状态，返回状态或 None；损坏时抛错。"""
-        key = self._state_key(record_id, source_token)
+    def get_state(
+        self, record_id: str, source_token: str, *, request_id: str = ""
+    ) -> CopyState | None:
+        """
+        功能说明：读取普通任务或指定强制批次，并核对源文件身份。
+
+        参数：
+            record_id：多维表记录 ID。
+            source_token：本次解析的真实源电子表格 token。
+            request_id：强制请求标识；为空时读取普通任务。
+        返回值：任务状态或 None；同一强制请求绑定不同源文件时抛错。
+        """
+        key = self._state_key(record_id, source_token, request_id)
         raw = self._redis.get(key)
         if raw is None:
             return None
-        return self._decode_state(key, raw)
+        state = self._decode_state(key, raw)
+        if state.source_token != source_token:
+            raise ValueError("该 request_id 已绑定另一份源表格，请使用新的 request_id")
+        return state
 
     def begin_copy(self, state: CopyState) -> bool:
         """
@@ -97,11 +115,7 @@ class RedisStateStore:
         """
         if state.status != "copying" or not state.attempt_id:
             raise ValueError("复制占位必须包含 copying 状态和 attempt_id")
-        return bool(
-            self._redis.set(
-                self._state_key(state.record_id, state.source_token), _encode(state), nx=True
-            )
-        )
+        return bool(self._redis.set(self._copy_key(state), _encode(state), nx=True))
 
     def finish_copy(self, state: CopyState, result: CopyResult, copied_at: str) -> CopyState:
         """
@@ -125,7 +139,7 @@ class RedisStateStore:
         if not self._redis.eval(
             _COMPARE_SET,
             1,
-            self._state_key(state.record_id, state.source_token),
+            self._copy_key(state),
             _encode(state),
             _encode(completed),
         ):
@@ -134,9 +148,7 @@ class RedisStateStore:
 
     def cancel_copy(self, state: CopyState) -> None:
         """仅在复制被明确拒绝时删除 state 对应的本次占位，无返回值。"""
-        self._redis.eval(
-            _COMPARE_DELETE, 1, self._state_key(state.record_id, state.source_token), _encode(state)
-        )
+        self._redis.eval(_COMPARE_DELETE, 1, self._copy_key(state), _encode(state))
 
     def migrate_legacy_records(self) -> None:
         """
@@ -188,7 +200,7 @@ class RedisStateStore:
                 "copied_at": data["synced_at"],
             }
         state = CopyState(**data)
-        if key != self._state_key(state.record_id, state.source_token):
+        if key != self._copy_key(state):
             raise ValueError(f"去重记录身份与键不匹配：{key}")
         if state.status not in {"copying", "copied"}:
             raise ValueError(f"去重状态无效：{key}")
@@ -254,7 +266,7 @@ class RedisStateStore:
             raise RuntimeError("填充占位已变化，请保留副本并核对执行报告")
 
     def _fill_key(self, state: CopyState) -> str:
-        return self._state_key(state.record_id, state.source_token) + ":history"
+        return self._copy_key(state) + ":history"
 
     def close(self) -> None:
         self._redis.close()

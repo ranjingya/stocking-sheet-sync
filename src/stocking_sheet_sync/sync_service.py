@@ -64,21 +64,28 @@ class SyncService:
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self.history_filler = history_filler
 
-    def run_record(self, record_id: str) -> SyncSummary:
+    def run_record(
+        self, record_id: str, *, force: bool = False, request_id: str = ""
+    ) -> SyncSummary:
         """
-        功能说明：处理一条 Webhook 记录，按记录与真实源表格去重并搬运一次。
+        功能说明：处理一次搬运填充，普通请求按源表去重，强制请求按独立批次去重。
 
         参数：
             record_id：本次多维表自动化触发的记录 ID。
+            force：是否创建独立强制批次，仍执行正常条件检查与填充流程。
+            request_id：强制批次的请求标识，重试时保持相同，再次强制时更换。
 
         返回值：搬运、重复、跳过或失败的结果汇总；锁被占用时抛出 SyncBusyError。
         """
-        self.logger.info("开始处理搬运：record_id=%s", record_id)
+        validate_run_options(force, request_id)
+        self.logger.info(
+            "开始处理搬运：record_id=%s force=%s request_id=%s", record_id, force, request_id
+        )
         lock = self.store.acquire_run_lock(self.config.lock_ttl_seconds)
         if lock is None:
             self.logger.info("搬运锁被占用：record_id=%s", record_id)
             raise SyncBusyError("已有同步任务正在运行")
-        summary = SyncSummary(scanned=1)
+        summary = SyncSummary(scanned=1, force=force, request_id=request_id)
         record_url = ""
         source_name = "未知表格"
         current = None
@@ -102,7 +109,11 @@ class SyncService:
                 if document_type != "sheet":
                     raise RuntimeError(f"链接对应的文档不是电子表格，而是 {document_type}")
                 source_name = title or source_name
-            current = self.store.get_state(record_id, source_token)
+            current = (
+                self.store.get_state(record_id, source_token, request_id=request_id)
+                if force
+                else self.store.get_state(record_id, source_token)
+            )
             if current is not None:
                 if current.status == "copied":
                     summary.unchanged = 1
@@ -123,6 +134,7 @@ class SyncService:
                 status="copying",
                 attempt_id=uuid.uuid4().hex,
                 started_at=self._now_text(),
+                request_id=request_id,
             )
             if not self.store.begin_copy(state):
                 raise RuntimeError("该源表格已被其他任务接管，请重新检查搬运状态")
@@ -397,3 +409,23 @@ def _normalize_comparable(value: Any) -> Any:
     if "value" in value:
         return _normalize_comparable(value["value"])
     return value
+
+
+def validate_run_options(force: bool, request_id: str) -> None:
+    """
+    功能说明：校验强制执行参数，保证网络重试能定位同一批次。
+
+    参数：
+        force：必须为布尔值，表示是否强制创建新批次。
+        request_id：强制批次标识，支持 1 至 128 位字母、数字、下划线或短横线。
+    返回值：无；强制请求缺少标识或普通请求携带标识时抛出 ValueError。
+    """
+    if type(force) is not bool:
+        raise ValueError("force 必须是 JSON 布尔值 true 或 false")
+    if not isinstance(request_id, str):
+        raise ValueError("request_id 必须是字符串")
+    if force:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+            raise ValueError("force=true 时必须提供有效的 request_id，重试时保持相同")
+    elif request_id:
+        raise ValueError("request_id 仅用于 force=true 的强制请求")

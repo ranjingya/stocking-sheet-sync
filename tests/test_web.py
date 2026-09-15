@@ -76,3 +76,44 @@ def test_webhook_rejects_missing_record_id(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     assert service.record_ids == []
+
+
+def test_force_webhook_reuses_request_id(tmp_path):
+    from tests.test_sync_service import make_service
+
+    service, data_client, redis, clock = make_service(tmp_path)
+    client = create_app(service.config, service).test_client()
+    headers = {"Authorization": "Bearer webhook-secret"}
+    payload = {"record_id": "rec_test", "force": True, "request_id": "request-1"}
+    first = client.post("/webhooks/base-record", json=payload, headers=headers)
+    again = client.post("/webhooks/base-record", json=payload, headers=headers)
+    assert first.status_code == again.status_code == 200
+    assert first.json["result"] == "copied" and again.json["result"] == "unchanged"
+    assert first.json["summary"]["request_id"] == "request-1"
+    assert first.json["summary"]["force"] is True
+    assert data_client.copy_count == 1
+
+
+def test_force_webhook_validates_options_before_running(tmp_path):
+    service = FakeWebhookService()
+    client = create_app(make_config(tmp_path), service).test_client()
+    invalid_options = [
+        {"force": "false"},
+        {"force": 1},
+        {"force": None},
+        {"force": True},
+        {"force": True, "request_id": ""},
+        {"force": True, "request_id": 1},
+        {"force": True, "request_id": "has:separator"},
+        {"force": True, "request_id": "x" * 129},
+        {"force": False, "request_id": "request-1"},
+        {"request_id": "request-1"},
+    ]
+    for options in invalid_options:
+        response = client.post(
+            "/webhooks/base-record",
+            json={"record_id": "rec_test", **options},
+            headers={"Authorization": "Bearer webhook-secret"},
+        )
+        assert response.status_code == 400
+    assert not service.record_ids

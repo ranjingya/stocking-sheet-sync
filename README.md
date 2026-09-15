@@ -98,6 +98,24 @@ uv run gunicorn \
 {"record_id": "recxxxxxxxxxxxx"}
 ```
 
+需要重新搬运并填充时，使用强制请求：
+
+```json
+{
+  "record_id": "recxxxxxxxxxxxx",
+  "force": true,
+  "request_id": "rerun-20260915-001"
+}
+```
+
+`force` 默认 `false`，必须为 JSON 布尔值。`force=true` 时必须提供 `request_id`，支持 1 至 128 位字母、数字、下划线或短横线，可使用 UUID。普通请求不携带 `request_id`。
+
+同一记录下，每个新的 `request_id` 创建一个独立批次，按当前源文件重新搬运，并遵循正常的搬运条件、历史与预测开关、填充失败降级流程。旧副本和旧任务记录保留。强制批次的历史窗口按该批次副本创建日期确定。
+
+同一次请求的超时重试必须沿用同一个 `request_id`；再次主动强制执行时换一个新值。不要在自动重试时重新生成标识。同一标识已生成副本时复用该副本，已完成填充直接跳过；复制结果不确定时保留占位并阻止重复复制。同一标识绑定的源文件 token 不允许改变。
+
+强制请求与普通请求使用独立去重记录：普通请求继续复用其原有副本，强制请求不会覆盖普通任务状态。返回的 `summary.force` 和 `summary.request_id` 标识本次请求所属批次。
+
 | result | 含义 | HTTP 状态码 |
 | --- | --- | --- |
 | `copied` | 已完成搬运 | 200 |
@@ -130,6 +148,8 @@ JSON 包含源记录及源表格信息、`status`、本次操作的 `attempt_id`
 4. 恢复自动化触发。
 
 成功状态先于通知保存。通知失败写日志，后续 Webhook 会按成功记录去重；需要补发时使用手动通知命令。
+
+强制批次使用永久键 `<key_prefix>:force:<record_id>:<request_id>`，保存与普通任务相同的搬运信息，并记录 `request_id`。强制批次的历史填充键为 `<key_prefix>:force:<record_id>:<request_id>:history`。每批分别占位，运行锁仍由所有任务共享。
 
 历史填充另存一个永久键 `<key_prefix>:<record_id>:<source_token>:history`，包含目标 token、固定预估日、执行凭证、报告路径及状态：
 

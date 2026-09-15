@@ -43,6 +43,7 @@ class CopyState:
     target_name: str = ""
     target_url: str = ""
     copied_at: str = ""
+    request_id: str = ""
 
 
 @dataclass(slots=True)
@@ -59,6 +60,8 @@ class SyncSummary:
     target_url: str = ""
     fill_report_path: str = ""
     fill_degraded: bool = False
+    force: bool = False
+    request_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -452,3 +452,93 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome)
     assert again.status_code == 200 and again.get_json()["result"] == "unchanged"
     assert client.copy_count == 1
     assert len(calls) == (2 if outcome == "retryable" else 1)
+
+
+def test_force_batches_fill_independently_and_preserve_normal_task(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    calls = []
+    service.history_filler = lambda state, claim: (
+        calls.append((state.request_id, state.target_token, claim.as_of)) or {"status": "completed"}
+    )
+    ordinary = service.run_record("rec_test")
+    saved = dict(redis.strings)
+    clock.advance(minutes=24 * 60)
+    first = service.run_record("rec_test", force=True, request_id="batch-1")
+    repeat = service.run_record("rec_test", force=True, request_id="batch-1")
+    second = service.run_record("rec_test", force=True, request_id="batch-2")
+    assert ordinary.result == first.result == second.result == "copied"
+    assert repeat.result == "unchanged" and repeat.history_status == "completed"
+    assert first.force and first.request_id == "batch-1"
+    assert client.copy_count == 3
+    assert calls == [
+        ("", "target-1", "2026-08-21"),
+        ("batch-1", "target-2", "2026-08-22"),
+        ("batch-2", "target-3", "2026-08-22"),
+    ]
+    assert all(redis.strings[k] == v for k, v in saved.items())
+    assert service.run_record("rec_test").target_url == ordinary.target_url
+    assert not redis.expirations
+
+
+def test_force_claim_survives_service_restart(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    first = service.run_record("rec_test", force=True, request_id="fixed-id")
+    new_store = RedisStateStore("redis://unused", "test", client=redis)
+    new_store.migrate_legacy_records()
+    restarted = SyncService(service.config, client, client, new_store, now_provider=clock)
+    again = restarted.run_record("rec_test", force=True, request_id="fixed-id")
+    assert again.result == "unchanged" and again.target_url == first.target_url
+    assert client.copy_count == 1
+
+
+def test_force_reused_request_cannot_bind_another_source(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").copied == 1
+    client.source_token = "changed-source"
+    result = service.run_record("rec_test", force=True, request_id="fixed-id")
+    assert result.failed == 1 and "另一份源表格" in result.reason
+    assert client.copy_count == 1
+    assert service.run_record("rec_test", force=True, request_id="new-id").copied == 1
+
+
+def test_force_uncertain_copy_is_not_repeated_when_lock_expires(tmp_path, monkeypatch):
+    service, client, redis, clock = make_service(tmp_path)
+    calls = []
+
+    def uncertain(*args):
+        calls.append(args)
+        redis.delete("test:lock:scan")
+        nested = service.run_record("rec_test", force=True, request_id="fixed-id")
+        assert nested.failed == 1
+        raise RuntimeError("复制响应未知")
+
+    monkeypatch.setattr(client, "copy_spreadsheet", uncertain)
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").failed == 1
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").failed == 1
+    assert len(calls) == 1
+
+
+def test_force_known_rejection_can_retry_same_batch(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    client.copy_error = "明确拒绝"
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").failed == 1
+    client.copy_error = ""
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").copied == 1
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").result == "unchanged"
+    assert client.copy_count == 1
+
+
+def test_force_obeys_filters_and_fill_failure_fallback(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    client.status = "不满足条件"
+    assert service.run_record("rec_test", force=True, request_id="fixed-id").result == "skipped"
+    assert client.copy_count == 0
+    client.status = "需求收集"
+    service.history_filler = lambda *a: {"status": "needs_review", "reason": "填充未完成"}
+    result = service.run_record("rec_test", force=True, request_id="fixed-id")
+    assert result.result == "copied" and result.fill_degraded and result.failed == 0
+    again = service.run_record("rec_test", force=True, request_id="fixed-id")
+    assert again.result == "unchanged" and again.fill_degraded
+    assert client.copy_count == 1
