@@ -98,24 +98,6 @@ uv run gunicorn \
 {"record_id": "recxxxxxxxxxxxx"}
 ```
 
-需要重新搬运并填充时，使用强制请求：
-
-```json
-{
-  "record_id": "recxxxxxxxxxxxx",
-  "force": true,
-  "request_id": "rerun-20260915-001"
-}
-```
-
-`force` 默认 `false`，必须为 JSON 布尔值。`force=true` 时必须提供 `request_id`，支持 1 至 128 位字母、数字、下划线或短横线，可使用 UUID。普通请求不携带 `request_id`。
-
-同一记录下，每个新的 `request_id` 创建一个独立批次，按当前源文件重新搬运，并遵循正常的搬运条件、历史与预测开关、填充失败降级流程。旧副本和旧任务记录保留。强制批次的历史窗口按该批次副本创建日期确定。
-
-同一次请求的超时重试必须沿用同一个 `request_id`；再次主动强制执行时换一个新值。不要在自动重试时重新生成标识。同一标识已生成副本时复用该副本，已完成填充直接跳过；复制结果不确定时保留占位并阻止重复复制。同一标识绑定的源文件 token 不允许改变。
-
-强制请求与普通请求使用独立去重记录：普通请求继续复用其原有副本，强制请求不会覆盖普通任务状态。返回的 `summary.force` 和 `summary.request_id` 标识本次请求所属批次。
-
 | result | 含义 | HTTP 状态码 |
 | --- | --- | --- |
 | `copied` | 已完成搬运 | 200 |
@@ -125,6 +107,33 @@ uv run gunicorn \
 | `failed` | 处理失败，详见 `reason` 和日志 | 500 |
 
 `GET /healthz` 用于进程健康检查。
+
+## 手动重新搬运
+
+在项目根目录执行一次手动搬运填充：
+
+```bash
+uv run stocking-sheet-sync-rerun --record-id recxxxxxxxxxxxx
+```
+
+命令自动生成独立批次，按当前源文件重新搬运，并遵循正常的搬运条件、历史与预测开关、填充失败降级流程。旧副本和旧任务记录保留；历史窗口按本批次副本创建日期确定。执行一次后退出，不监听 HTTP，也不需要启动 Webhook 服务。程序读取同一份 `.env` 和 `config/config.toml`，使用同一个 Redis 并发锁，并向配置的接收人发送正常结果通知；不需要 `WEBHOOK_SECRET`。
+
+启动时日志会显示 `request_id` 和可直接复制的重试命令。重试同一批次时使用该标识，例如：
+
+```bash
+uv run stocking-sheet-sync-rerun --record-id recxxxxxxxxxxxx --request-id rerun-001
+```
+
+省略 `--request-id` 表示主动创建新批次，不应将此命令直接作为失败自动重试命令。沿用相同标识时复用副本，已完成填充直接跳过；复制结果不确定时保留占位并阻止重复复制。同一标识绑定的源文件 token 不允许改变。标识支持 1 至 128 位字母、数字、下划线或短横线。
+
+| 入口 | 启动命令 | 行为 |
+| --- | --- | --- |
+| Webhook 服务 | `uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.web:create_app()'` | 常驻运行，接收自动化发来的记录 ID，按普通规则去重 |
+| 手动重新搬运 | `uv run stocking-sheet-sync-rerun --record-id recxxxxxxxxxxxx` | 立即处理指定记录的新批次，完成后退出 |
+
+Webhook 请求体只用于普通搬运；包含 `force` 或 `request_id` 会返回 HTTP 400，提示使用手动命令。手动批次与普通任务独立去重，不覆盖普通任务状态。两种入口共享同一套搬运填充流程。
+
+命令向标准输出写入 JSON 结果，包含副本链接、填充状态、降级原因、`force` 和 `request_id`，日志写到标准错误。退出码：0 表示搬运成功、降级为仅搬运或因条件不符跳过；1 表示处理失败；2 表示参数错误；3 表示已有任务占用运行锁。
 
 ## Redis 去重与异常处理
 

@@ -78,26 +78,12 @@ def test_webhook_rejects_missing_record_id(tmp_path: Path) -> None:
     assert service.record_ids == []
 
 
-def test_force_webhook_reuses_request_id(tmp_path):
-    from tests.test_sync_service import make_service
-
-    service, data_client, redis, clock = make_service(tmp_path)
-    client = create_app(service.config, service).test_client()
-    headers = {"Authorization": "Bearer webhook-secret"}
-    payload = {"record_id": "rec_test", "force": True, "request_id": "request-1"}
-    first = client.post("/webhooks/base-record", json=payload, headers=headers)
-    again = client.post("/webhooks/base-record", json=payload, headers=headers)
-    assert first.status_code == again.status_code == 200
-    assert first.json["result"] == "copied" and again.json["result"] == "unchanged"
-    assert first.json["summary"]["request_id"] == "request-1"
-    assert first.json["summary"]["force"] is True
-    assert data_client.copy_count == 1
-
-
-def test_force_webhook_validates_options_before_running(tmp_path):
+def test_webhook_rejects_manual_rerun_options_before_running(tmp_path):
     service = FakeWebhookService()
     client = create_app(make_config(tmp_path), service).test_client()
     invalid_options = [
+        {"force": True, "request_id": "valid-request"},
+        {"force": False},
         {"force": "false"},
         {"force": 1},
         {"force": None},
