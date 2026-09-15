@@ -108,7 +108,9 @@ def _bounds(area: str) -> tuple[int, int, int, int]:
     return column_number(left), int(top), column_number(right), int(bottom)
 
 
-def plan_market_layout(snapshot: dict, config: dict, rules: dict) -> dict:
+def plan_market_layout(
+    snapshot: dict, config: dict, rules: dict, *, recent_only: bool = False
+) -> dict:
     """
     功能说明：生成市场部字段调整预览，保留数量并对无法确定的结构给出阻断原因。
 
@@ -116,6 +118,7 @@ def plan_market_layout(snapshot: dict, config: dict, rules: dict) -> dict:
         snapshot：完整工作表快照，包含精确坐标、值、公式及合并范围。
         config：商品字段与平台别名配置。
         rules：经过校验的结构规则，包含新品年份和往年区间表头配置。
+        recent_only：仅补近30天列，老品已有历史字段原样保留，缺少的历史字段不生成。
 
     返回值：款式分类、现有字段、目标字段、拟议操作与问题；不执行表格写入。
     """
@@ -252,10 +255,12 @@ def plan_market_layout(snapshot: dict, config: dict, rules: dict) -> dict:
             periods = {
                 v["period"] for (p, m), v in mapped.items() if p == pid and m in HISTORY_METRICS
             }
-            configured_period = rules.get("history_periods", {}).get(pid)
+            if recent_only and category == "legacy":
+                metrics = [m for m in metrics if m not in HISTORY_METRICS or (pid, m) in mapped]
+            configured_period = None if recent_only else rules.get("history_periods", {}).get(pid)
             if configured_period:
                 periods.add(normalize_text(configured_period))
-            if category == "legacy" and len(periods) > 1:
+            if category == "legacy" and not recent_only and len(periods) > 1:
                 issues.append(
                     {
                         "reason": "history_period_conflict",

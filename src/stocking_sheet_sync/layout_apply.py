@@ -20,7 +20,7 @@ LOG = logging.getLogger(__name__)
 
 def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
     """
-    功能说明：为新品生成补齐销量列和市场部合并表头的顺序执行请求。
+    功能说明：为新品及老品生成补齐近30天销量列和市场部合并表头的顺序执行请求。
 
     参数：
         snapshot：包含完整值、公式、样式和布局的工作表快照。
@@ -29,9 +29,9 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
 
     返回值：结构预览、服务端操作、原列到新列映射及新增列位置。
     """
-    report = plan_market_layout(snapshot, config, rules)
-    if report["category"] != "new" or report["issues"]:
-        raise ValueError("实际执行仅支持结构明确的新品，请先查看结构预览")
+    report = plan_market_layout(snapshot, config, rules, recent_only=True)
+    if report["category"] not in {"new", "legacy"} or report["issues"]:
+        raise ValueError("实际执行仅支持结构明确的新品或老品，请先查看结构预览")
     if any(o["action"] == "move_market_column" for o in report["operations"]):
         raise ValueError("平台顺序需要调整，请先核对；补列命令不移动现有平台列")
     if any(f["metric"] == "demand" and not f["source_column"] for f in report["target_fields"]):
@@ -117,7 +117,7 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         )
         add("POST", "merge_cells", range=f"{sid}!{change['after_range']}", mergeType="MERGE_ALL")
     LOG.info(
-        "新品补列请求生成：sheet_id=%s inserted=%d operations=%d",
+        "近30天补列请求生成：sheet_id=%s inserted=%d operations=%d",
         sid,
         len(inserts),
         len(operations),
@@ -158,7 +158,7 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
         for old, new in update["column_mapping"].items():
             if _column_dimension(before, old) != _column_dimension(after, new):
                 raise ValueError(f"原列宽、隐藏状态或列样式发生变化：{old}")
-    plan = plan_market_layout(after, config, rules)
+    plan = plan_market_layout(after, config, rules, recent_only=True)
     if plan["status"] != "ready" or plan["operations"]:
         raise ValueError("回读后的市场部结构不符合规则")
     group_row = rules["layout"]["group_row"]
@@ -315,14 +315,14 @@ def apply_update(
 
 def run(argv: list[str] | None = None) -> int:
     """
-    功能说明：预览或执行新品补列，保存前后快照并进行回读核验。
+    功能说明：预览或执行新品及老品近30天补列，保存前后快照并进行回读核验。
 
     参数：
         argv：命令行参数；默认读取进程参数。
 
     返回值：执行或预览成功返回 0，配置、版本冲突或核验失败返回 1。
     """
-    parser = argparse.ArgumentParser(description="预览或执行市场部新品销量补列")
+    parser = argparse.ArgumentParser(description="预览或执行市场部新品及老品近30天销量补列")
     parser.add_argument("--spreadsheet-token", required=True)
     parser.add_argument("--sheet-id", required=True)
     parser.add_argument("--source-config", type=Path, default=Path("config/sales-sources.toml"))

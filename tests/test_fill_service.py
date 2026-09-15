@@ -157,3 +157,45 @@ def test_select_sheet_by_headers_requires_unique_candidate(count):
     else:
         with pytest.raises(ValueError, match="唯一"):
             filler.find_sheet("token", config())
+
+
+def test_legacy_pipeline_only_fills_recent_sales(tmp_path, monkeypatch):
+    from tests.test_layout_apply import legacy_sheet
+
+    before = legacy_sheet()
+    after = deepcopy(before)
+    layout = inspect_sheet(before, config())
+    for col in layout["columns"].values():
+        for row in layout["rows"]:
+            after["cells"][f"{col['sales']}{row['row']}"] = {"value": 10}
+    reader = Reader(before)
+    filler = HistoryFiller(object(), reader_factory=lambda: reader)
+    monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
+    reads = iter([before, after])
+    monkeypatch.setattr("stocking_sheet_sync.fill_service.read_sheet", lambda *a, **k: next(reads))
+    monkeypatch.setattr(
+        "stocking_sheet_sync.fill_service.apply_update",
+        lambda *a, **k: pytest.fail("已有完整结构不需要写表头"),
+    )
+    writes = []
+    monkeypatch.setattr(
+        "stocking_sheet_sync.fill_service.write_sales_ranges",
+        lambda *a, **k: writes.extend(a[2]) or {},
+    )
+    copy = CopyState(
+        "rec",
+        "source",
+        "老品",
+        "url",
+        "record",
+        "copied",
+        target_token="test-token",
+        target_url="url",
+    )
+    claim = FillState(
+        "rec", "source", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path)
+    )
+    assert filler(copy, claim)["status"] == "completed"
+    assert len(writes) > 0
+    assert reader.dates == [date(2026, 9, 12)] * 5
+    assert (tmp_path / "sales-verification.json").exists()

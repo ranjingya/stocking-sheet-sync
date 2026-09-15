@@ -187,3 +187,58 @@ def test_native_layout_rejects_revision_change_before_mutation():
         apply_update(
             "token", "test", build_update(incoming(), config(), rules()), 1, client=Client()
         )
+
+
+def legacy_sheet(*, sales=True):
+    settings = rules()
+    headers = []
+    for pid in settings["layout"]["platform_order"]:
+        titles = settings["platforms"][pid]
+        headers.append(titles["history"].format(period="25.9-10月"))
+        if pid == "pdd":
+            headers.append(titles["history_net"].format(period="25.9-12月"))
+        if sales:
+            headers.append(titles["sales"])
+        headers.append(titles["demand"])
+    data = sheet(headers, style="KQ25123")
+    data["spreadsheet_token"] = "test-token"
+    data["layout"] = {}
+    for c in range(6, data["column_count"]):
+        label = data["cells"][f"{column_name(c)}3"]["value"]
+        if "近30天" not in label:
+            data["cells"][f"{column_name(c)}4"] = {"value": 123}
+            data["cells"][f"{column_name(c)}6"] = {"formula": "=50+50", "value": 100}
+    return data
+
+
+def test_legacy_existing_periods_and_values_remain_untouched():
+    before = legacy_sheet()
+    original = deepcopy(before)
+    update = build_update(before, config(), rules())
+    assert update["report"]["category"] == "legacy"
+    assert not update["operations"]
+    assert before == original
+    assert verify_update(before, deepcopy(before), update, config(), rules())["verified"]
+
+
+def test_legacy_missing_sales_only_inserts_five_recent_columns():
+    before = legacy_sheet(sales=False)
+    update = build_update(before, config(), rules())
+    assert len(update["inserted_columns"]) == 5
+    assert all(
+        f["metric"] == "sales" for f in update["report"]["target_fields"] if not f["source_column"]
+    )
+    for field in update["report"]["target_fields"]:
+        if field["metric"] in {"history", "history_net"}:
+            assert field["header"] == before["cells"][field["source_column"] + "3"]["value"]
+
+
+def test_legacy_blank_template_needs_no_business_history_dates():
+    before = incoming()
+    for row in (4, 6):
+        before["cells"][f"A{row}"]["value"] = "KQ25123"
+    update = build_update(before, config(), rules())
+    assert len(update["inserted_columns"]) == 5
+    assert {f["metric"] for f in update["report"]["target_fields"]} == {"sales", "demand"}
+    after = completed(before, update)
+    assert verify_update(before, after, update, config(), rules())["verified"]
