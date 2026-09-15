@@ -48,7 +48,7 @@
 
 ## 命令
 
-在项目根目录运行，先安装 Python 依赖，并准备已登录用户身份的 `lark-cli`。数仓凭证放在本项目的 `.env` 或部署环境变量中。默认仅加载当前目录的 `.env`，环境变量优先；可通过 `--db-env-file` 显式指定其他独立凭证文件。
+在项目根目录运行，先安装 Python 依赖。飞书服务端认证使用本项目 `.env` 中的 `FEISHU_DATA_APP_ID` 和 `FEISHU_DATA_APP_SECRET`，运行参数读取 `config/config.toml`。数据应用需要目标表格的阅读、编辑和导出权限。数仓凭证放在本项目的 `.env` 或部署环境变量中。默认仅加载当前目录的 `.env`，环境变量优先；可通过 `--db-env-file` 显式指定其他独立凭证文件。
 
 必填参数为 `WAREHOUSE_HOST`、`WAREHOUSE_DATABASE`、`WAREHOUSE_USER`、`WAREHOUSE_PASSWORD`。可选参数包括 `WAREHOUSE_PORT`、`WAREHOUSE_CONNECT_TIMEOUT`、`WAREHOUSE_READ_TIMEOUT`，完整模板见 `.env.example`。
 
@@ -61,7 +61,7 @@ uv run stocking-sheet-sync-inspect \
   --output artifacts/check
 ```
 
-`--source-config` 可指定另一份平台配置。复用本地表格快照时，用 `--snapshot artifacts/check/sheet-snapshot.json` 替换 `--spreadsheet-token` 和 `--sheet-id`，此模式不需要调用飞书 CLI。
+`--source-config` 可指定另一份平台配置。复用本地表格快照时，用 `--snapshot artifacts/check/sheet-snapshot.json` 替换 `--spreadsheet-token` 和 `--sheet-id`，此模式仅查询数仓，不访问飞书。
 
 输出文件：
 
@@ -73,11 +73,11 @@ uv run stocking-sheet-sync-inspect \
 
 命令退出码 0 表示检查完成，业务异常通过报告的 `needs_review` 和 `issues` 表达。配置或整体读取失败返回 1。平台读取失败会在报告中单独列明，避免掩盖其他平台结果。
 
-Webhook 搬运不依赖数仓连接配置。线上表格读取命令需要本机安装并登录 `lark-cli`；当前 Docker 镜像未预装该工具，镜像内可使用本地快照模式。
+Webhook 搬运不依赖数仓连接配置。销量检查和填充通过服务端 HTTP API 访问飞书，支持在配置完整的 Docker 容器中运行。
 
 ## 实际填充近30天销量
 
-`stocking-sheet-sync-sales-fill` 在表头结构准备完成后，读取最新工作表和数仓数据，填写市场部各平台的近30天销量。该命令独立于 Webhook，使用与检查命令相同的来源配置和凭证。运行环境需要 `lark-cli` 用户登录。
+`stocking-sheet-sync-sales-fill` 在表头结构准备完成后，读取最新工作表和数仓数据，填写市场部各平台的近30天销量。该命令独立于 Webhook，使用与检查命令相同的来源配置和凭证。飞书调用使用数据应用的 `tenant_access_token`，在内存中管理访问凭证。
 
 预览命令：
 
@@ -100,7 +100,7 @@ uv run stocking-sheet-sync-sales-fill \
   --output artifacts/sales-applied
 ```
 
-写入范围为商品行对应的销量单元格，数量以整数类型填写，显示格式为 `0`，字体、对齐、边框等原样式保留。空白分隔行、合计行、需求列及其他部门不参与写入；表内原公式可因输入变化自动重算，公式文本保持一致。
+写入范围为商品行对应的销量单元格，数量以整数类型填写，数字格式、字体、对齐、边框等原样式保留。空白分隔行、合计行、需求列及其他部门不参与写入；表内原公式可因输入变化自动重算，公式文本保持一致。
 
 逐项状态与整批行为：
 
@@ -110,16 +110,24 @@ uv run stocking-sheet-sync-sales-fill \
 
 同日期重复执行会重新读取数仓核对。全部数量相同则不提交写入请求，返回 `unchanged`；来源数据被修订、已有值与本次结果不同时保留原值并列出冲突，不提供强制覆盖选项。
 
-命令提交前再次核对版本，并使用单次批量请求和非空保护。请在表格无人同时编辑时运行；版本预检不构成并发写入锁。请求不自动重试，网络或回读异常时应先检查实际表格与本地证据。
+命令提交前再次核对版本和目标范围是否为空，随后通过 `values_batch_update` 单次批量请求写入。接口没有版本条件写入或非空条件写入参数，保护检查在客户端执行。请在表格无人同时编辑时运行；版本预检不构成并发写入锁。请求不自动重试，网络或回读异常时应先检查实际表格与本地证据。
 
 每次执行建议使用独立输出目录，包含以下文件：
 
 - `inspection.json`、`matching.csv`：商品、来源及原始候选检查结果。
 - `before.json`、`sheet-snapshot.json`：写入前完整表格快照，含样式与布局。
 - `request.json`：填充日期、逐项状态、候选数值、平台合计及精确写入范围。
-- `dry-run.json`：飞书请求预检结果。
+- `payload.json`：按官方 `valueRanges` 规范生成的原生请求体；预览阶段不调用写入接口。
+- `before.xlsx`、`after.xlsx`：通过官方导出任务取得的工作簿，用于核对公式类型、单元格样式与布局。
 - `response.json`、`after.json`：真实提交结果和全量回读快照。
 - `result.json`：执行状态、核验数量、平台合计及原公式自动重算记录。
 - `error.json`：运行异常；应结合本次请求和回读结果判断是否已产生写入。
 
 全量回读逐格校验：目标销量数值及类型正确、平台合计一致、原内容和样式保留、原公式文本不变、布局不变。返回码 `0` 表示预览、无需写入或写入核验通过；`1` 表示运行异常；`2` 表示存在待核对项且未执行写入。
+
+
+## 服务端接口与验证
+
+客户端复用项目的应用认证和 HTTP 连接配置。数值通过[读取多个范围](https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/reading-multiple-ranges.md)以未格式化值获取，写入使用[向多个范围写入数据](https://open.feishu.cn/document/server-docs/docs/sheets-v3/data-operation/write-data-to-multiple-ranges.md)。样式和公式类型由[导出任务](https://open.feishu.cn/document/server-docs/docs/drive-v1/export_task/create.md)生成的 XLSX 补充；读取前后检查版本一致，导出合并范围与工作表元数据一致。
+
+2026-09-15 在[测试副本](https://kocotree.feishu.cn/sheets/BIeZsvTjEhhMvDt37frcl1ZUn3d)完成服务端填充：预估日 2026-09-12，统计 2026-08-13 至 2026-09-11，56 个商品 × 5 个平台，共 280 个单元格。全量回读核对 9,165 个单元格，五个平台合计为唯品会 142、自营 81、拼多多 131、猫超 70、POP 70。再次执行时 280 项全部为 `unchanged`，无写入，工作簿版本保持 2；Sheet2 的内容和样式也通过前后导出比对。核对证据保存在本地 `artifacts/sales-native-test/`。

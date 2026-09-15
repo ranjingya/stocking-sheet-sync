@@ -3,17 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import subprocess
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from .layout_apply import _batch
+import httpx
+
 from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
-from .sales_inspect import _lark_read, inspect_sales, read_sheet, write_report
+from .sales_inspect import inspect_sales, write_report
 from .sales_reader import SalesReader, units
 from .sheet_matching import column_number, inspect_sheet
+from .sheets_api import current_revision, read_sheet, write_sales_ranges
 
 LOG = logging.getLogger(__name__)
 
@@ -91,16 +92,11 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
             for block in blocks:
                 operations.append(
                     {
-                        "shortcut": "+cells-set",
-                        "input": {
-                            "sheet_id": snapshot["sheet_id"],
-                            "range": f"{col}{block[0]['row']}:{col}{block[-1]['row']}",
-                            "allow_overwrite": False,
-                            "cells": [
-                                [{"value": e["quantity"], "cell_styles": {"number_format": "0"}}]
-                                for e in block
-                            ],
-                        },
+                        "range": (
+                            f"{snapshot['sheet_id']}!{col}{block[0]['row']}:"
+                            f"{col}{block[-1]['row']}"
+                        ),
+                        "values": [[e["quantity"]] for e in block],
                     }
                 )
     summary = {
@@ -156,12 +152,6 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
             totals[entry["platform"]] += value
             old_rest.pop("value", None)
             new_rest.pop("value", None)
-            if entry["status"] == "write":
-                expected_style = {**old.get("cell_styles", {}), "number_format": "0"}
-                if new.get("cell_styles") != expected_style:
-                    raise ValueError(f"销量单元格样式变化不符合预期：{address}")
-                old_rest.pop("cell_styles", None)
-                new_rest.pop("cell_styles", None)
         elif old.get("formula"):
             # 仅允许原公式计算结果随输入更新，公式文本及格式必须保留。
             old_value, new_value = old_rest.pop("value", None), new_rest.pop("value", None)
@@ -230,7 +220,12 @@ def run(argv: list[str] | None = None) -> int:
             args.apply,
         )
         config = load_sales_config(args.source_config)
-        before = read_sheet(args.spreadsheet_token, args.sheet_id, include_style=True)
+        before = read_sheet(
+            args.spreadsheet_token,
+            args.sheet_id,
+            include_style=True,
+            archive_path=args.output / "before.xlsx",
+        )
         save("before.json", before)
         if args.apply and before["revision"] != args.expected_revision:
             raise ValueError("表格版本与指定版本不一致，请重新预览")
@@ -250,7 +245,7 @@ def run(argv: list[str] | None = None) -> int:
             )
             LOG.info("销量与数仓一致，无需写入")
             return 0
-        save("dry-run.json", _batch(args.spreadsheet_token, update["operations"], dry_run=True))
+        save("payload.json", {"valueRanges": update["operations"]})
         if not args.apply:
             save(
                 "result.json",
@@ -258,13 +253,24 @@ def run(argv: list[str] | None = None) -> int:
             )
             LOG.info("销量预览完成：output=%s", args.output)
             return 0
-        current = _lark_read("+workbook-info", ["--spreadsheet-token", args.spreadsheet_token])[
-            "data"
-        ]
-        if current["revision"] != before["revision"]:
+        current = current_revision(args.spreadsheet_token, args.sheet_id)
+        if current != before["revision"]:
             raise ValueError("提交前表格版本发生变化，请重新预览")
-        save("response.json", _batch(args.spreadsheet_token, update["operations"], dry_run=False))
-        after = read_sheet(args.spreadsheet_token, args.sheet_id, include_style=True)
+        save(
+            "response.json",
+            write_sales_ranges(
+                args.spreadsheet_token,
+                args.sheet_id,
+                update["operations"],
+                expected_revision=before["revision"],
+            ),
+        )
+        after = read_sheet(
+            args.spreadsheet_token,
+            args.sheet_id,
+            include_style=True,
+            archive_path=args.output / "after.xlsx",
+        )
         save("after.json", after)
         result = verify_sales_update(before, after, update)
         save("result.json", result)
@@ -274,7 +280,7 @@ def run(argv: list[str] | None = None) -> int:
             result["platform_totals"],
         )
         return 0
-    except (ValueError, RuntimeError, KeyError, OSError, subprocess.SubprocessError) as error:
+    except (ValueError, RuntimeError, KeyError, OSError, httpx.TransportError) as error:
         LOG.error("销量填充未完成：%s", error)
         save("error.json", {"error": str(error)})
         return 1

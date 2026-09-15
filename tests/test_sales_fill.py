@@ -42,7 +42,6 @@ def applied(before, update):
         if e["status"] == "write":
             c = after["cells"][e["target_cell"]]
             c["value"] = e["quantity"]
-            c["cell_styles"] = {**c.get("cell_styles", {}), "number_format": "0"}
     after["cells"]["C7"]["value"] = 1
     return after
 
@@ -52,11 +51,11 @@ def test_writes_only_empty_sales_cells_and_preserves_gaps_demands_and_totals():
     update = build_sales_update(before, report, config())
     assert update["summary"]["expected_cells"] == 10
     assert update["summary"]["write"] == 10
-    ranges = [op["input"]["range"] for op in update["operations"]]
-    assert "E4:E4" in ranges and "E6:E6" in ranges
+    ranges = [op["range"] for op in update["operations"]]
+    assert "test!E4:E4" in ranges and "test!E6:E6" in ranges
     assert len(ranges) == 10
     assert all("5" not in r and "7" not in r for r in ranges)
-    assert all(op["input"]["allow_overwrite"] is False for op in update["operations"])
+    assert all(type(v) is int for op in update["operations"] for row in op["values"] for v in row)
     after = applied(before, update)
     result = verify_sales_update(before, after, update)
     assert result["checked_sales_cells"] == 10
@@ -139,7 +138,7 @@ def test_cli_blocks_version_changes_and_calls_no_writer_when_unchanged(monkeypat
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: CompleteReader())
     writer = Mock(side_effect=AssertionError("不应调用写入工具"))
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill._batch", writer)
+    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
     argv = [
         "--spreadsheet-token",
         "test-token",
@@ -165,11 +164,9 @@ def test_cli_rechecks_revision_after_warehouse_read_before_write(monkeypatch, tm
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.read_sheet", lambda *a, **k: before)
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: CompleteReader())
-    monkeypatch.setattr(
-        "stocking_sheet_sync.sales_fill._lark_read", lambda *a: {"data": {"revision": 2}}
-    )
+    monkeypatch.setattr("stocking_sheet_sync.sales_fill.current_revision", lambda *a: 2)
     writer = Mock(return_value={"ok": True})
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill._batch", writer)
+    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
     assert (
         run(
             [
@@ -190,8 +187,7 @@ def test_cli_rechecks_revision_after_warehouse_read_before_write(monkeypatch, tm
         )
         == 1
     )
-    assert writer.call_count == 1
-    assert writer.call_args.kwargs == {"dry_run": True}
+    writer.assert_not_called()
 
 
 def test_cli_source_gap_blocks_even_when_target_is_already_zero(monkeypatch, tmp_path):
@@ -206,7 +202,7 @@ def test_cli_source_gap_blocks_even_when_target_is_already_zero(monkeypatch, tmp
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
     monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: Missing())
     writer = Mock(side_effect=AssertionError("来源异常时不应提交"))
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill._batch", writer)
+    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
     assert (
         run(
             [

@@ -13,6 +13,7 @@ from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_reader import SalesReader
 from .sheet_matching import cells_from_envelope, column_name, inspect_sheet, match_catalog
+from .sheets_api import read_sheet as read_sheet_api
 
 LOG = logging.getLogger(__name__)
 
@@ -239,7 +240,7 @@ def run(argv: list[str] | None = None) -> int:
         snapshot = (
             json.loads(args.snapshot.read_text(encoding="utf-8"))
             if args.snapshot
-            else read_sheet(args.spreadsheet_token, args.sheet_id)
+            else read_sheet_api(args.spreadsheet_token, args.sheet_id)
         )
         reader = SalesReader(WarehouseSettings.load(args.db_env_file))
         report = inspect_sales(reader, snapshot, config, args.as_of)

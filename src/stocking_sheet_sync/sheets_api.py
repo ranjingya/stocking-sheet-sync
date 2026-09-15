@@ -1,0 +1,288 @@
+from __future__ import annotations
+
+import logging
+import re
+import time
+from datetime import date, datetime
+from datetime import time as daytime
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import quote
+from xml.etree.ElementTree import tostring
+
+import httpx
+from openpyxl import load_workbook
+from openpyxl.utils.datetime import to_excel
+
+from .config import load_config
+from .lark_client import FeishuClient
+from .sheet_matching import column_name
+
+LOG = logging.getLogger(__name__)
+
+
+def create_client() -> FeishuClient:
+    """读取项目配置并创建数据应用客户端，由调用方负责关闭。"""
+    config = load_config()
+    return FeishuClient(config, config.feishu_data_app_id, config.feishu_data_app_secret, "sheets")
+
+
+def revision(client: FeishuClient, token: str, sheet_id: str) -> int:
+    """使用 client 获取 token 中 sheet_id 的当前工作簿版本号。"""
+    data = client._request(
+        "GET",
+        f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}/values_batch_get",
+        params={"ranges": f"{sheet_id}!A1:A1", "valueRenderOption": "Formula"},
+    )
+    return int(data["revision"])
+
+
+def current_revision(token: str, sheet_id: str) -> int:
+    """通过数据应用获取 token 中 sheet_id 的版本号，完成后关闭连接。"""
+    client = create_client()
+    try:
+        return revision(client, token, sheet_id)
+    finally:
+        client.close()
+
+
+def export_workbook(client: FeishuClient, token: str) -> bytes:
+    """
+    功能说明：通过官方导出任务获取完整 XLSX，用于读取样式及公式类型。
+
+    参数：
+        client：已配置应用身份的飞书服务端客户端。
+        token：电子表格 token。
+
+    返回值：导出文件字节；任务失败或超过两分钟抛出异常。
+    """
+    task = client._request(
+        "POST",
+        "/open-apis/drive/v1/export_tasks",
+        retry=False,
+        json_body={"token": token, "type": "sheet", "file_extension": "xlsx"},
+    )
+    LOG.info("表格样式导出开始：token=%s", token)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        result = client._request(
+            "GET",
+            "/open-apis/drive/v1/export_tasks/" + quote(task["ticket"], safe=""),
+            params={"token": token},
+        )["result"]
+        if result["job_status"] == 0:
+            response = client._client.get(
+                "/open-apis/drive/v1/export_tasks/file/"
+                + quote(result["file_token"], safe="")
+                + "/download",
+                headers={"Authorization": "Bearer " + client._get_access_token()},
+            )
+            if not response.is_success or not response.content.startswith(b"PK"):
+                raise RuntimeError(f"表格导出下载失败：status={response.status_code}")
+            LOG.info("表格样式导出完成：bytes=%d", len(response.content))
+            return response.content
+        if result["job_status"] not in (1, 2):
+            raise RuntimeError(f"表格导出任务失败：job_status={result['job_status']}")
+        time.sleep(1)
+    raise RuntimeError("表格样式导出超时")
+
+
+def _xml(value) -> str:
+    """将样式对象 value 序列化为稳定文本，独立于导出文件内的样式编号。"""
+    return tostring(value.to_tree(), encoding="unicode")
+
+
+def read_sheet(
+    token: str, sheet_id: str, *, include_style: bool = True, archive_path: Path | None = None
+) -> dict:
+    """
+    功能说明：通过服务端 API 读取全表数值，以 XLSX 补充公式、样式和布局并核对版本。
+
+    参数：
+        token：电子表格 token。
+        sheet_id：需要读取的工作表 ID。
+        include_style：是否包含样式与布局；公式类型始终从导出文件确认。
+        archive_path：可选导出文件保存路径，供审阅原始证据。
+
+    返回值：完整单元格快照，兼容商品和销量匹配流程；任何版本冲突均终止读取。
+    """
+    client = create_client()
+    workbook = None
+    try:
+        initial = revision(client, token, sheet_id)
+        base = "/open-apis/sheets/v3/spreadsheets/" + quote(token, safe="")
+        book = client._request("GET", base)["spreadsheet"]
+        sheets = client._request("GET", base + "/sheets/query")["sheets"]
+        sheet = next((s for s in sheets if s["sheet_id"] == sheet_id), None)
+        if sheet is None or sheet.get("resource_type") != "sheet":
+            raise ValueError("指定工作表不存在或不是普通电子表格")
+        rows, cols = sheet["grid_properties"]["row_count"], sheet["grid_properties"]["column_count"]
+        if not 1 <= rows <= 50000 or not 1 <= cols <= 100:
+            raise ValueError("服务端读取支持最多50000行、100列")
+        exported = export_workbook(client, token)
+        if archive_path is not None:
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            archive_path.write_bytes(exported)
+        workbook = load_workbook(BytesIO(exported), data_only=False)
+        if sheet["title"] not in workbook.sheetnames:
+            raise ValueError("导出文件缺少目标工作表")
+        ws = workbook[sheet["title"]]
+        merges = [str(m) for m in ws.merged_cells.ranges]
+        api_merges = {
+            f"{column_name(m['start_column_index'] + 1)}{m['start_row_index'] + 1}:"
+            f"{column_name(m['end_column_index'] + 1)}{m['end_row_index'] + 1}"
+            for m in sheet.get("merges", [])
+        }
+        if set(merges) != api_merges:
+            raise ValueError("导出合并范围与服务端元数据不一致")
+        cells = {}
+        chunk = max(1, min(200, 5000 // cols))
+        for start in range(1, rows + 1, chunk):
+            stop = min(rows, start + chunk - 1)
+            area = f"{sheet_id}!A{start}:{column_name(cols)}{stop}"
+            data = client._request(
+                "GET",
+                f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}/values_batch_get",
+                params={"ranges": area, "valueRenderOption": "UnformattedValue"},
+            )
+            if data["revision"] != initial:
+                raise RuntimeError("读取期间表格有修改，请重新运行")
+            ranges = data["valueRanges"]
+            if len(ranges) != 1 or ranges[0]["range"] != area:
+                raise ValueError("服务端返回范围与请求不一致")
+            values = ranges[0].get("values") or []
+            if len(values) > stop - start + 1 or any(len(row) > cols for row in values):
+                raise ValueError("服务端单元格矩阵超出请求范围")
+            for row_no in range(start, stop + 1):
+                line = values[row_no - start] if row_no - start < len(values) else []
+                for col in range(1, cols + 1):
+                    cell = ws.cell(row_no, col)
+                    value = line[col - 1] if col <= len(line) else None
+                    if cell.data_type != "f":
+                        exported_value = cell.value
+                        if isinstance(exported_value, (date, datetime, daytime)):
+                            exported_value = to_excel(exported_value, workbook.epoch)
+                        if value != exported_value and not (
+                            value in (None, "") and exported_value in (None, "")
+                        ):
+                            raise ValueError(f"服务端值与完整导出不一致：{cell.coordinate}")
+                    item = {} if value is None else {"value": value}
+                    if cell.data_type == "f":
+                        if not isinstance(cell.value, str):
+                            raise ValueError("目标工作表含暂不支持的数组公式")
+                        item["formula"] = cell.value
+                    if include_style:
+                        item["cell_styles"] = {
+                            "font": _xml(cell.font),
+                            "fill": _xml(cell.fill),
+                            "alignment": _xml(cell.alignment),
+                            "protection": _xml(cell.protection),
+                            "number_format": cell.number_format,
+                        }
+                        item["border_styles"] = _xml(cell.border)
+                        if cell.comment:
+                            item["note"] = {
+                                "text": cell.comment.text,
+                                "author": cell.comment.author,
+                            }
+                    cells[f"{column_name(col)}{row_no}"] = item
+            LOG.info("服务端读取分页完成：sheet_id=%s rows=%s:%s", sheet_id, start, stop)
+        if revision(client, token, sheet_id) != initial:
+            raise RuntimeError("读取期间表格有修改，请重新运行")
+        layout = {
+            "revision": initial,
+            "grid_properties": sheet["grid_properties"],
+            "hidden": sheet["hidden"],
+            "row_dimensions": {str(k): dict(v) for k, v in ws.row_dimensions.items()},
+            "column_dimensions": {k: dict(v) for k, v in ws.column_dimensions.items()},
+            "sheet_format": _xml(ws.sheet_format),
+            "freeze_panes": ws.freeze_panes,
+            "data_validations": _xml(ws.data_validations),
+        }
+        return {
+            "spreadsheet_token": token,
+            "sheet_id": sheet_id,
+            "title": book["title"],
+            "revision": initial,
+            "row_count": rows,
+            "column_count": cols,
+            "cells": cells,
+            "merges": sorted(merges),
+            "transport": "feishu_openapi",
+            **({"layout": layout, "sheet_metadata": sheet} if include_style else {}),
+        }
+    finally:
+        if workbook is not None:
+            workbook.close()
+        client.close()
+
+
+def write_sales_ranges(
+    token: str, sheet_id: str, operations: list[dict], *, expected_revision: int
+) -> dict:
+    """
+    功能说明：复核版本与目标空白状态后，以一次服务端请求写入多个销量范围。
+
+    参数：
+        token：目标电子表格 token。
+        sheet_id：目标工作表 ID。
+        operations：原生 valueRanges 数组，每项包含 range 与整数 values。
+        expected_revision：读取并核对过的工作簿版本。
+
+    返回值：服务端批量写入结果；写请求仅发送一次，异常时必须回读确认。
+    """
+    if not operations:
+        raise ValueError("不能提交空写入请求")
+    claimed = set()
+    for item in operations:
+        if not item["range"].startswith(sheet_id + "!"):
+            raise ValueError("写入范围不属于目标工作表")
+        area = item["range"].split("!", 1)[1]
+        bounds = re.fullmatch(r"([A-Z]+)([1-9][0-9]*):\1([1-9][0-9]*)", area)
+        if not bounds:
+            raise ValueError("销量写入范围必须是单列矩形")
+        col, first, last = bounds.groups()
+        addresses = {f"{col}{r}" for r in range(int(first), int(last) + 1)}
+        if (
+            not addresses
+            or len(item["values"]) != len(addresses)
+            or any(len(row) != 1 for row in item["values"])
+            or claimed & addresses
+        ):
+            raise ValueError("销量写入范围重叠或矩阵尺寸不匹配")
+        claimed.update(addresses)
+        if any(type(v) is not int or v < 0 for row in item["values"] for v in row):
+            raise ValueError("销量写入只接受非负整数")
+    client = create_client()
+    try:
+        path = f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}"
+        current = client._request(
+            "GET",
+            path + "/values_batch_get",
+            params={
+                "ranges": ",".join(item["range"] for item in operations),
+                "valueRenderOption": "Formula",
+            },
+        )
+        if current["revision"] != expected_revision:
+            raise ValueError("提交前表格版本发生变化，请重新预览")
+        if [r["range"] for r in current["valueRanges"]] != [o["range"] for o in operations]:
+            raise ValueError("写入前目标范围回读不完整")
+        if any(
+            v not in (None, "")
+            for r in current["valueRanges"]
+            for row in r.get("values", [])
+            for v in row
+        ):
+            raise ValueError("写入前目标单元格已有内容，请重新核对")
+        LOG.info("开始服务端销量写入：ranges=%d revision=%d", len(operations), expected_revision)
+        return client._request(
+            "POST",
+            path + "/values_batch_update",
+            retry=False,
+            json_body={"valueRanges": operations},
+        )
+    except httpx.TransportError:
+        raise RuntimeError("飞书写入连接异常，结果不确定；请回读表格，不要直接重试") from None
+    finally:
+        client.close()
