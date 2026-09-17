@@ -87,13 +87,14 @@ def test_independent_history_switch_and_all_cell_preservation(history):
         verify_sales_update(prepared, changed, update)
 
 
-def test_missing_or_extra_sku_blocks_all_write():
+def test_report_extra_skus_do_not_block_target_rows():
     _, _, report, _, prepared = setup_sheet()
     report["groups"][0]["skus"].append("another-sku")
     checked = check_forecast_target(prepared, report, config())
-    assert checked["issues"][0]["missing_skus"] == ["another-sku"]
+    assert checked["issues"] == []
     update = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
-    assert update["status"] == "needs_review" and not update["operations"]
+    assert update["summary"]["needs_review"] == 0
+    assert {entry["sku"] for entry in update["entries"]} == {"0004", "0006"}
 
 
 def test_existing_quantity_or_formula_blocks_without_replacing():
@@ -148,16 +149,17 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     copy = CopyState("r", "s", "name", "url", "record", "copied", target_token="test-token")
     claim = FillState("r", "s", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path))
     assert filler(copy, claim)["status"] == "completed"
-    assert reader.styles.call_count == 1
+    reader.styles.assert_not_called()
+    reader.catalog.assert_called_once()
     assert reader.daily_window.call_count == 3 and reader.sales_window.call_count == 12
     apply.assert_called_once()
     write.assert_called_once()
     assert (Path(claim.report_path) / "values-verification.json").is_file()
 
 
-def test_filler_blocks_sku_gap_before_structural_write(tmp_path, monkeypatch):
+def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path, monkeypatch):
     before, reader, _, _, _ = setup_sheet()
-    reader.styles.return_value.append({**reader.styles.return_value[0], "sku": "extra"})
+    reader.styles.return_value.pop()
     filler = ForecastFiller(object(), history=True, reader_factory=lambda: reader)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     monkeypatch.setattr("stocking_sheet_sync.forecast_fill.read_sheet", lambda *a, **kw: before)

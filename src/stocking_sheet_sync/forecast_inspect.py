@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from collections import Counter, defaultdict
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from .forecast_reader import ForecastReader, load_forecast_sources
 from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
 from .sheet_layout import load_layout_config
+from .sheet_matching import inspect_sheet, match_catalog
 
 LOG = logging.getLogger(__name__)
 
@@ -45,23 +47,40 @@ def inspect_forecast(
     sources: dict,
     rules: dict,
     layout_rules: dict,
+    *,
+    requested_rows: list[dict] | None = None,
 ) -> dict:
     """
     功能说明：逐款逐平台组装真实历史数据，生成只读预测及待核对证据。
 
     参数：
         reader：本项目独立只读数仓客户端。
-        styles：待试算款号，整款SKU从主数据获取。
+        styles：按款号诊断时的试算范围；传入表格商品行时以商品行款号为准。
         as_of：明确指定的预估日，当前窗口不含当天。
         sales_config：现有平台明细及快照配置。
         sources：预测主数据、日快照与全公司来源状态配置。
         rules：季节和分配计算规则。
         layout_rules：款号年份分类规则，新品与未知款不参与自动预测。
+        requested_rows：可选需求表商品行，仅按其中SKU查询主数据、标签及销量。
     返回值：款式主数据、日期、来源查询证据、各平台结果及汇总；不写飞书或Redis。
     """
     styles = sorted(set(styles))
     pattern = re.compile(layout_rules["layout"]["style_pattern"])
-    catalog = reader.styles(sources["catalog"], styles)
+    requested = None
+    if requested_rows is None:
+        catalog = reader.styles(sources["catalog"], styles)
+    else:
+        requested = deepcopy(requested_rows)
+        if not requested:
+            raise ValueError("需求表没有待查询商品")
+        styles = sorted({str(row["style"]) for row in requested})
+        wanted = sorted(
+            {row["sku"] for row in requested if isinstance(row["sku"], str) and row["sku"]}
+        )
+        catalog = reader.catalog(sources["catalog"], wanted)
+        catalog = [record for record in catalog if record["sku"] in wanted]
+        match_catalog({"rows": requested}, catalog)
+        LOG.info("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
     sku_styles = defaultdict(set)
     for record in catalog:
         sku_styles[record["sku"]].add(record["style"])
@@ -72,6 +91,10 @@ def inspect_forecast(
         skus = sorted({r["sku"] for r in records if isinstance(r["sku"], str) and r["sku"]})
         group = {"style": style, "skus": skus, "catalog": records, "issues": [], "platforms": []}
         groups.append(group)
+        if requested is not None:
+            for row in requested:
+                if str(row["style"]) == style and row["issues"]:
+                    group["issues"].append(f"{row['sku']}: " + ",".join(row["issues"]))
         match = pattern.match(style)
         if (
             not match
@@ -152,7 +175,9 @@ def inspect_forecast(
     summary = Counter(p["status"] for g in groups for p in g["platforms"])
     return {
         "as_of": str(as_of),
-        "mode": "read_only_whole_style_trial",
+        "mode": "read_only_requested_skus"
+        if requested is not None
+        else "read_only_whole_style_trial",
         "company_source": sources["company"],
         "groups": groups,
         "summary": {
@@ -223,7 +248,9 @@ def run(argv: list[str] | None = None) -> int:
     返回值：全部可计算返回0，存在待核对返回2，运行或配置失败返回1。
     """
     parser = argparse.ArgumentParser(description="只读试算老款需求，不修改飞书表格")
-    parser.add_argument("--style", action="append", required=True, help="款号，可重复传入")
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--style", action="append", help="按款号诊断，可重复传入")
+    scope.add_argument("--snapshot", type=Path, help="按本地下单表快照中的SKU试算")
     parser.add_argument("--as-of", type=date.fromisoformat, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-config", type=Path, default=Path("config/sales-sources.toml"))
@@ -237,14 +264,20 @@ def run(argv: list[str] | None = None) -> int:
     configure_logging("INFO")
     try:
         config = load_sales_config(args.source_config)
+        requested_rows = (
+            inspect_sheet(json.loads(args.snapshot.read_text(encoding="utf-8")), config)["rows"]
+            if args.snapshot
+            else None
+        )
         report = inspect_forecast(
             ForecastReader(WarehouseSettings.load(args.db_env_file)),
-            args.style,
+            args.style or [],
             args.as_of,
             config,
             load_forecast_sources(args.forecast_sources),
             load_forecast_config(args.rules),
             load_layout_config(args.layout_config, config),
+            requested_rows=requested_rows,
         )
         write_forecast_report(args.output, report)
         return 2 if report["summary"]["styles_needing_review"] else 0

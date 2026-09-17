@@ -16,13 +16,13 @@ INPUT_METRICS = {"sales": "current", "previous": "previous", "future": "historic
 
 def check_forecast_target(snapshot: dict, report: dict, config: dict) -> dict:
     """
-    功能说明：核对试算款式、目标商品身份与整款SKU集合，防止部分SKU承接整款需求。
+    功能说明：核对需求表各行的商品身份及计算数据是否可用。
 
     参数：
         snapshot：目标表完整快照。
-        report：整款数仓试算报告，含商品主数据及各平台结果。
+        report：需求表SKU的数仓试算报告，含商品主数据及各平台结果。
         config：商品字段和平台配置。
-    返回值：商品行及缺失、多余、身份异常；存在问题时禁止写入。
+    返回值：商品行及未匹配、身份异常；存在问题时禁止写入。
     """
     layout = inspect_sheet(snapshot, config)
     groups = report["groups"]
@@ -47,17 +47,6 @@ def check_forecast_target(snapshot: dict, report: dict, config: dict) -> dict:
     if len(expected_styles) != len(groups) or expected_styles != set(by_style):
         issues.append({"reason": "style_set_mismatch"})
     for group in groups:
-        expected = set(group["skus"])
-        actual = by_style.get(group["style"], set())
-        if expected != actual:
-            issues.append(
-                {
-                    "reason": "incomplete_style_skus",
-                    "style": group["style"],
-                    "missing_skus": sorted(expected - actual),
-                    "extra_skus": sorted(actual - expected, key=str),
-                }
-            )
         if group["issues"]:
             issues.append(
                 {

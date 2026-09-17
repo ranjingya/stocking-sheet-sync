@@ -58,7 +58,7 @@ class ForecastFiller(HistoryFiller):
 
     def __call__(self, copy: CopyState, claim: FillState) -> dict:
         """
-        功能说明：核对完整SKU及计算结果，在处理副本补列、写数量并全量回读。
+        功能说明：查询需求表SKU并核对计算结果，在处理副本补列、写数量并全量回读。
 
         参数：
             copy：已确认创建的处理副本。
@@ -107,12 +107,13 @@ class ForecastFiller(HistoryFiller):
                 load_forecast_sources(self.forecast_sources_path),
                 load_forecast_config(self.rules_path),
                 rules,
+                requested_rows=product["rows"],
             )
             write_forecast_report(output / "inspection", report)
             checked = check_forecast_target(before, report, config)
             save("target-check.json", checked)
             if checked["issues"]:
-                return finish("needs_review", "目标商品或整款SKU不完整，详见 target-check.json")
+                return finish("needs_review", "表内商品未匹配或身份不明确，详见 target-check.json")
             projected = project_layout(before, layout, config, rules)
             preflight = build_forecast_values(
                 projected, report, config, rules, history=self.history, forecast=True

@@ -44,7 +44,7 @@ def load_forecast_sources(path: Path) -> dict:
 class ForecastReader(SalesReader):
     def styles(self, source: dict, styles: list[str]) -> list[dict]:
         """
-        功能说明：按款号读取整款SKU身份和标签，不使用目标表的部分SKU替代整款。
+        功能说明：为按款号诊断读取该款SKU身份和标签。
 
         参数：
             source：商品主数据来源、字段及筛选配置。
@@ -74,7 +74,7 @@ class ForecastReader(SalesReader):
 
         参数：
             source：日快照字段、筛选及已核对的业务日期偏移配置。
-            skus：完整款式的SKU编码集合。
+            skus：本次需要查询的SKU编码集合。
             start：包含的业务起始日期。
             stop：不包含的业务结束日期。
         返回值：逐SKU数量及缺日、重复、非法值和30天滚动对账异常；异常量留空。

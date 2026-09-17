@@ -38,6 +38,9 @@ def fake_reader():
             "rows": [{"sku": sku, "quantity": value, "status": "matched"} for sku in skus],
         }
 
+    reader.catalog.side_effect = lambda source, skus: [
+        row for row in reader.styles.return_value if row["sku"] in skus
+    ]
     reader.sales_window.side_effect = window
     reader.daily_window.side_effect = window
     return reader
@@ -209,3 +212,51 @@ def test_source_missing_day_keeps_forecast_empty_in_report(tmp_path):
     with (tmp_path / "forecast.csv").open(encoding="utf-8-sig") as stream:
         rows = [row for row in csv.DictReader(stream) if row["platform"] == "jd_self"]
     assert all(row["forecast"] == "" and row["issues"] for row in rows)
+
+
+def test_requested_rows_query_only_sheet_skus_and_ignore_outside_season_conflict():
+    reader = fake_reader()
+    reader.styles.return_value.append(
+        {
+            "sku": "outside",
+            "style": "KQ25001",
+            "name": "表外商品",
+            "spec": "表外规格",
+            "labels": "秋冬款",
+        }
+    )
+    requested = [
+        {"row": i + 4, "issues": [], **row} for i, row in enumerate(reader.styles.return_value[:2])
+    ]
+    result = inspect_forecast(
+        reader,
+        [],
+        date(2026, 9, 12),
+        *config(),
+        requested_rows=requested,
+    )
+    reader.styles.assert_not_called()
+    assert reader.catalog.call_args.args[1] == ["001", "002"]
+    assert result["mode"] == "read_only_requested_skus"
+    assert result["summary"]["ready"] == 5
+    assert result["groups"][0]["skus"] == ["001", "002"]
+    for call in [*reader.sales_window.call_args_list, *reader.daily_window.call_args_list]:
+        assert call.args[1] == ["001", "002"]
+    assert all(not row["issues"] for row in requested)
+
+
+@pytest.mark.parametrize("problem", ["missing", "wrong_style", "ambiguous"])
+def test_requested_sku_lookup_problems_remain_visible(problem):
+    reader = fake_reader()
+    requested = [{"row": 4, "issues": [], **reader.styles.return_value[0]}]
+    if problem == "missing":
+        reader.styles.return_value.pop(0)
+    elif problem == "wrong_style":
+        reader.styles.return_value[0]["style"] = "KQ25002"
+    else:
+        reader.styles.return_value.append({**reader.styles.return_value[0], "spec": "不同规格"})
+    result = inspect_forecast(reader, [], date(2026, 9, 12), *config(), requested_rows=requested)
+    assert result["groups"][0]["status"] == "needs_review"
+    assert result["groups"][0]["issues"]
+    reader.sales_window.assert_not_called()
+    reader.daily_window.assert_not_called()
