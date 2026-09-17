@@ -325,19 +325,17 @@ def test_fill_flags_copy_once_and_report_each_stage(tmp_path, history, forecast)
         return {"status": "completed"}
 
     service.history_filler = fill
+    service.forecast_filler = fill
     first = service.run_record("rec_test")
     clock.advance(minutes=24 * 60 * 10)
     second = service.run_record("rec_test")
     assert client.copy_count == 1
     assert first.history_status == second.history_status == ("completed" if history else "disabled")
-    assert first.forecast_status == ("unsupported" if forecast else "disabled")
+    assert first.forecast_status == ("completed" if forecast else "disabled")
     assert first.copied == 1 and second.copied == 0
     assert first.failed == 0
-    assert first.fill_degraded == forecast
-    assert calls == ([("target-1", "2026-08-21")] if history else [])
-    if forecast:
-        assert "预测规则尚未实现" in first.reason
-        assert "搬运成功，填充未完成" in json.dumps(client.sent_cards, ensure_ascii=False)
+    assert not first.fill_degraded
+    assert calls == ([("target-1", "2026-08-21")] if history or forecast else [])
 
 
 def test_can_enable_history_on_existing_copy_and_retry_fixed_window(tmp_path):
@@ -542,3 +540,15 @@ def test_force_obeys_filters_and_fill_failure_fallback(tmp_path):
     again = service.run_record("rec_test", force=True, request_id="fixed-id")
     assert again.result == "unchanged" and again.fill_degraded
     assert client.copy_count == 1
+
+
+def test_completed_history_cannot_be_mistaken_for_completed_forecast(tmp_path):
+    service, client, redis, clock = make_service(tmp_path)
+    service.config = replace(service.config, fill_history_enabled=True)
+    service.history_filler = lambda *a: {"status": "completed"}
+    assert service.run_record("rec_test").history_status == "completed"
+    service.config = replace(service.config, fill_forecast_enabled=True)
+    service.forecast_filler = lambda *a: pytest.fail("变更开关应使用新批次")
+    result = service.run_record("rec_test")
+    assert result.forecast_status == "needs_review" and result.fill_degraded
+    assert "新批次" in result.reason

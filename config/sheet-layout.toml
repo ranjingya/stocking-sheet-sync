@@ -44,3 +44,10 @@ history_pattern = '^京东pop(?P<period>\d.+)$'
 # 缺少往年区间列时，可按平台明确填写表头区间文本。
 # 例如 vip = "25.9-10月"；具体查询起止日期在历史数据阶段另行确定。
 [history_periods]
+
+[forecast]
+company_header = "全公司近30天"
+metrics = ["sales", "previous", "future", "forecast", "demand"]
+previous_suffix = "去年同期近30天"
+future_suffix = "去年对应后续周期"
+forecast_suffix = "公式预估"

@@ -44,6 +44,7 @@ class SyncService:
         *,
         now_provider: Callable[[], datetime] | None = None,
         history_filler=None,
+        forecast_filler=None,
     ) -> None:
         """
         功能说明：组装一次性搬运服务及其依赖。
@@ -56,6 +57,7 @@ class SyncService:
             logger：可选日志记录器。
             now_provider：可选时间提供函数，默认使用当前 UTC 时间。
             history_filler：可选历史填充流程，接收副本记录与执行占位。
+            forecast_filler：可选公式预估填充流程，接收同一副本与执行占位。
 
         返回值：无。
         """
@@ -66,6 +68,7 @@ class SyncService:
         self.logger = logger or logging.getLogger(__name__)
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self.history_filler = history_filler
+        self.forecast_filler = forecast_filler
 
     def run_record(
         self, record_id: str, *, force: bool = False, request_id: str = ""
@@ -189,7 +192,7 @@ class SyncService:
                 if self.config.fill_history_enabled and summary.history_status == "disabled":
                     summary.history_status = "needs_review"
                 if self.config.fill_forecast_enabled:
-                    summary.forecast_status = "unsupported"
+                    summary.forecast_status = "needs_review"
                 self._notify_result(current, summary)
                 return summary
             if record_url and self.config.failure_notify_open_ids:
@@ -226,18 +229,26 @@ class SyncService:
         参数：
             state：已确认创建成功的副本记录。
             summary：本次结果汇总，原位补充阶段状态、目标链接与报告路径。
-        返回值：本次是否实际启动历史填充或需要报告预测未支持状态。
+        返回值：本次是否实际启动填充；公式预估与辅助历史量共享执行占位。
         """
         summary.target_url = state.target_url
         active = False
         reasons = []
-        if self.config.fill_history_enabled:
+        if self.config.fill_history_enabled or self.config.fill_forecast_enabled:
             previous = self.store.get_fill(state)
-            if previous is not None and previous.status != "retryable":
-                summary.history_status = previous.status
+            mode_changed = previous is not None and (
+                previous.history_enabled != self.config.fill_history_enabled
+                or previous.forecast_enabled != self.config.fill_forecast_enabled
+            )
+            if mode_changed:
+                stage_status = "needs_review"
+                summary.fill_report_path = previous.report_path
+                reasons.append("已有填充记录的开关组合不同，请使用手动重搬创建新批次")
+            elif previous is not None and previous.status != "retryable":
+                stage_status = previous.status
                 summary.fill_report_path = previous.report_path
                 if previous.status != "completed":
-                    reasons.append(previous.reason or "历史填充已有执行占位，请核对报告后处理")
+                    reasons.append(previous.reason or "填充已有执行占位，请核对报告后处理")
             else:
                 as_of = (
                     previous.as_of
@@ -255,34 +266,45 @@ class SyncService:
                     as_of,
                     attempt_id,
                     report_path=str(Path(self.config.fill_report_dir) / attempt_id),
+                    history_enabled=self.config.fill_history_enabled,
+                    forecast_enabled=self.config.fill_forecast_enabled,
                 )
                 if not self.store.begin_fill(state, claim):
-                    raise RuntimeError("历史填充已由其他任务接管，请核对状态")
+                    raise RuntimeError("填充已由其他任务接管，请核对状态")
                 active = True
-                summary.history_status = "running"
+                stage_status = "running"
                 summary.fill_report_path = claim.report_path
                 try:
-                    if self.history_filler is None:
-                        from .fill_service import HistoryFiller
+                    if self.config.fill_forecast_enabled:
+                        if self.forecast_filler is None:
+                            from .forecast_fill import ForecastFiller
 
-                        self.history_filler = HistoryFiller(self.data_client)
-                    result = self.history_filler(state, claim)
+                            self.forecast_filler = ForecastFiller(
+                                self.data_client, history=self.config.fill_history_enabled
+                            )
+                        result = self.forecast_filler(state, claim)
+                    else:
+                        if self.history_filler is None:
+                            from .fill_service import HistoryFiller
+
+                            self.history_filler = HistoryFiller(self.data_client)
+                        result = self.history_filler(state, claim)
                     completed = replace(
                         claim, status=result["status"], reason=result.get("reason", "")
                     )
                     if completed.status not in {"completed", "retryable", "needs_review"}:
-                        raise ValueError("历史填充返回了未知状态")
+                        raise ValueError("填充返回了未知状态")
                 except Exception as error:
-                    self.logger.exception("历史填充执行异常，保留占位及副本")
+                    self.logger.exception("填充执行异常，保留占位及副本")
                     completed = replace(claim, status="needs_review", reason=str(error))
                 self.store.finish_fill(state, claim, completed)
-                summary.history_status = completed.status
+                stage_status = completed.status
                 if completed.status != "completed":
-                    reasons.append(completed.reason or "历史填充需要核验")
-        if self.config.fill_forecast_enabled:
-            summary.forecast_status = "unsupported"
-            reasons.append("预测规则尚未实现，需求数量未写入")
-            active = True
+                    reasons.append(completed.reason or "填充需要核验")
+            if self.config.fill_history_enabled:
+                summary.history_status = stage_status
+            if self.config.fill_forecast_enabled:
+                summary.forecast_status = stage_status
         if reasons:
             self._degrade_fill(summary, "；".join(reasons))
         self.logger.info(

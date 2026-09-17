@@ -18,7 +18,7 @@ from .sheets_api import create_client, read_sheet, revision
 LOG = logging.getLogger(__name__)
 
 
-def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
+def build_update(snapshot: dict, config: dict, rules: dict, *, forecast: bool = False) -> dict:
     """
     功能说明：为新品及老品生成补齐近30天销量列和市场部合并表头的顺序执行请求。
 
@@ -26,10 +26,11 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         snapshot：包含完整值、公式、样式和布局的工作表快照。
         config：商品和平台别名配置。
         rules：市场部结构规则。
+        forecast：是否补齐老款公式预估的历史、预估与全公司字段。
 
     返回值：结构预览、服务端操作、原列到新列映射及新增列位置。
     """
-    report = plan_market_layout(snapshot, config, rules, recent_only=True)
+    report = plan_market_layout(snapshot, config, rules, recent_only=True, forecast=forecast)
     if report["category"] not in {"new", "legacy"} or report["issues"]:
         raise ValueError("实际执行仅支持结构明确的新品或老品，请先查看结构预览")
     if any(o["action"] == "move_market_column" for o in report["operations"]):
@@ -40,6 +41,7 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         raise ValueError("执行前必须读取完整布局和样式")
     operations = []
     total_formulas = {}
+    inherited_columns = {}
     product_rows = [r["row"] for r in inspect_sheet(snapshot, config)["rows"]]
     sid = snapshot["sheet_id"]
 
@@ -80,9 +82,12 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         demand = next(
             f
             for f in report["target_fields"]
-            if f["platform"] == field["platform"] and f["metric"] == "demand"
+            if (field["platform"] == "company" or f["platform"] == field["platform"])
+            and f["metric"] == "demand"
         )
         target = field["target_column"]
+        right_source = min(value for value in mapping.values() if value > column_number(target))
+        inherited_columns[target] = column_name(right_source)
         for total in column_total_rows(snapshot, demand["source_column"], target, product_rows):
             total_formulas[total["target_cell"]] = total["formula"]
             set_value(total["target_cell"], {"type": "formula", "text": total["formula"]})
@@ -123,11 +128,13 @@ def build_update(snapshot: dict, config: dict, rules: dict) -> dict:
         len(operations),
     )
     return {
+        "forecast": forecast,
         "report": report,
         "operations": operations,
         "column_mapping": {k: column_name(v) for k, v in mapping.items()},
         "inserted_columns": [i["position"] for i in inserts],
         "total_formulas": total_formulas,
+        "inherited_columns": inherited_columns,
     }
 
 
@@ -158,7 +165,9 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
         for old, new in update["column_mapping"].items():
             if _column_dimension(before, old) != _column_dimension(after, new):
                 raise ValueError(f"原列宽、隐藏状态或列样式发生变化：{old}")
-    plan = plan_market_layout(after, config, rules, recent_only=True)
+    plan = plan_market_layout(
+        after, config, rules, recent_only=True, forecast=update.get("forecast", False)
+    )
     if plan["status"] != "ready" or plan["operations"]:
         raise ValueError("回读后的市场部结构不符合规则")
     group_row = rules["layout"]["group_row"]
@@ -204,7 +213,8 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
         demand = next(
             f["target_column"]
             for f in update["report"]["target_fields"]
-            if f["platform"] == field["platform"] and f["metric"] == "demand"
+            if (field["platform"] == "company" or f["platform"] == field["platform"])
+            and f["metric"] == "demand"
         )
         for row in range(header_row, after["row_count"] + 1):
             cell = after["cells"][f"{target}{row}"]
@@ -215,7 +225,9 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
             elif row > header_row and (cell.get("value") not in (None, "") or cell.get("formula")):
                 raise ValueError(f"新增销量列商品行不应带入数量或公式：{target}{row}")
             for key in ("cell_styles", "border_styles"):
-                if cell.get(key) != after["cells"][f"{demand}{row}"].get(key):
+                if cell.get(key) != after["cells"][
+                    f"{update.get('inherited_columns', {}).get(target, demand)}{row}"
+                ].get(key):
                     raise ValueError(f"新增销量列未继承需求列样式：{target}{row}")
     if before["layout"].get("row_dimensions", before["layout"].get("row_heights")) != after[
         "layout"

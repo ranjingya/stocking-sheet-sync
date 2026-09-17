@@ -76,6 +76,16 @@ def load_layout_config(path: Path, sales_config: dict) -> dict:
         not isinstance(v, str) or not v.strip() for v in rules.get("history_periods", {}).values()
     ):
         raise ValueError("历史区间配置必须是非空文本")
+    if "forecast" in rules:
+        forecast = rules["forecast"]
+        if forecast.get("metrics") != ["sales", "previous", "future", "forecast", "demand"]:
+            raise ValueError("公式预估指标顺序需要包含三项历史、公式预估及人工需求")
+        names = [
+            forecast.get(key)
+            for key in ("company_header", "previous_suffix", "future_suffix", "forecast_suffix")
+        ]
+        if any(not isinstance(v, str) or not v.strip() for v in names) or len(set(names)) != 4:
+            raise ValueError("公式预估表头配置必须非空且互不重复")
     LOG.info("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
     return rules
 
@@ -96,6 +106,14 @@ def _recognize(label: str, config: dict, rules: dict) -> list[dict]:
             match = re.fullmatch(pattern, normalized) if pattern else None
             if match:
                 matches.append({"platform": pid, "metric": metric, "period": match["period"]})
+    forecast = rules.get("forecast", {})
+    if normalized == normalize_text(forecast.get("company_header", "")) and normalized:
+        matches.append({"platform": "company", "metric": "sales", "period": None})
+    for platform in config["platforms"]:
+        for metric in ("previous", "future", "forecast"):
+            suffix = forecast.get(f"{metric}_suffix")
+            if suffix and normalized == normalize_text(platform["name"] + suffix):
+                matches.append({"platform": platform["id"], "metric": metric, "period": None})
     return matches
 
 
@@ -109,7 +127,7 @@ def _bounds(area: str) -> tuple[int, int, int, int]:
 
 
 def plan_market_layout(
-    snapshot: dict, config: dict, rules: dict, *, recent_only: bool = False
+    snapshot: dict, config: dict, rules: dict, *, recent_only: bool = False, forecast: bool = False
 ) -> dict:
     """
     功能说明：生成市场部字段调整预览，保留数量并对无法确定的结构给出阻断原因。
@@ -119,6 +137,7 @@ def plan_market_layout(
         config：商品字段与平台别名配置。
         rules：经过校验的结构规则，包含新品年份和往年区间表头配置。
         recent_only：仅补近30天列，老品已有历史字段原样保留，缺少的历史字段不生成。
+        forecast：为老款补齐公式预估所需字段及全公司列，已有历史列保留。
 
     返回值：款式分类、现有字段、目标字段、拟议操作与问题；不执行表格写入。
     """
@@ -249,6 +268,22 @@ def plan_market_layout(
             mapped[key] = item
 
     if category in {"new", "legacy"}:
+        if forecast and category != "legacy":
+            issues.append({"reason": "forecast_requires_legacy_styles"})
+        company = mapped.get(("company", "sales"))
+        if company or forecast:
+            fields.append(
+                {
+                    "platform": "company",
+                    "platform_name": "全公司",
+                    "metric": "sales",
+                    "header": rules["forecast"]["company_header"],
+                    "period_label": None,
+                    "source_column": company["column"] if company else None,
+                    "target_column": column_name(start) if start else None,
+                    "filled_product_cells": company["filled_product_cells"] if company else 0,
+                }
+            )
         for pid in rules["layout"]["platform_order"]:
             titles = rules["platforms"][pid]
             metrics = titles.get(f"{category}_metrics", rules["layout"][f"{category}_metrics"])
@@ -257,6 +292,16 @@ def plan_market_layout(
             }
             if recent_only and category == "legacy":
                 metrics = [m for m in metrics if m not in HISTORY_METRICS or (pid, m) in mapped]
+            extended = {"previous", "future", "forecast"}
+            if forecast:
+                metrics = [m for m in metrics if m in HISTORY_METRICS]
+                metrics += rules["forecast"]["metrics"]
+            elif any((pid, metric) in mapped for metric in extended):
+                metrics = [m for m in metrics if m != "demand"]
+                metrics += [
+                    m for m in rules["forecast"]["metrics"] if m in extended and (pid, m) in mapped
+                ]
+                metrics.append("demand")
             configured_period = None if recent_only else rules.get("history_periods", {}).get(pid)
             if configured_period:
                 periods.add(normalize_text(configured_period))
@@ -271,7 +316,14 @@ def plan_market_layout(
             period = next(iter(periods)) if len(periods) == 1 else None
             for metric in metrics:
                 source = mapped.get((pid, metric))
-                title = source["header"] if source and metric == "demand" else titles[metric]
+                title = (
+                    source["header"]
+                    if source and metric == "demand"
+                    else next(p["name"] for p in config["platforms"] if p["id"] == pid)
+                    + rules["forecast"][f"{metric}_suffix"]
+                    if metric in extended
+                    else titles[metric]
+                )
                 if metric in HISTORY_METRICS:
                     title = (
                         source["header"]

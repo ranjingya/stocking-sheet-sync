@@ -37,6 +37,7 @@ def setup(tmp_path, *, history=True, forecast=False):
         return {"status": "completed"}
 
     service.history_filler = fill
+    service.forecast_filler = fill
     return service, client, redis, clock, operations, files, calls
 
 
@@ -229,12 +230,18 @@ def test_notification_contains_all_three_links_and_delivery_source(tmp_path):
     assert "交付内容：原始备份" in card and "填充未完成" in card
 
 
-def test_forecast_unavailable_delivers_original_even_when_history_completed(tmp_path):
+def test_forecast_failure_delivers_original_and_preserves_processing_copy(tmp_path):
     service, client, redis, clock, ops, files, fills = setup(tmp_path, forecast=True)
+
+    def fail(state, claim):
+        files[state.target_token]["partial"] = 10
+        return {"status": "needs_review", "reason": "缺少历史数据"}
+
+    service.forecast_filler = fail
     result = service.run_record("rec_test")
-    assert result.history_status == "completed" and result.forecast_status == "unsupported"
+    assert result.history_status == result.forecast_status == "needs_review"
     assert result.fill_degraded and result.delivery_source == "original"
-    assert files["copy-3"] == files["source-token"] and "sales" in files["copy-2"]
+    assert files["copy-3"] == files["source-token"] and "partial" in files["copy-2"]
 
 
 def test_names_freeze_timestamp_and_keep_delivery_prefix(tmp_path):
@@ -317,3 +324,27 @@ def test_existing_three_copy_names_remain_unchanged(tmp_path, monkeypatch, force
         "市场部-备货测试表-oldbatch",
     ]
     assert not client.renames
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_formula_forecast_delivers_filled_copy_once_and_freezes_flags(tmp_path, history):
+    service, client, redis, clock, ops, files, calls = setup(
+        tmp_path, history=history, forecast=True
+    )
+
+    def calculate(state, claim):
+        assert claim.history_enabled == history and claim.forecast_enabled
+        calls.append(state.target_token)
+        files[state.target_token]["forecast"] = 42
+        return {"status": "completed"}
+
+    service.forecast_filler = calculate
+    result = service.run_record("rec_test")
+    assert result.forecast_status == "completed" and not result.fill_degraded
+    assert result.history_status == ("completed" if history else "disabled")
+    assert files["copy-1"] == {"original": 1}
+    assert files["copy-2"] == files["copy-3"] == {"original": 1, "forecast": 42}
+    service.config = replace(service.config, fill_forecast_enabled=False)
+    repeated = service.run_record("rec_test")
+    assert repeated.forecast_status == "completed"
+    assert calls == ["copy-2"] and len(ops) == 3

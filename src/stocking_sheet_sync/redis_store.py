@@ -235,6 +235,8 @@ class RedisStateStore:
             state.target_token,
         ) or result.status not in {"running", "completed", "retryable", "needs_review"}:
             raise ValueError("历史填充记录身份或状态无效")
+        if type(result.history_enabled) is not bool or type(result.forecast_enabled) is not bool:
+            raise ValueError("填充记录开关无效")
         if not result.attempt_id or not result.as_of:
             raise ValueError("历史填充记录缺少执行凭证或预估日")
         return result

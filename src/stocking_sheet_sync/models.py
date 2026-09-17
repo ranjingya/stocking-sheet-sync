@@ -83,6 +83,8 @@ class FillState:
     status: Literal["running", "completed", "retryable", "needs_review"] = "running"
     reason: str = ""
     report_path: str = ""
+    history_enabled: bool = True
+    forecast_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)

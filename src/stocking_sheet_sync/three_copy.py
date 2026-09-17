@@ -78,9 +78,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         "original",
         state.source_token,
         state.backup_folder_token,
-        state.backup_name + "-原始备份"
-        if state.backup_name
-        else "原始备份-" + state.target_name,
+        state.backup_name + "-原始备份" if state.backup_name else "原始备份-" + state.target_name,
     )
     summary.original_backup_url = original.target_url
     filled = copy_step(
@@ -89,9 +87,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         "filled",
         original.target_token,
         state.backup_folder_token,
-        state.backup_name + "-填充未完成"
-        if state.backup_name
-        else "处理备份-" + state.target_name,
+        state.backup_name + "-填充未完成" if state.backup_name else "处理备份-" + state.target_name,
     )
     summary.filled_backup_url = filled.target_url
     outcome = service.store.get_outcome(state)
@@ -119,6 +115,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
             service.logger,
             now_provider=service._now_provider,
             history_filler=service.history_filler,
+            forecast_filler=service.forecast_filler,
         )
         try:
             filler_service._fill_copy(context, summary)
@@ -129,11 +126,11 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
                 raise RuntimeError("填充执行结果尚未确认，保留原始备份并等待核验") from error
             LOG.exception("填充阶段异常，准备交付原始备份")
             summary.history_status = "needs_review" if state.history_enabled else "disabled"
-            summary.forecast_status = "unsupported" if state.forecast_enabled else "disabled"
+            summary.forecast_status = "needs_review" if state.forecast_enabled else "disabled"
             service._degrade_fill(summary, str(error))
         finally:
             summary.target_url = ""
-        if summary.history_status == "running":
+        if "running" in {summary.history_status, summary.forecast_status}:
             raise RuntimeError("填充正在执行或结果尚未确认，停止并发交付")
         outcome = service.store.save_outcome(
             state,
