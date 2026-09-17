@@ -82,10 +82,15 @@ def load_layout_config(path: Path, sales_config: dict) -> dict:
             raise ValueError("公式预估指标顺序需要包含三项历史、公式预估及人工需求")
         names = [
             forecast.get(key)
-            for key in ("company_header", "previous_suffix", "future_suffix", "forecast_suffix")
+            for key in ("company_header", "previous_suffix", "future_suffix", "forecast_header")
         ]
         if any(not isinstance(v, str) or not v.strip() for v in names) or len(set(names)) != 4:
             raise ValueError("公式预估表头配置必须非空且互不重复")
+        for template in [forecast["forecast_header"], *forecast.get("forecast_aliases", [])]:
+            if not isinstance(template, str) or template.count("{platform}") != 1:
+                raise ValueError("预估标题模板必须包含一个platform占位符")
+            if re.search(r"[{}]", template.replace("{platform}", "")):
+                raise ValueError("预估标题模板只支持platform占位符")
     LOG.info("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
     return rules
 
@@ -112,7 +117,20 @@ def _recognize(label: str, config: dict, rules: dict) -> list[dict]:
     for platform in config["platforms"]:
         for metric in ("previous", "future", "forecast"):
             suffix = forecast.get(f"{metric}_suffix")
-            if suffix and normalized == normalize_text(platform["name"] + suffix):
+            labels = (
+                [
+                    template.format(platform=platform["name"])
+                    for template in [
+                        forecast["forecast_header"],
+                        *forecast.get("forecast_aliases", []),
+                    ]
+                ]
+                if metric == "forecast" and "forecast_header" in forecast
+                else [platform["name"] + suffix]
+                if suffix
+                else []
+            )
+            if normalized in {normalize_text(value) for value in labels}:
                 matches.append({"platform": platform["id"], "metric": metric, "period": None})
     return matches
 
@@ -319,6 +337,10 @@ def plan_market_layout(
                 title = (
                     source["header"]
                     if source and metric == "demand"
+                    else rules["forecast"]["forecast_header"].format(
+                        platform=next(p["name"] for p in config["platforms"] if p["id"] == pid)
+                    )
+                    if metric == "forecast"
                     else next(p["name"] for p in config["platforms"] if p["id"] == pid)
                     + rules["forecast"][f"{metric}_suffix"]
                     if metric in extended

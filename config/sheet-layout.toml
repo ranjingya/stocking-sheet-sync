@@ -50,4 +50,5 @@ company_header = "全公司近30天"
 metrics = ["sales", "previous", "future", "forecast", "demand"]
 previous_suffix = "去年同期近30天"
 future_suffix = "去年对应后续周期"
-forecast_suffix = "公式预估"
+forecast_header = "预估-{platform}"
+forecast_aliases = ["{platform}公式预估"]

@@ -58,7 +58,7 @@ def test_layout_inserts_formula_fields_preserves_manual_and_repeat():
     assert not plan_market_layout(prepared, config(), rules(), recent_only=True)["issues"]
     labels = [f["header"] for f in layout["report"]["target_fields"]]
     assert labels[0] == "全公司近30天"
-    assert sum("公式预估" in value for value in labels) == 5
+    assert sum(value.startswith("预估-") for value in labels) == 5
     assert prepared["cells"][f"{layout['column_mapping']['F']}4"]["value"] == 100
 
 

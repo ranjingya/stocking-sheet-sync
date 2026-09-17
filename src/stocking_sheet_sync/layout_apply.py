@@ -176,7 +176,7 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     renamed = {
         f["source_column"]
         for f in update["report"]["target_fields"]
-        if f["source_column"] and f["metric"] == "sales"
+        if f["source_column"] and f["metric"] in {"sales", "forecast"}
     }
     formulas = []
     checked = 0
