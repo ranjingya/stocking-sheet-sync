@@ -61,7 +61,7 @@ FILL_FORECAST_ENABLED=false
 | 开关 | 开启后的行为 |
 | --- | --- |
 | `FILL_HISTORY_ENABLED` | 读取本项目数仓来源，补齐新品市场部销量列并填入近30天历史数据 |
-| `FILL_FORECAST_ENABLED` | 请求预测阶段；当前返回 `unsupported`，说明预测规则尚未实现，需求数量保持现有内容 |
+| `FILL_FORECAST_ENABLED` | 请求预测阶段；当前返回 `unsupported`，服务内预测写入尚未接入，需求数量保持现有内容 |
 
 两个开关独立。均关闭时只搬运；只开预测时不会读取数仓或补历史列。未配置的开关默认关闭，示例配置为历史开启、预测关闭。支持 `true/false`、`1/0`、`yes/no`、`on/off`，大小写不敏感，非法值会阻止启动。开关控制 Webhook 和手动重新搬运流程；显式执行的历史检查、补列及填充命令按其命令参数运行。
 
@@ -238,6 +238,8 @@ uv run --group lint ruff check .
 ## 预测规则
 
 已确认的老款计算口径、配置和实施状态见 [老款需求预测实施计划](docs/forecast-plan.md)。
+
+本地只读试算支持 `uv run stocking-sheet-sync-forecast --style KQ25073 --as-of 2026-09-12 --output artifacts/forecast-trial`，输出逐SKU依据及预估；用法、真实核验及待处理项见 [老款数仓预测试算](docs/forecast-trial.md)。
 
 老品近30天支持、历史来源核查及运营确认清单见 [老品历史数据支持](docs/legacy-history.md)。
 
