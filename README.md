@@ -237,6 +237,8 @@ uv run --group lint ruff check .
 
 ## 预测规则
 
+已确认的老款计算口径、配置和实施状态见 [老款需求预测实施计划](docs/forecast-plan.md)。
+
 老品近30天支持、历史来源核查及运营确认清单见 [老品历史数据支持](docs/legacy-history.md)。
 
 预测业务口径、数据缺口、待确认参数及实施顺序见 [市场部下单需求预测规则与实施计划](docs/forecast-rules.md)。

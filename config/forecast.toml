@@ -1,0 +1,11 @@
+# 老款通用预测规则，月份和日期均使用业务日期。
+[seasons]
+summer_labels = ["夏款"]
+winter_labels = ["秋冬款"]
+all_year_labels = ["四季款"]
+summer_end = [8, 31]
+winter_end = [1, 31]
+
+[fallback]
+sku_count_below = 10
+sales_below = 20

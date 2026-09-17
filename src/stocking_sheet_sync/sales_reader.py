@@ -113,8 +113,26 @@ class SalesReader:
 
         返回值：统一统计区间、逐 SKU 数据、来源日期和覆盖异常。
         """
+        return self.sales_window(source, skus, as_of - timedelta(days=30), as_of)
+
+    def sales_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
+        """
+        功能说明：读取指定日期范围的出库件数，明细去重与逐日覆盖规则保持一致。
+
+        参数：
+            source：平台来源及筛选配置；快照来源仅支持现有30天滚动指标。
+            skus：待查询的商品编码集合。
+            start：包含的业务起始日期。
+            stop：不包含的业务结束日期。
+        返回值：逐SKU数量及覆盖问题；快照任意区间不允许以滚动值代替。
+        """
         self._validate_skus(skus)
-        start, end = as_of - timedelta(days=30), as_of - timedelta(days=1)
+        days_count = (stop - start).days
+        if not 1 <= days_count <= 366:
+            raise ValueError("查询区间需要为1至366个自然日")
+        if source["kind"] == "snapshot" and days_count != 30:
+            raise ValueError("滚动30天快照不能用于其他长度的历史区间")
+        as_of, end = stop, stop - timedelta(days=1)
         LOG.info("开始读取平台发货数据：platform=%s start=%s end=%s", source["id"], start, end)
         result = {
             "platform": source["id"],
@@ -148,7 +166,7 @@ class SalesReader:
             observed = {str(item["day"])[:10] for item in days}
             missing = [
                 (start + timedelta(days=n)).isoformat()
-                for n in range(30)
+                for n in range(days_count)
                 if (start + timedelta(days=n)).isoformat() not in observed
             ]
             result["missing_dates"] = missing

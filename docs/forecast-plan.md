@@ -46,3 +46,11 @@
 - [9月17日运营交流](https://kocotree.feishu.cn/docx/Ge6jdzKNzoWqlSxPTrkcT5zUnLd)
 - [拼多多 SOP](https://kocotree.feishu.cn/docx/K2PUdK3LnoaYrnxWTUtc3Uo7nwb)
 - 本任务对话中确认的季末日期、四季与空标签处理、低销量兜底条件、SKU四舍五入及去年历史周期。
+
+## 当前实现状态
+
+规则模块 `src/stocking_sheet_sync/forecast.py` 已实现上述周期、同比、占比兜底及分配校验，规则参数位于 `config/forecast.toml`。同款记录一部分季节为空、一部分为夏冬款时会报告冲突；空标签自身按四季处理，不隐式借用其他SKU季节。
+
+`SalesReader.sales_window` 支持1至366天的出库明细区间，保留现有明细去重和逐日覆盖检查。快照来源仅支持30天滚动指标，任意季节区间明确拒绝，等待日出库来源核验。
+
+本地规则和读取边界测试已通过。整款标签和销量的自动组装、全公司数据范围核验、自营日出库核验、本地真实预测试算与预测表格写入属于后续步骤。`FILL_FORECAST_ENABLED` 尚未接入规则模块，运行服务仍按现有未支持状态处理预测请求。
