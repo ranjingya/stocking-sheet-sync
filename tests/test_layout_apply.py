@@ -242,3 +242,17 @@ def test_legacy_blank_template_needs_no_business_history_dates():
     assert {f["metric"] for f in update["report"]["target_fields"]} == {"sales", "demand"}
     after = completed(before, update)
     assert verify_update(before, after, update, config(), rules())["verified"]
+
+
+def test_layout_verifier_preserves_rich_text_segments():
+    before = incoming()
+    before["cells"]["E4"] = {
+        "value": "备注",
+        "rich_text": [{"type": "text", "text": "备注", "segmentStyle": {"bold": True}}],
+    }
+    update = build_update(before, config(), rules())
+    after = completed(before, update)
+    assert verify_update(before, after, update, config(), rules())["verified"]
+    after["cells"]["E4"]["rich_text"][0]["segmentStyle"]["bold"] = False
+    with pytest.raises(ValueError, match="rich_text"):
+        verify_update(before, after, update, config(), rules())

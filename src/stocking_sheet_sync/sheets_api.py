@@ -179,6 +179,17 @@ def read_sheet(
                 for col in range(1, cols + 1):
                     cell = ws.cell(row_no, col)
                     value = line[col - 1] if col <= len(line) else None
+                    rich_text = None
+                    if isinstance(value, list):
+                        if not value or any(
+                            not isinstance(segment, dict)
+                            or segment.get("type") != "text"
+                            or not isinstance(segment.get("text"), str)
+                            for segment in value
+                        ):
+                            raise ValueError(f"单元格含暂不支持的复合内容：{cell.coordinate}")
+                        rich_text = value
+                        value = "".join(segment["text"] for segment in rich_text)
                     if cell.data_type != "f":
                         exported_value = cell.value
                         if isinstance(exported_value, (date, datetime, daytime)):
@@ -188,6 +199,8 @@ def read_sheet(
                         ):
                             raise ValueError(f"服务端值与完整导出不一致：{cell.coordinate}")
                     item = {} if value is None else {"value": value}
+                    if rich_text is not None:
+                        item["rich_text"] = rich_text
                     if cell.data_type == "f":
                         if not isinstance(cell.value, str):
                             raise ValueError("目标工作表含暂不支持的数组公式")

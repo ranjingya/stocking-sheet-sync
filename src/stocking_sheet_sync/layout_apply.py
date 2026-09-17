@@ -202,7 +202,7 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
                     )
             elif old.get("value") != new.get("value") or new.get("formula"):
                 raise ValueError(f"原单元格内容发生变化：{old_col}{row}")
-            for key in ("cell_styles", "border_styles", "note", "data_validation"):
+            for key in ("cell_styles", "border_styles", "note", "data_validation", "rich_text"):
                 if old.get(key) != new.get(key):
                     raise ValueError(f"原单元格格式或备注发生变化：{old_col}{row} {key}")
             checked += 1

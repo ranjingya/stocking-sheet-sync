@@ -67,8 +67,11 @@ def test_native_write_uncertain_network_result_is_not_retried(monkeypatch):
     assert sum(m == "POST" for m, _, _ in requests) == 1
 
 
+@pytest.mark.parametrize("rich_text", [False, True])
 @pytest.mark.parametrize("missing_value", [False, True])
-def test_native_read_retains_formulas_styles_and_all_empty_coordinates(monkeypatch, missing_value):
+def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
+    monkeypatch, missing_value, rich_text
+):
     book = Workbook()
     sheet = book.active
     sheet.title = "样本"
@@ -82,6 +85,10 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(monkeypat
     book.save(stream)
     book.close()
     client = Mock()
+    segments = [
+        {"type": "text", "text": "001", "segmentStyle": {"bold": False}},
+        {"type": "text", "text": "23", "segmentStyle": {"bold": True}},
+    ]
 
     def request(method, path, **kwargs):
         if path.endswith("/sheets/query"):
@@ -98,7 +105,12 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(monkeypat
             }
         if path.endswith("/values_batch_get"):
             area = kwargs["params"]["ranges"]
-            return {"revision": 1, "valueRanges": [{"range": area, "values": [["00123", 2]]}]}
+            return {
+                "revision": 1,
+                "valueRanges": [
+                    {"range": area, "values": [[segments if rich_text else "00123", 2]]}
+                ],
+            }
         return {"spreadsheet": {"title": "样本"}}
 
     client._request.side_effect = request
@@ -113,6 +125,8 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(monkeypat
     data = read_sheet("token", "test")
     assert len(data["cells"]) == 6
     assert data["cells"]["A1"]["value"] == "00123"
+    if rich_text:
+        assert data["cells"]["A1"]["rich_text"] == segments
     assert data["cells"]["B1"]["formula"] == "=1+1"
     assert data["cells"]["B1"]["value"] == 2
     assert "value" not in data["cells"]["B3"]
