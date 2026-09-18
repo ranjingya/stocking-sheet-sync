@@ -50,14 +50,14 @@ def filled(prepared, update):
 
 def test_layout_inserts_formula_fields_preserves_manual_and_repeat():
     before, _, _, layout, prepared = setup_sheet()
-    assert len(layout["inserted_columns"]) == 21
-    assert len(layout["report"]["target_fields"]) == 26
+    assert len(layout["inserted_columns"]) == 20
+    assert len(layout["report"]["target_fields"]) == 25
     assert verify_update(before, prepared, layout, config(), rules())["verified"]
     assert build_update(prepared, config(), rules(), forecast=True)["operations"] == []
     assert build_update(prepared, config(), rules())["operations"] == []
     assert not plan_market_layout(prepared, config(), rules(), recent_only=True)["issues"]
     labels = [f["header"] for f in layout["report"]["target_fields"]]
-    assert labels[0] == "全公司近30天"
+    assert "全公司近30天" not in labels
     assert sum(value.startswith("预估-") for value in labels) == 5
     assert prepared["cells"][f"{layout['column_mapping']['F']}4"]["value"] == 100
 
@@ -79,7 +79,6 @@ def test_independent_history_switch_and_all_cell_preservation(history):
         after, report, config(), rules(), history=history, forecast=True
     )
     assert repeated["operations"] == []
-    assert after["cells"]["F4"].get("value") is None
     changed = deepcopy(after)
     demand = inspect_sheet(after, config())["columns"]["vip"]["demand"] + "4"
     changed["cells"][demand]["value"] = 99
@@ -169,3 +168,25 @@ def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path,
     copy = CopyState("r", "s", "name", "url", "record", "copied", target_token="test-token")
     claim = FillState("r", "s", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path))
     assert filler(copy, claim)["status"] == "needs_review"
+
+
+@pytest.mark.parametrize("existing", [None, 23])
+def test_manual_zero_forecast_skips_preserves_and_allows_other_writes(existing):
+    _, _, report, layout, prepared = setup_sheet()
+    platform = report["groups"][0]["platforms"][0]
+    platform.pop("forecast")
+    platform.update(status="manual", issues=["previous_sales_zero"])
+    col = next(
+        f["target_column"]
+        for f in layout["report"]["target_fields"]
+        if f["platform"] == platform["platform"] and f["metric"] == "forecast"
+    )
+    if existing is not None:
+        prepared["cells"][col + "4"]["value"] = existing
+    update = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
+    assert update["summary"]["needs_review"] == 0
+    assert update["summary"]["manual_forecasts"] == 2
+    assert all(e["target_cell"] not in (col + "4", col + "6") for e in update["entries"])
+    after = filled(prepared, update)
+    assert after["cells"][col + "4"].get("value") == existing
+    assert verify_sales_update(prepared, after, update)["verified"]

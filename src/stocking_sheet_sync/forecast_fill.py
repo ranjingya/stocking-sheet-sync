@@ -108,6 +108,7 @@ class ForecastFiller(HistoryFiller):
                 load_forecast_config(self.rules_path),
                 rules,
                 requested_rows=product["rows"],
+                snapshot=before,
             )
             write_forecast_report(output / "inspection", report)
             checked = check_forecast_target(before, report, config)

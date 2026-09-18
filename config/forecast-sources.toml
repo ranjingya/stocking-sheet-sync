@@ -5,7 +5,7 @@ fields = { sku = "spec_code", style = "product_code", name = "product_name", spe
 filters = { data_source = ["聚水潭标准API"], company = ["公司"] }
 
 # dt 对应业务日；数据通常在次日创建，不能再将 dt 减一天。
-# 日值与30天快照有差异时，30天输入标记待核对。
+# 固定周期以截止日滚动字段为准，其他周期累加单日出库。
 [daily.jd_self]
 id = "jd_self"
 kind = "daily"
@@ -13,6 +13,7 @@ table = "bwd_rpa_jd_inventory_product_detail"
 fields = { sku = "barcode", date = "dt", quantity = "outbound_yesterday", row_id = "sku_id", rolling_30 = "outbound_30d" }
 filters = { shop_name = ["kocotree京东自营旗舰店"] }
 business_date_offset_days = 0
+rolling_fields = { "7" = "outbound_7d", "14" = "outbound_14d", "28" = "outbound_28d", "30" = "outbound_30d", "60" = "outbound_60d", "90" = "outbound_90d" }
 
 [company]
-status = "pending_scope_confirmation"
+status = "provided_by_sheet_lifecycle_sales"

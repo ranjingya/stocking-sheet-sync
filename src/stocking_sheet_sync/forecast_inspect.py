@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
+from .company_sales import read_company_sales
 from .forecast import allocate_forecast, forecast_window, load_forecast_config
 from .forecast_reader import ForecastReader, load_forecast_sources
 from .logging_config import configure_logging
@@ -49,6 +50,7 @@ def inspect_forecast(
     layout_rules: dict,
     *,
     requested_rows: list[dict] | None = None,
+    snapshot: dict | None = None,
 ) -> dict:
     """
     功能说明：逐款逐平台组装真实历史数据，生成只读预测及待核对证据。
@@ -62,6 +64,7 @@ def inspect_forecast(
         rules：季节和分配计算规则。
         layout_rules：款号年份分类规则，新品与未知款不参与自动预测。
         requested_rows：可选需求表商品行，仅按其中SKU查询主数据、标签及销量。
+        snapshot：可选原始表格快照，用于读取全公司生命周期销量。
     返回值：款式主数据、日期、来源查询证据、各平台结果及汇总；不写飞书或Redis。
     """
     styles = sorted(set(styles))
@@ -81,6 +84,7 @@ def inspect_forecast(
         catalog = [record for record in catalog if record["sku"] in wanted]
         match_catalog({"rows": requested}, catalog)
         LOG.info("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
+    company_source = read_company_sales(snapshot, requested or [], rules)
     sku_styles = defaultdict(set)
     for record in catalog:
         sku_styles[record["sku"]].add(record["style"])
@@ -145,22 +149,38 @@ def inspect_forecast(
             item["inputs"] = data
             if not item["issues"]:
                 fallback = rules["fallback"]
-                if len(skus) < fallback["sku_count_below"] and (
-                    sum(data["current"].values()) < fallback["sales_below"]
-                ):
-                    item["issues"].append("company_scope_pending_confirmation")
+                if sum(data["previous"].values()) == 0:
+                    item["status"] = "manual"
+                    item["issues"].append("previous_sales_zero")
                 else:
-                    try:
-                        item["forecast"] = allocate_forecast(
-                            data["current"],
-                            sum(data["previous"].values()),
-                            sum(data["historical_future"].values()),
-                            None,
-                            rules,
-                        )
-                        item["status"] = "ready"
-                    except ValueError as error:
-                        item["issues"].append(str(error))
+                    use_company = (
+                        len(skus) < fallback["sku_count_below"]
+                        and sum(data["current"].values()) < fallback["sales_below"]
+                    )
+                    company = None
+                    if use_company:
+                        company_rows = [r for r in company_source["rows"] if r["sku"] in skus]
+                        if (
+                            company_source["status"] == "available"
+                            and len(company_rows) == len(skus)
+                            and all(r["quantity"] is not None for r in company_rows)
+                        ):
+                            company = {r["sku"]: r["quantity"] for r in company_rows}
+                        if company is None or sum(company.values()) == 0:
+                            item["status"] = "manual"
+                            item["issues"].append("company_lifecycle_sales_unavailable")
+                    if item["status"] != "manual":
+                        try:
+                            item["forecast"] = allocate_forecast(
+                                data["current"],
+                                sum(data["previous"].values()),
+                                sum(data["historical_future"].values()),
+                                company,
+                                rules,
+                            )
+                            item["status"] = "ready"
+                        except ValueError as error:
+                            item["issues"].append(str(error))
             LOG.log(
                 logging.INFO if item["status"] == "ready" else logging.WARNING,
                 "平台试算结束：style=%s platform=%s status=%s issues=%s",
@@ -169,8 +189,13 @@ def inspect_forecast(
                 item["status"],
                 item["issues"],
             )
+        statuses = {p["status"] for p in group["platforms"]}
         group["status"] = (
-            "ready" if all(p["status"] == "ready" for p in group["platforms"]) else "needs_review"
+            "needs_review"
+            if "needs_review" in statuses
+            else "manual"
+            if "manual" in statuses
+            else "ready"
         )
     summary = Counter(p["status"] for g in groups for p in g["platforms"])
     return {
@@ -178,11 +203,12 @@ def inspect_forecast(
         "mode": "read_only_requested_skus"
         if requested is not None
         else "read_only_whole_style_trial",
-        "company_source": sources["company"],
+        "company_source": company_source,
         "groups": groups,
         "summary": {
             "styles": len(groups),
             "styles_needing_review": sum(g["status"] == "needs_review" for g in groups),
+            "styles_manual": sum(g["status"] == "manual" for g in groups),
             "platform_results": sum(summary.values()),
             **summary,
         },
@@ -264,11 +290,8 @@ def run(argv: list[str] | None = None) -> int:
     configure_logging("INFO")
     try:
         config = load_sales_config(args.source_config)
-        requested_rows = (
-            inspect_sheet(json.loads(args.snapshot.read_text(encoding="utf-8")), config)["rows"]
-            if args.snapshot
-            else None
-        )
+        snapshot = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.snapshot else None
+        requested_rows = inspect_sheet(snapshot, config)["rows"] if snapshot else None
         report = inspect_forecast(
             ForecastReader(WarehouseSettings.load(args.db_env_file)),
             args.style or [],
@@ -278,9 +301,14 @@ def run(argv: list[str] | None = None) -> int:
             load_forecast_config(args.rules),
             load_layout_config(args.layout_config, config),
             requested_rows=requested_rows,
+            snapshot=snapshot,
         )
         write_forecast_report(args.output, report)
-        return 2 if report["summary"]["styles_needing_review"] else 0
+        return (
+            2
+            if report["summary"]["styles_needing_review"] or report["summary"]["styles_manual"]
+            else 0
+        )
     except (ValueError, RuntimeError, KeyError, TypeError, OSError) as error:
         LOG.error("预测试算未完成：%s", error)
         return 1

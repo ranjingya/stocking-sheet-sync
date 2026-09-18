@@ -9,3 +9,10 @@ winter_end = [1, 31]
 [fallback]
 sku_count_below = 10
 sales_below = 20
+
+# 来源表前部的全公司去年生命周期销量，周期原文仅作证据保存。
+[company_sheet]
+group_row = 1
+header_row = 3
+group_pattern = "(?:[0-9Xx]{2,4}年)?销售总数"
+headers = ["全公司去年生命周期销量", "全公司生命周期销量"]

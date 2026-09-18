@@ -18,7 +18,7 @@ def load_forecast_sources(path: Path) -> dict:
         config = tomllib.load(stream)
     for source in [config["catalog"], *config.get("daily", {}).values()]:
         identifier(source["table"])
-        for field in source["fields"].values():
+        for field in [*source["fields"].values(), *source.get("rolling_fields", {}).values()]:
             identifier(field)
         for field, values in source.get("filters", {}).items():
             identifier(field)
@@ -36,6 +36,9 @@ def load_forecast_sources(path: Path) -> dict:
             or not {"sku", "date", "quantity", "row_id", "rolling_30"} <= source["fields"].keys()
         ):
             raise ValueError("预测日快照字段不完整")
+        for days in source.get("rolling_fields", {}):
+            if not str(days).isdigit() or not 1 <= int(days) <= 366:
+                raise ValueError("滚动周期必须为1至366天")
         if type(source.get("business_date_offset_days")) is not int:
             raise ValueError("日快照必须明确业务日期偏移")
     return config
@@ -70,19 +73,22 @@ class ForecastReader(SalesReader):
 
     def daily_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
         """
-        功能说明：累加日快照的单日出库，逐SKU逐日核验覆盖与唯一性。
+        功能说明：固定周期读取截止日滚动值，其余周期累加日出库并核验覆盖。
 
         参数：
             source：日快照字段、筛选及已核对的业务日期偏移配置。
             skus：本次需要查询的SKU编码集合。
             start：包含的业务起始日期。
             stop：不包含的业务结束日期。
-        返回值：逐SKU数量及缺日、重复、非法值和30天滚动对账异常；异常量留空。
+        返回值：逐SKU数量及实际取数方式；缺失、重复或非法值对应数量留空。
         """
         self._validate_skus(skus)
         days_count = (stop - start).days
         if not skus or len(set(skus)) != len(skus) or not 1 <= days_count <= 366:
             raise ValueError("日快照需要非空唯一SKU集合及1至366天区间")
+        rolling_field = source.get("rolling_fields", {}).get(str(days_count))
+        if rolling_field:
+            return self.rolling_window(source, skus, start, stop, rolling_field)
         offset = timedelta(days=source["business_date_offset_days"])
         fields = source["fields"]
         condition, params = _filters(source)
@@ -99,7 +105,8 @@ class ForecastReader(SalesReader):
         by_sku = defaultdict(lambda: defaultdict(list))
         for row in raw:
             day = date.fromisoformat(str(row["date"])[:10]) + offset
-            by_sku[str(row["sku"])][day].append(row)
+            if start <= day < stop and str(row["sku"]) in skus:
+                by_sku[str(row["sku"])][day].append(row)
         expected = [start + timedelta(days=n) for n in range(days_count)]
         rows = []
         for sku in skus:
@@ -117,10 +124,6 @@ class ForecastReader(SalesReader):
                     if any(values[0]["row_id"] in (None, "") for values in days.values()):
                         raise ValueError("日快照缺少平台SKU标识")
                     quantity = sum(units(days[day][0]["quantity"]) for day in expected)
-                    if days_count == 30:
-                        rolling = units(days[expected[-1]][0]["rolling_30"])
-                        if rolling != quantity:
-                            issues.append("daily_rolling_mismatch")
                 except ValueError:
                     issues.append("invalid_daily_value")
             rows.append(
@@ -145,4 +148,76 @@ class ForecastReader(SalesReader):
             "issues": ["daily_source_needs_review"] if any(r["issues"] for r in rows) else [],
         }
         LOG.info("日出库读取完成：platform=%s issues=%s", source["id"], result["issues"])
+        return result
+
+    def rolling_window(
+        self, source: dict, skus: list[str], start: date, stop: date, field: str
+    ) -> dict:
+        """
+        功能说明：仅读取区间截止日的固定周期销量，不检查或累计中间日期。
+
+        参数：
+            source：日快照来源及业务日期偏移配置。
+            skus：需要查询的唯一SKU集合。
+            start：包含的业务起始日期，用于记录窗口。
+            stop：不包含的业务结束日期。
+            field：经配置选择的固定周期销量字段。
+        返回值：逐SKU截止日滚动销量和缺失、重复、非法值证据。
+        """
+        fields = source["fields"]
+        end = stop - timedelta(days=1)
+        day = end - timedelta(days=source["business_date_offset_days"])
+        condition, params = _filters(source)
+        LOG.info(
+            "读取固定周期销量：platform=%s days=%d end=%s field=%s",
+            source["id"],
+            (stop - start).days,
+            end,
+            field,
+        )
+        raw = self._read(
+            f"SELECT {identifier(fields['sku'])} AS sku, "
+            f"{identifier(fields['row_id'])} AS row_id, {identifier(field)} AS quantity "
+            f"FROM {identifier(source['table'])} WHERE {condition} "
+            f"AND {identifier(fields['date'])} >= %s AND {identifier(fields['date'])} < %s "
+            f"AND {identifier(fields['sku'])} IN ({','.join(['%s'] * len(skus))})",
+            tuple([*params, day.isoformat(), (day + timedelta(days=1)).isoformat(), *skus]),
+        )
+        grouped = defaultdict(list)
+        for row in raw:
+            grouped[str(row["sku"])].append(row)
+        rows = []
+        for sku in skus:
+            records = grouped[sku]
+            issues, quantity = [], None
+            if not records:
+                issues.append("missing_rolling_snapshot")
+            elif len(records) != 1:
+                issues.append("duplicate_source_sku_day")
+            else:
+                try:
+                    if records[0]["row_id"] in (None, ""):
+                        raise ValueError("快照缺少平台SKU标识")
+                    quantity = units(records[0]["quantity"])
+                except ValueError:
+                    issues.append("invalid_rolling_value")
+            rows.append(
+                {
+                    "sku": sku,
+                    "quantity": quantity,
+                    "issues": issues,
+                    "status": "needs_review" if issues else "matched",
+                }
+            )
+        result = {
+            "platform": source["id"],
+            "source_table": source["table"],
+            "kind": "rolling",
+            "source_field": field,
+            "start": str(start),
+            "end": str(end),
+            "rows": rows,
+            "issues": ["rolling_source_needs_review"] if any(r["issues"] for r in rows) else [],
+        }
+        LOG.info("固定周期销量读取完成：platform=%s issues=%s", source["id"], result["issues"])
         return result

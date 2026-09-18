@@ -140,6 +140,7 @@ def build_forecast_values(
     groups = {g["style"]: g for g in report["groups"]}
     issues = list(checked["issues"])
     entries, operations, totals = [], [], defaultdict(int)
+    skipped = []
     metrics = [*INPUT_METRICS] if history else []
     if forecast:
         metrics.append("forecast")
@@ -159,6 +160,21 @@ def build_forecast_values(
             for metric in metrics:
                 col = fields[(pid, metric)]
                 address = f"{col}{row['row']}"
+                if metric == "forecast" and platform["status"] == "manual":
+                    skipped.append(
+                        {
+                            "style": row["style"],
+                            "sku": row["sku"],
+                            "platform": pid,
+                            "target_cell": address,
+                            "reason": platform["issues"],
+                            "status": "preserved"
+                            if snapshot["cells"][address].get("value") not in (None, "")
+                            or snapshot["cells"][address].get("formula")
+                            else "blank",
+                        }
+                    )
+                    continue
                 value = (
                     platform.get("forecast", {}).get("rows", {}).get(row["sku"], {}).get("quantity")
                     if metric == "forecast" and platform["status"] == "ready"
@@ -205,6 +221,8 @@ def build_forecast_values(
     for pid in sorted(expected_platforms):
         for metric in metrics:
             key = f"{pid}:{metric}"
+            if metric == "forecast" and any(e["platform"] == pid for e in skipped):
+                continue
             for total in column_total_rows(
                 snapshot,
                 fields[(pid, "demand")],
@@ -240,11 +258,13 @@ def build_forecast_values(
     return {
         "as_of": report["as_of"],
         "entries": entries,
+        "skipped_forecasts": skipped,
         "total_entries": total_entries,
         "operations": [] if problems else compact_ranges(operations),
         "target_issues": issues,
         "summary": {
             "expected_cells": len(entries),
+            "manual_forecasts": len(skipped),
             "needs_review": problems,
             "write": counts["write"],
             "unchanged": counts["unchanged"],

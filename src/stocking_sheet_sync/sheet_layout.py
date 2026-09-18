@@ -289,7 +289,7 @@ def plan_market_layout(
         if forecast and category != "legacy":
             issues.append({"reason": "forecast_requires_legacy_styles"})
         company = mapped.get(("company", "sales"))
-        if company or forecast:
+        if company:
             fields.append(
                 {
                     "platform": "company",
