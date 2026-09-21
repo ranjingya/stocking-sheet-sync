@@ -4,6 +4,8 @@ import logging
 import re
 import tomllib
 from collections import Counter
+from copy import deepcopy
+from datetime import date, timedelta
 from pathlib import Path
 
 from .sheet_matching import column_name, column_number, inspect_sheet, normalize_text
@@ -45,6 +47,8 @@ def load_layout_config(path: Path, sales_config: dict) -> dict:
     for platform in sales_config["platforms"]:
         pid = platform["id"]
         settings = rules["platforms"][pid]
+        if "forecast" in rules and not str(settings.get("future_prefix", "")).strip():
+            raise ValueError(f"平台 {pid} 缺少后续周期日期表头前缀")
         for category in ("new", "legacy"):
             metrics = settings.get(f"{category}_metrics", layout[f"{category}_metrics"])
             if (
@@ -93,6 +97,57 @@ def load_layout_config(path: Path, sales_config: dict) -> dict:
                 raise ValueError("预估标题模板只支持platform占位符")
     LOG.info("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
     return rules
+
+
+def dated_forecast_rules(rules: dict, report: dict) -> dict:
+    """
+    功能说明：根据实际计算窗口生成各平台后续周期日期表头。
+
+    参数：
+        rules：结构配置，包含平台日期表头前缀。
+        report：按款式保存实际历史起止日期的预测报告。
+    返回值：含日期标题映射的配置副本；日期包含首尾，保持实际查询窗口。
+    """
+    periods = set()
+    for group in report["groups"]:
+        window = group.get("window")
+        if not window:
+            continue
+        start = date.fromisoformat(window["history_start"])
+        end = date.fromisoformat(window["history_end"]) - timedelta(days=1)
+        periods.add(
+            f"{start.year % 100:02d}.{start.month}.{start.day}-"
+            f"{end.year % 100:02d}.{end.month}.{end.day}"
+        )
+    result = deepcopy(rules)
+    if periods:
+        label = "、".join(sorted(periods))
+        result["forecast"]["future_headers"] = {
+            pid: settings["future_prefix"] + label for pid, settings in rules["platforms"].items()
+        }
+        LOG.info("后续周期日期表头生成：periods=%s", sorted(periods))
+    return result
+
+
+def _recognize_column(cells: dict, col: int, row: int, config: dict, rules: dict) -> list[dict]:
+    """识别 cells 中 col 列 row 行表头；config/rules 提供规则，相邻同期列区分人工历史列。"""
+    label = cells.get(f"{column_name(col)}{row}", {}).get("value", "")
+    previous = cells.get(f"{column_name(col - 1)}{row}", {}).get("value", "") if col > 1 else ""
+    left = _recognize(previous, config, rules)
+    day = r"\d{2}\.(?:[1-9]|1[0-2])\.(?:[1-9]|[12]\d|3[01])"
+    period = day + "-" + day
+    for pid, settings in rules["platforms"].items():
+        prefix = settings.get("future_prefix")
+        if (
+            prefix
+            and re.fullmatch(
+                re.escape(normalize_text(prefix)) + period + r"(?:、" + period + r")*",
+                normalize_text(label),
+            )
+            and any(m["platform"] == pid and m["metric"] == "previous" for m in left)
+        ):
+            return [{"platform": pid, "metric": "future", "period": None}]
+    return _recognize(label, config, rules)
 
 
 def _recognize(label: str, config: dict, rules: dict) -> list[dict]:
@@ -228,14 +283,7 @@ def plan_market_layout(
                 left, top, right, bottom = _bounds(area)
                 if left <= col <= right and top <= group_row <= bottom:
                     return False
-            return (
-                len(
-                    _recognize(
-                        cells[f"{column_name(col)}{header_row}"].get("value", ""), config, rules
-                    )
-                )
-                == 1
-            )
+            return len(_recognize_column(cells, col, header_row, config, rules)) == 1
 
         while recoverable(start - 1):
             start -= 1
@@ -245,7 +293,7 @@ def plan_market_layout(
             col = column_name(c)
             header = cells[f"{col}{header_row}"]
             label = header.get("value", "")
-            matches = _recognize(label, config, rules)
+            matches = _recognize_column(cells, c, header_row, config, rules)
             filled = sum(
                 cells[f"{col}{r['row']}"].get("value") not in (None, "")
                 or bool(cells[f"{col}{r['row']}"].get("formula"))
@@ -346,6 +394,10 @@ def plan_market_layout(
                     if metric in extended
                     else titles[metric]
                 )
+                if metric == "future":
+                    title = rules["forecast"].get("future_headers", {}).get(pid) or (
+                        source["header"] if source else title
+                    )
                 if metric in HISTORY_METRICS:
                     title = (
                         source["header"]

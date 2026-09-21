@@ -15,7 +15,7 @@ from stocking_sheet_sync.forecast_sheet import (
 from stocking_sheet_sync.layout_apply import build_update, verify_update
 from stocking_sheet_sync.models import CopyState, FillState
 from stocking_sheet_sync.sales_fill import verify_sales_update
-from stocking_sheet_sync.sheet_layout import plan_market_layout
+from stocking_sheet_sync.sheet_layout import dated_forecast_rules, plan_market_layout
 from stocking_sheet_sync.sheet_matching import inspect_sheet
 from tests.test_forecast_inspect import config as all_config
 from tests.test_forecast_inspect import fake_reader
@@ -133,6 +133,9 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
 ):
     before, reader, report, layout, prepared = setup_sheet()
     reader.reset_mock()
+    dated = dated_forecast_rules(rules(), report)
+    layout = build_update(before, config(), dated, forecast=True)
+    prepared = project_layout(before, layout, config(), dated)
     update = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
     after = filled(prepared, update)
     filler = ForecastFiller(object(), history=True, reader_factory=lambda: reader)
@@ -190,3 +193,53 @@ def test_manual_zero_forecast_skips_preserves_and_allows_other_writes(existing):
     after = filled(prepared, update)
     assert after["cells"][col + "4"].get("value") == existing
     assert verify_sales_update(prepared, after, update)["verified"]
+
+
+def test_future_header_dates_migrate_without_inserting_or_changing_values():
+    _, _, report, _, prepared = setup_sheet()
+    dated = dated_forecast_rules(rules(), report)
+    update = build_update(prepared, config(), dated, forecast=True)
+    assert not update["inserted_columns"]
+    assert len(update["operations"]) == 5
+    after = project_layout(prepared, update, config(), dated)
+    assert verify_update(prepared, after, update, config(), dated)["verified"]
+    assert not build_update(after, config(), dated, forecast=True)["operations"]
+    assert not build_update(after, config(), rules())["operations"]
+    assert {f["header"] for f in update["report"]["target_fields"] if f["metric"] == "future"} == {
+        "唯品25.9.12-26.1.31",
+        "自营25.9.12-26.1.31",
+        "拼多多25.9.12-26.1.31",
+        "猫超25.9.12-26.1.31",
+        "京东POP25.9.12-26.1.31",
+    }
+    assert (
+        build_forecast_values(after, report, config(), dated, history=True, forecast=True)[
+            "summary"
+        ]["needs_review"]
+        == 0
+    )
+
+
+def test_future_header_keeps_manual_history_with_same_date_label():
+    from stocking_sheet_sync.sheet_layout import _recognize_column
+
+    cells = {
+        "A3": {"value": "唯品25.9.12-26.1.31"},
+        "B3": {"value": "唯品近30天"},
+        "C3": {"value": "唯品会去年同期近30天"},
+        "D3": {"value": "唯品25.9.12-26.1.31"},
+    }
+    assert _recognize_column(cells, 1, 3, config(), rules())[0]["metric"] == "history"
+    assert _recognize_column(cells, 4, 3, config(), rules())[0]["metric"] == "future"
+
+
+def test_future_header_supports_multiple_style_windows_and_exact_end_day():
+    _, _, report, _, _ = setup_sheet()
+    report = deepcopy(report)
+    report["groups"][0]["window"]["history_start"] = "2025-03-04"
+    report["groups"][0]["window"]["history_end"] = "2025-09-01"
+    other = deepcopy(report["groups"][0])
+    other["window"]["history_end"] = "2026-02-01"
+    report["groups"].append(other)
+    dated = dated_forecast_rules(rules(), report)
+    assert dated["forecast"]["future_headers"]["vip"] == "唯品25.3.4-25.8.31、25.3.4-26.1.31"

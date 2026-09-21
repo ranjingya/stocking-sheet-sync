@@ -14,7 +14,7 @@ from .layout_apply import apply_update, build_update, verify_update
 from .models import CopyState, FillState
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_fill import verify_sales_update
-from .sheet_layout import load_layout_config
+from .sheet_layout import dated_forecast_rules, load_layout_config
 from .sheet_matching import inspect_sheet
 from .sheets_api import read_sheet, write_sales_ranges
 
@@ -96,8 +96,6 @@ class ForecastFiller(HistoryFiller):
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
             )
             save("before.json", before)
-            layout = build_update(before, config, rules, forecast=True)
-            save("layout-request.json", layout)
             product = inspect_sheet(before, config)
             report = inspect_forecast(
                 self.reader_factory(),
@@ -115,6 +113,9 @@ class ForecastFiller(HistoryFiller):
             save("target-check.json", checked)
             if checked["issues"]:
                 return finish("needs_review", "表内商品未匹配或身份不明确，详见 target-check.json")
+            rules = dated_forecast_rules(rules, report)
+            layout = build_update(before, config, rules, forecast=True)
+            save("layout-request.json", layout)
             projected = project_layout(before, layout, config, rules)
             preflight = build_forecast_values(
                 projected, report, config, rules, history=self.history, forecast=True

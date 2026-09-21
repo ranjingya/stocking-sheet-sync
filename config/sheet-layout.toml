@@ -9,18 +9,21 @@ new_metrics = ["sales", "demand"]
 legacy_metrics = ["history", "sales", "demand"]
 
 [platforms.vip]
+future_prefix = "唯品"
 sales = "唯品近30天"
 demand = "唯品会"
 history = "唯品{period}"
 history_pattern = '^唯品(?:会)?(?P<period>\d.+)$'
 
 [platforms.jd_self]
+future_prefix = "自营"
 sales = "自营近30天"
 demand = "京东自营"
 history = "自营{period}"
 history_pattern = '^(?:京东)?自营(?P<period>\d.+)$'
 
 [platforms.pdd]
+future_prefix = "拼多多"
 sales = "拼多多近30天"
 demand = "拼多多"
 legacy_metrics = ["history", "history_net", "sales", "demand"]
@@ -30,12 +33,14 @@ history_net = "拼多多{period}实发-实退"
 history_net_pattern = '^拼多多(?P<period>\d.+)实发-实退$'
 
 [platforms.tmall_supermarket]
+future_prefix = "猫超"
 sales = "猫超近30天"
 demand = "天猫超市"
 history = "猫超{period}"
 history_pattern = '^(?:猫超|天猫超市)(?P<period>\d.+)$'
 
 [platforms.jd_pop]
+future_prefix = "京东POP"
 sales = "京东POP近30天"
 demand = "京东POP"
 history = "京东POP{period}"
