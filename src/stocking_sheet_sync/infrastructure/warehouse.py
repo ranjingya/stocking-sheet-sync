@@ -3,25 +3,13 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
-from typing import Any
 
 import pymysql
 
-from stocking_sheet_sync.source_settings import WarehouseSettings, identifier
+from stocking_sheet_sync.domain.products import units
+from stocking_sheet_sync.settings import WarehouseSettings, identifier
 
 LOG = logging.getLogger(__name__)
-
-
-def units(value: Any) -> int:
-    """将非负整件数 value 转为整数；空值、非整数和无穷值均报错。"""
-    try:
-        parsed = Decimal(str(value))
-    except InvalidOperation:
-        raise ValueError("数仓件数不是有效数字") from None
-    if not parsed.is_finite() or parsed < 0 or parsed != parsed.to_integral_value():
-        raise ValueError("数仓件数必须是有限的非负整数")
-    return int(parsed)
 
 
 def _filters(source: dict) -> tuple[str, list]:

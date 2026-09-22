@@ -1,12 +1,10 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.domain.forecast import (
-    allocate_forecast,
-    forecast_window,
-    load_forecast_config,
-)
+from stocking_sheet_sync.domain.forecast import allocate_forecast, forecast_window
+from stocking_sheet_sync.settings import load_forecast_config
 
 
 @pytest.mark.parametrize(
@@ -22,17 +20,23 @@ from stocking_sheet_sync.domain.forecast import (
     ],
 )
 def test_season_deadlines(day, label, end):
-    result = forecast_window(date.fromisoformat(day), [label], load_forecast_config())
+    result = forecast_window(
+        date.fromisoformat(day), [label], load_forecast_config(Path("config/config.example.toml"))
+    )
     assert result["deadline"].isoformat() == end
     assert (result["current_end"] - result["current_start"]).days == 30
     assert (result["previous_end"] - result["previous_start"]).days == 30
 
 
 def test_history_window_and_leap_day():
-    r = forecast_window(date(2026, 9, 17), ["秋冬款"], load_forecast_config())
+    r = forecast_window(
+        date(2026, 9, 17), ["秋冬款"], load_forecast_config(Path("config/config.example.toml"))
+    )
     assert r["history_start"] == date(2025, 9, 17)
     assert r["history_end"] == date(2026, 2, 1)
-    leap = forecast_window(date(2024, 2, 29), [None], load_forecast_config())
+    leap = forecast_window(
+        date(2024, 2, 29), [None], load_forecast_config(Path("config/config.example.toml"))
+    )
     assert leap["previous_end"] == date(2023, 2, 28)
     assert (leap["previous_end"] - leap["previous_start"]).days == 30
 
@@ -40,16 +44,22 @@ def test_history_window_and_leap_day():
 @pytest.mark.parametrize("labels", [["夏款,秋冬款"], ["夏款", "四季款"], ["秋冬款", None]])
 def test_conflicting_labels_are_not_arbitrarily_selected(labels):
     with pytest.raises(ValueError):
-        forecast_window(date(2026, 5, 1), labels, load_forecast_config())
+        forecast_window(
+            date(2026, 5, 1), labels, load_forecast_config(Path("config/config.example.toml"))
+        )
 
 
 def test_out_of_season_does_not_silently_extend_year():
     with pytest.raises(ValueError, match="跨季"):
-        forecast_window(date(2026, 9, 1), ["夏款"], load_forecast_config())
+        forecast_window(
+            date(2026, 9, 1), ["夏款"], load_forecast_config(Path("config/config.example.toml"))
+        )
 
 
 def test_platform_growth_and_decline():
-    r = allocate_forecast({"a": 30, "b": 10}, 80, 100, None, load_forecast_config())
+    r = allocate_forecast(
+        {"a": 30, "b": 10}, 80, 100, None, load_forecast_config(Path("config/config.example.toml"))
+    )
     assert r["total"] == 50
     assert r["rows"]["a"]["rounded"] == 38
     assert r["rows"]["b"]["rounded"] == 13
@@ -59,7 +69,13 @@ def test_platform_growth_and_decline():
 
 
 def test_company_fallback_only_changes_shares():
-    r = allocate_forecast({"a": 10, "b": 0}, 20, 100, {"a": 20, "b": 80}, load_forecast_config())
+    r = allocate_forecast(
+        {"a": 10, "b": 0},
+        20,
+        100,
+        {"a": 20, "b": 80},
+        load_forecast_config(Path("config/config.example.toml")),
+    )
     assert r["total"] == 50 and r["share_source"] == "company"
     assert [r["rows"][k]["quantity"] for k in ["a", "b"]] == [10, 40]
 
@@ -67,7 +83,9 @@ def test_company_fallback_only_changes_shares():
 @pytest.mark.parametrize("current", [{"a": 20}, {str(n): 1 for n in range(10)}])
 def test_thresholds_are_strictly_less(current):
     assert (
-        allocate_forecast(current, 10, 100, None, load_forecast_config())["share_source"]
+        allocate_forecast(
+            current, 10, 100, None, load_forecast_config(Path("config/config.example.toml"))
+        )["share_source"]
         == "platform"
     )
 
@@ -75,11 +93,17 @@ def test_thresholds_are_strictly_less(current):
 @pytest.mark.parametrize("previous,company", [(0, {"a": 1}), (10, None), (10, {"a": 0})])
 def test_unavailable_denominators_are_not_zero_forecasts(previous, company):
     with pytest.raises(ValueError):
-        allocate_forecast({"a": 1}, previous, 10, company, load_forecast_config())
+        allocate_forecast(
+            {"a": 1},
+            previous,
+            10,
+            company,
+            load_forecast_config(Path("config/config.example.toml")),
+        )
 
 
 def test_rounding_never_goes_negative_and_matches_total():
-    rules = load_forecast_config()
+    rules = load_forecast_config(Path("config/config.example.toml"))
     for n in range(1, 20):
         for historical in range(30):
             current = {str(i): 20 for i in range(n)}

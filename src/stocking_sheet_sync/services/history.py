@@ -9,13 +9,13 @@ from urllib.parse import quote
 
 from stocking_sheet_sync.domain.models import CopyState, FillState
 from stocking_sheet_sync.domain.products import column_name, inspect_sheet, normalize_text
-from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.domain.sheets.values import build_sales_update, verify_sales_update
 from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet, write_sales_ranges
 from stocking_sheet_sync.infrastructure.warehouse import SalesReader
 from stocking_sheet_sync.services.layout import apply_update, build_update, verify_update
 from stocking_sheet_sync.services.sales import inspect_sales, write_report
-from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
+from stocking_sheet_sync.settings import WarehouseSettings, load_layout_config, load_sales_config
 
 LOG = logging.getLogger(__name__)
 
@@ -25,9 +25,8 @@ class HistoryFiller:
         self,
         client,
         *,
-        source_path=Path("config/sales-sources.toml"),
-        layout_path=Path("config/sheet-layout.toml"),
         reader_factory=None,
+        config_path=Path("config/config.toml"),
         new_history: bool = True,
         legacy_history: bool = True,
     ):
@@ -35,9 +34,8 @@ class HistoryFiller:
         功能说明：组装副本历史销量填充流程，按当前业务配置定位工作表和数仓来源。
 
         参数：
+            config_path：统一业务配置文件路径。
             client：飞书数据应用客户端，由调用方管理生命周期。
-            source_path：销量及商品匹配配置文件。
-            layout_path：市场部表头结构配置文件。
             reader_factory：可选只读数仓客户端工厂，用于隔离测试。
             new_history：是否填写新品历史销量。
             legacy_history：是否填写老款历史销量。
@@ -46,8 +44,7 @@ class HistoryFiller:
         self.new_history = new_history
         self.legacy_history = legacy_history
         self.client = client
-        self.source_path = source_path
-        self.layout_path = layout_path
+        self.config_path = config_path
         self.reader_factory = reader_factory or (lambda: SalesReader(WarehouseSettings.load()))
 
     def __call__(self, copy: CopyState, claim: FillState) -> dict:
@@ -83,8 +80,8 @@ class HistoryFiller:
 
         try:
             LOG.info("历史填充开始：target=%s as_of=%s", copy.target_token, claim.as_of)
-            config = load_sales_config(self.source_path)
-            rules = load_layout_config(self.layout_path, config)
+            config = load_sales_config(self.config_path)
+            rules = load_layout_config(self.config_path, config)
             sid = self.find_sheet(copy.target_token, config)
             before = read_sheet(
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"

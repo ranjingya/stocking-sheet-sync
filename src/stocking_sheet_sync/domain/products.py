@@ -4,6 +4,7 @@ import logging
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 LOG = logging.getLogger(__name__)
@@ -222,3 +223,14 @@ def match_catalog(layout: dict, catalog_rows: list[dict]) -> None:
             row["match_status"],
             row["issues"],
         )
+
+
+def units(value: Any) -> int:
+    """将非负整件数 value 转为整数；空值、非整数和无穷值均报错。"""
+    try:
+        parsed = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError("数仓件数不是有效数字") from None
+    if not parsed.is_finite() or parsed < 0 or parsed != parsed.to_integral_value():
+        raise ValueError("数仓件数必须是有限的非负整数")
+    return int(parsed)

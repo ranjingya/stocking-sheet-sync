@@ -7,10 +7,10 @@ from pathlib import Path
 
 import httpx
 
-from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet
 from stocking_sheet_sync.logging import configure_logging
-from stocking_sheet_sync.source_settings import load_sales_config
+from stocking_sheet_sync.settings import load_layout_config, load_sales_config
 
 LOG = logging.getLogger(__name__)
 
@@ -112,8 +112,7 @@ def run(argv: list[str] | None = None) -> int:
     返回值：成功生成报告返回 0；输入或读取失败返回 1。结构待核对事项写入报告。
     """
     parser = argparse.ArgumentParser(description="生成市场部表头结构调整预览，不写入飞书")
-    parser.add_argument("--source-config", type=Path, default=Path("config/sales-sources.toml"))
-    parser.add_argument("--layout-config", type=Path, default=Path("config/sheet-layout.toml"))
+    parser.add_argument("--config", type=Path, default=Path("config/config.toml"))
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--spreadsheet-token")
     group.add_argument("--snapshot", type=Path)
@@ -124,8 +123,8 @@ def run(argv: list[str] | None = None) -> int:
         parser.error("读取线上表格必须同时提供 --sheet-id")
     configure_logging("INFO")
     try:
-        config = load_sales_config(args.source_config)
-        rules = load_layout_config(args.layout_config, config)
+        config = load_sales_config(args.config)
+        rules = load_layout_config(args.config, config)
         snapshot = (
             json.loads(args.snapshot.read_text(encoding="utf-8"))
             if args.snapshot

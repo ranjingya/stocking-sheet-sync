@@ -4,15 +4,16 @@ from pathlib import Path
 import pytest
 
 from stocking_sheet_sync.domain.products import column_name
-from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.entrypoints.layout import run
+from stocking_sheet_sync.settings import load_layout_config
 from tests.test_sales_matching import config
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def rules():
-    return load_layout_config(ROOT / "config/sheet-layout.toml", config())
+    return load_layout_config(ROOT / "config/config.example.toml", config())
 
 
 def sheet(headers=None, style="KQ26123"):
@@ -221,10 +222,10 @@ def test_offline_cli_needs_no_warehouse_and_emits_reviewable_files(tmp_path, mon
             [
                 "--snapshot",
                 str(path),
-                "--source-config",
-                str(ROOT / "config/sales-sources.toml"),
-                "--layout-config",
-                str(ROOT / "config/sheet-layout.toml"),
+                "--config",
+                str(ROOT / "config/config.example.toml"),
+                "--config",
+                str(ROOT / "config/config.example.toml"),
                 "--output",
                 str(output),
             ]

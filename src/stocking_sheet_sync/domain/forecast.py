@@ -1,36 +1,10 @@
 from __future__ import annotations
 
 import logging
-import tomllib
 from datetime import date, timedelta
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
-from pathlib import Path
 
 LOG = logging.getLogger(__name__)
-
-
-def load_forecast_config(path: Path = Path("config/forecast.toml")) -> dict:
-    """读取并校验 path 指定的季节及兜底规则，返回配置字典。"""
-    with path.open("rb") as stream:
-        rules = tomllib.load(stream)
-    seasons = rules["seasons"]
-    labels = []
-    for name in ("summer", "winter", "all_year"):
-        values = seasons[f"{name}_labels"]
-        if not values or any(not isinstance(v, str) or not v.strip() for v in values):
-            raise ValueError("季节标签必须为非空字符串列表")
-        labels.extend(values)
-    if len(labels) != len(set(labels)):
-        raise ValueError("季节标签不能重复或跨季节配置")
-    for name in ("summer_end", "winter_end"):
-        month, day = seasons[name]
-        date(2001, month, day)
-    for name in ("sku_count_below", "sales_below"):
-        value = rules["fallback"][name]
-        if type(value) is not int or value <= 0:
-            raise ValueError("兜底阈值必须为正整数")
-    LOG.info("预测规则加载完成：path=%s", path)
-    return rules
 
 
 def previous_year(day: date) -> date:

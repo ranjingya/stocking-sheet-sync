@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -38,7 +39,9 @@ def setup_fill(tmp_path, monkeypatch, issues=()):
         for row in (4, 6):
             after["cells"][f"{cols['sales']}{row}"] = {"value": 10}
     reader = Reader(before, issues)
-    filler = HistoryFiller(object(), reader_factory=lambda: reader)
+    filler = HistoryFiller(
+        object(), config_path=Path("config/config.example.toml"), reader_factory=lambda: reader
+    )
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, prepared, after])
     monkeypatch.setattr(
@@ -153,7 +156,10 @@ def test_select_sheet_by_headers_requires_unique_candidate(count):
                 ]
             }
 
-    filler = HistoryFiller(Client())
+    filler = HistoryFiller(
+        Client(),
+        config_path=Path("config/config.example.toml"),
+    )
     if count == 1:
         assert filler.find_sheet("token", config()) == "0"
     else:
@@ -171,7 +177,9 @@ def test_legacy_pipeline_only_fills_recent_sales(tmp_path, monkeypatch):
         for row in layout["rows"]:
             after["cells"][f"{col['sales']}{row['row']}"] = {"value": 10}
     reader = Reader(before)
-    filler = HistoryFiller(object(), reader_factory=lambda: reader)
+    filler = HistoryFiller(
+        object(), config_path=Path("config/config.example.toml"), reader_factory=lambda: reader
+    )
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, after])
     monkeypatch.setattr(
@@ -227,7 +235,11 @@ def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
 
     history, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
     filler = ForecastFiller(
-        object(), history=False, new_history=True, reader_factory=lambda: reader
+        object(),
+        config_path=Path("config/config.example.toml"),
+        history=False,
+        new_history=True,
+        reader_factory=lambda: reader,
     )
     monkeypatch.setattr(filler, "find_sheet", lambda *args: "test")
     monkeypatch.setattr(
@@ -249,6 +261,7 @@ def test_new_forecast_enabled_preserves_history_and_reports_unsupported(tmp_path
     _, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
     filler = ForecastFiller(
         object(),
+        config_path=Path("config/config.example.toml"),
         history=False,
         new_history=True,
         new_forecast=True,

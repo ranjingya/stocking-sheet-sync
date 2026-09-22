@@ -1,7 +1,8 @@
-"""表格布局比较时将行高差异记录为日志。"""
-
 import logging
 from xml.etree import ElementTree
+
+"""表格布局比较时将行高差异记录为日志。"""
+
 
 LOG = logging.getLogger(__name__)
 

@@ -7,24 +7,28 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.domain.forecast import load_forecast_config
-from stocking_sheet_sync.domain.sheets.layout import load_layout_config
-from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader, load_forecast_sources
+from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader
 from stocking_sheet_sync.services.calculation import (
     inspect_forecast,
     quantities,
     write_forecast_report,
 )
-from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
+from stocking_sheet_sync.settings import (
+    WarehouseSettings,
+    load_forecast_config,
+    load_forecast_sources,
+    load_layout_config,
+    load_sales_config,
+)
 
 
 def config():
-    sales = load_sales_config(Path("config/sales-sources.toml"))
+    sales = load_sales_config(Path("config/config.example.toml"))
     return (
         sales,
-        load_forecast_sources(Path("config/forecast-sources.toml")),
-        load_forecast_config(),
-        load_layout_config(Path("config/sheet-layout.toml"), sales),
+        load_forecast_sources(Path("config/config.example.toml")),
+        load_forecast_config(Path("config/config.example.toml")),
+        load_layout_config(Path("config/config.example.toml"), sales),
     )
 
 

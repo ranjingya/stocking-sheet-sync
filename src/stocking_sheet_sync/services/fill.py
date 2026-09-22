@@ -5,7 +5,6 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from stocking_sheet_sync.domain.forecast import load_forecast_config
 from stocking_sheet_sync.domain.models import CopyState, FillState
 from stocking_sheet_sync.domain.products import inspect_sheet
 from stocking_sheet_sync.domain.sheets.forecast_values import (
@@ -13,18 +12,20 @@ from stocking_sheet_sync.domain.sheets.forecast_values import (
     check_forecast_target,
     project_layout,
 )
-from stocking_sheet_sync.domain.sheets.layout import (
-    dated_forecast_rules,
-    load_layout_config,
-    plan_market_layout,
-)
+from stocking_sheet_sync.domain.sheets.layout import dated_forecast_rules, plan_market_layout
 from stocking_sheet_sync.domain.sheets.values import verify_sales_update
 from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet, write_sales_ranges
-from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader, load_forecast_sources
+from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader
 from stocking_sheet_sync.services.calculation import inspect_forecast, write_forecast_report
 from stocking_sheet_sync.services.history import HistoryFiller
 from stocking_sheet_sync.services.layout import apply_update, build_update, verify_update
-from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
+from stocking_sheet_sync.settings import (
+    WarehouseSettings,
+    load_forecast_config,
+    load_forecast_sources,
+    load_layout_config,
+    load_sales_config,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -39,40 +40,31 @@ class ForecastFiller(HistoryFiller):
         new_forecast: bool = False,
         legacy_forecast: bool = True,
         reader_factory=None,
-        source_path=Path("config/sales-sources.toml"),
-        layout_path=Path("config/sheet-layout.toml"),
-        rules_path=Path("config/forecast.toml"),
-        forecast_sources_path=Path("config/forecast-sources.toml"),
+        config_path=Path("config/config.toml"),
     ):
         """
         功能说明：组装老款公式预估填充流程，按历史开关控制辅助历史量写入。
 
         参数：
+            config_path：统一业务配置文件路径。
             client：飞书服务端接口客户端。
             history：是否同时填充三个历史窗口，关闭时仍读取计算输入。
             new_history：是否填写新品近30天。
             new_forecast：是否请求新品预测；规则未实现时保留空白并标记。
             legacy_forecast：是否填写老款预测。
             reader_factory：可选独立数仓读取器工厂，默认使用本项目配置。
-            source_path：平台销量配置文件。
-            layout_path：市场部表头及款式分类配置文件。
-            rules_path：预测季节与分配规则文件。
-            forecast_sources_path：预测主数据、日销量和公司来源配置文件。
         返回值：无。
         """
         super().__init__(
             client,
             new_history=new_history,
             legacy_history=history,
-            source_path=source_path,
-            layout_path=layout_path,
+            config_path=config_path,
             reader_factory=reader_factory or (lambda: ForecastReader(WarehouseSettings.load())),
         )
         self.new_forecast = new_forecast
         self.legacy_forecast = legacy_forecast
         self.history = history
-        self.rules_path = rules_path
-        self.forecast_sources_path = forecast_sources_path
 
     def __call__(self, copy: CopyState, claim: FillState) -> dict:
         """
@@ -107,8 +99,8 @@ class ForecastFiller(HistoryFiller):
 
         try:
             LOG.info("公式预估填充开始：target=%s history=%s", copy.target_token, self.history)
-            config = load_sales_config(self.source_path)
-            rules = load_layout_config(self.layout_path, config)
+            config = load_sales_config(self.config_path)
+            rules = load_layout_config(self.config_path, config)
             sid = self.find_sheet(copy.target_token, config)
             before = read_sheet(
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
@@ -139,8 +131,8 @@ class ForecastFiller(HistoryFiller):
                 sorted({r["style"] for r in product["rows"]}),
                 date.fromisoformat(claim.as_of),
                 config,
-                load_forecast_sources(self.forecast_sources_path),
-                load_forecast_config(self.rules_path),
+                load_forecast_sources(self.config_path),
+                load_forecast_config(self.config_path),
                 rules,
                 requested_rows=product["rows"],
                 snapshot=before,

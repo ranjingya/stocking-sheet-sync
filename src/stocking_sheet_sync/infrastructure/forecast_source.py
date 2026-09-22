@@ -1,47 +1,14 @@
 from __future__ import annotations
 
 import logging
-import tomllib
 from collections import defaultdict
 from datetime import date, timedelta
-from pathlib import Path
 
-from stocking_sheet_sync.infrastructure.warehouse import SalesReader, _filters, units
-from stocking_sheet_sync.source_settings import identifier
+from stocking_sheet_sync.domain.products import units
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader, _filters
+from stocking_sheet_sync.settings import identifier
 
 LOG = logging.getLogger(__name__)
-
-
-def load_forecast_sources(path: Path) -> dict:
-    """校验 path 中预测来源的标识符和筛选，返回配置字典。"""
-    with path.open("rb") as stream:
-        config = tomllib.load(stream)
-    for source in [config["catalog"], *config.get("daily", {}).values()]:
-        identifier(source["table"])
-        for field in [*source["fields"].values(), *source.get("rolling_fields", {}).values()]:
-            identifier(field)
-        for field, values in source.get("filters", {}).items():
-            identifier(field)
-            if (
-                not isinstance(values, list)
-                or not values
-                or any(not isinstance(v, str) or not v for v in values)
-            ):
-                raise ValueError("预测来源筛选必须是非空字符串数组")
-    if not {"sku", "style", "name", "spec", "labels"} <= config["catalog"]["fields"].keys():
-        raise ValueError("预测商品主数据字段不完整")
-    for source in config.get("daily", {}).values():
-        if (
-            source["kind"] != "daily"
-            or not {"sku", "date", "quantity", "row_id", "rolling_30"} <= source["fields"].keys()
-        ):
-            raise ValueError("预测日快照字段不完整")
-        for days in source.get("rolling_fields", {}):
-            if not str(days).isdigit() or not 1 <= int(days) <= 366:
-                raise ValueError("滚动周期必须为1至366天")
-        if type(source.get("business_date_offset_days")) is not int:
-            raise ValueError("日快照必须明确业务日期偏移")
-    return config
 
 
 class ForecastReader(SalesReader):

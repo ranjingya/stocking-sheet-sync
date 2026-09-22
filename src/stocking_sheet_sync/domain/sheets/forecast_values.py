@@ -10,10 +10,10 @@ from stocking_sheet_sync.domain.products import (
     column_number,
     inspect_sheet,
     match_catalog,
+    units,
 )
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.domain.sheets.totals import column_total_rows
-from stocking_sheet_sync.infrastructure.warehouse import units
 
 LOG = logging.getLogger(__name__)
 INPUT_METRICS = {"sales": "current", "previous": "previous", "future": "historical_future"}

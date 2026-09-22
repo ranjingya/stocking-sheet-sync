@@ -49,3 +49,219 @@ lock_ttl_seconds = 300
 request_timeout_seconds = 15
 max_retries = 3
 log_level = "INFO"
+
+# 商品、平台来源、表头和预测规则
+
+[catalog]
+table = "std_api_jstbz_product_spec_info_f"
+
+[catalog.fields]
+sku = "spec_code"
+style = "product_code"
+name = "product_name"
+spec = "spec_name"
+labels = "labels"
+
+[catalog.filters]
+data_source = ["聚水潭标准API"]
+company = ["公司"]
+
+[matching]
+header_rows = 3
+sku_headers = ["商品编码", "SKU编码", "条形码"]
+style_headers = ["款式编码"]
+name_headers = ["商品名称"]
+spec_headers = ["颜色规格", "规格名称"]
+market_headers = ["市场部"]
+combined_headers = ["市场部其它", "市场部其他"]
+
+[sheet]
+
+[sheet.layout]
+style_pattern = "^KQ(?P<year>\\d{2})"
+new_year = 26
+group_row = 2
+market_header = "市场部"
+platform_order = ["vip", "jd_self", "pdd", "tmall_supermarket", "jd_pop"]
+new_metrics = ["sales", "demand"]
+legacy_metrics = ["history", "sales", "demand"]
+
+[sheet.history_periods]
+
+
+[sheet.forecast]
+company_header = "全公司近30天"
+metrics = ["sales", "previous", "future", "forecast", "demand"]
+previous_suffix = "去年同期近30天"
+future_suffix = "去年对应后续周期"
+forecast_header = "预估-{platform}"
+forecast_aliases = ["{platform}公式预估"]
+
+[forecast]
+
+[forecast.seasons]
+summer_labels = ["夏款"]
+winter_labels = ["秋冬款"]
+all_year_labels = ["四季款"]
+summer_end = [8, 31]
+winter_end = [1, 31]
+
+[forecast.fallback]
+sku_count_below = 10
+sales_below = 20
+
+[forecast.company_sheet]
+group_row = 1
+header_row = 3
+group_pattern = "(?:[0-9Xx]{2,4}年)?销售总数"
+headers = ["全公司去年生命周期销量", "全公司生命周期销量"]
+
+[platforms]
+
+[platforms.jd_self]
+name = "京东自营"
+kind = "snapshot"
+table = "bwd_rpa_jd_inventory_product_detail"
+sales_headers = ["自营近30天", "京东自营近30天", "京东自营近30天销量"]
+demand_headers = ["京东自营"]
+business_date_offset_days = 0
+
+[platforms.jd_self.fields]
+sku = "barcode"
+date = "dt"
+quantity = "outbound_30d"
+row_id = "sku_id"
+
+[platforms.jd_self.filters]
+shop_name = ["kocotree京东自营旗舰店"]
+
+[platforms.jd_self.layout]
+future_prefix = "自营"
+sales = "自营近30天"
+demand = "京东自营"
+history = "自营{period}"
+history_pattern = "^(?:京东)?自营(?P<period>\\d.+)$"
+
+[platforms.jd_self.daily_fields]
+sku = "barcode"
+date = "dt"
+quantity = "outbound_yesterday"
+row_id = "sku_id"
+rolling_30 = "outbound_30d"
+
+[platforms.jd_self.rolling_fields]
+"7" = "outbound_7d"
+"14" = "outbound_14d"
+"28" = "outbound_28d"
+"30" = "outbound_30d"
+"60" = "outbound_60d"
+"90" = "outbound_90d"
+
+[platforms.jd_pop]
+name = "京东POP"
+kind = "detail"
+table = "dwd_whs_outstock_detail_f"
+unique_fields = ["data_source", "company", "outstock_order_id", "outstock_order_detail_id", "spec_code"]
+sales_headers = ["京东POP近30天", "POP近30天", "京东POP近30天销量"]
+demand_headers = ["京东POP", "POP"]
+
+[platforms.jd_pop.fields]
+sku = "spec_code"
+date = "outstock_time"
+quantity = "outstock_num"
+
+[platforms.jd_pop.filters]
+dept = ["市场部其他"]
+shop_id = ["10537352"]
+outstock_type = ["销售出库"]
+outstock_status = ["已出库"]
+document_status = ["已出库"]
+
+[platforms.jd_pop.layout]
+future_prefix = "京东POP"
+sales = "京东POP近30天"
+demand = "京东POP"
+history = "京东POP{period}"
+history_pattern = "^京东pop(?P<period>\\d.+)$"
+
+[platforms.pdd]
+name = "拼多多"
+kind = "detail"
+table = "dwd_whs_outstock_detail_f"
+unique_fields = ["data_source", "company", "outstock_order_id", "outstock_order_detail_id", "spec_code"]
+sales_headers = ["拼多多近30天", "拼多多近30天销量"]
+demand_headers = ["拼多多"]
+
+[platforms.pdd.fields]
+sku = "spec_code"
+date = "outstock_time"
+quantity = "outstock_num"
+
+[platforms.pdd.filters]
+dept = ["拼多多"]
+outstock_type = ["销售出库"]
+outstock_status = ["已出库"]
+document_status = ["已出库"]
+
+[platforms.pdd.layout]
+future_prefix = "拼多多"
+sales = "拼多多近30天"
+demand = "拼多多"
+legacy_metrics = ["history", "history_net", "sales", "demand"]
+history = "拼多多{period}实发"
+history_pattern = "^拼多多(?P<period>\\d.+)实发$"
+history_net = "拼多多{period}实发-实退"
+history_net_pattern = "^拼多多(?P<period>\\d.+)实发-实退$"
+
+[platforms.vip]
+name = "唯品会"
+kind = "detail"
+table = "dwd_whs_outstock_detail_f"
+unique_fields = ["data_source", "company", "outstock_order_id", "outstock_order_detail_id", "spec_code"]
+sales_headers = ["唯品近30天", "唯品会近30天", "唯品会近30天销量"]
+demand_headers = ["唯品会", "唯品"]
+
+[platforms.vip.fields]
+sku = "spec_code"
+date = "outstock_time"
+quantity = "outstock_num"
+
+[platforms.vip.filters]
+dept = ["唯品"]
+outstock_type = ["销售出库"]
+outstock_status = ["已出库"]
+document_status = ["已出库"]
+
+[platforms.vip.layout]
+future_prefix = "唯品"
+sales = "唯品近30天"
+demand = "唯品会"
+history = "唯品{period}"
+history_pattern = "^唯品(?:会)?(?P<period>\\d.+)$"
+
+[platforms.tmall_supermarket]
+name = "天猫超市"
+kind = "detail"
+table = "dwd_whs_outstock_detail_f"
+unique_fields = ["data_source", "company", "outstock_order_id", "outstock_order_detail_id", "spec_code"]
+sales_headers = ["猫超近30天", "天猫超市近30天", "天猫超市近30天销量"]
+demand_headers = ["天猫超市", "猫超"]
+
+[platforms.tmall_supermarket.fields]
+sku = "spec_code"
+date = "outstock_time"
+quantity = "outstock_num"
+
+[platforms.tmall_supermarket.filters]
+dept = ["市场部其他"]
+shop_id = ["11255444"]
+outstock_type = ["销售出库"]
+outstock_status = ["已出库"]
+document_status = ["已出库"]
+
+[platforms.tmall_supermarket.layout]
+future_prefix = "猫超"
+sales = "猫超近30天"
+demand = "天猫超市"
+history = "猫超{period}"
+history_pattern = "^(?:猫超|天猫超市)(?P<period>\\d.+)$"

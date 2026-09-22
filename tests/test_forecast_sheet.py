@@ -138,7 +138,12 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     prepared = project_layout(before, layout, config(), dated)
     update = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
     after = filled(prepared, update)
-    filler = ForecastFiller(object(), history=True, reader_factory=lambda: reader)
+    filler = ForecastFiller(
+        object(),
+        config_path=Path("config/config.example.toml"),
+        history=True,
+        reader_factory=lambda: reader,
+    )
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, prepared, after])
     monkeypatch.setattr(
@@ -162,7 +167,12 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
 def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path, monkeypatch):
     before, reader, _, _, _ = setup_sheet()
     reader.styles.return_value.pop()
-    filler = ForecastFiller(object(), history=True, reader_factory=lambda: reader)
+    filler = ForecastFiller(
+        object(),
+        config_path=Path("config/config.example.toml"),
+        history=True,
+        reader_factory=lambda: reader,
+    )
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     monkeypatch.setattr("stocking_sheet_sync.services.fill.read_sheet", lambda *a, **kw: before)
     monkeypatch.setattr(

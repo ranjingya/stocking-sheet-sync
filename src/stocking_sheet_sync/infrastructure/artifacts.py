@@ -1,7 +1,8 @@
-"""管理本项目填充临时文件的数量和容量。"""
-
 import logging
 from pathlib import Path
+
+"""管理本项目填充临时文件的数量和容量。"""
+
 
 LOG = logging.getLogger(__name__)
 

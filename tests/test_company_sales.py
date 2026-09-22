@@ -1,11 +1,12 @@
 from copy import deepcopy
 from datetime import date
+from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.domain.forecast import load_forecast_config
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
 from stocking_sheet_sync.services.calculation import inspect_forecast
+from stocking_sheet_sync.settings import load_forecast_config
 from tests.test_forecast_inspect import config, fake_reader
 
 
@@ -31,7 +32,9 @@ def requested():
 def test_company_lifecycle_values_read_by_sheet_row_preserve_source():
     snapshot = company_sheet()
     before = deepcopy(snapshot)
-    result = read_company_sales(snapshot, requested(), load_forecast_config())
+    result = read_company_sales(
+        snapshot, requested(), load_forecast_config(Path("config/config.example.toml"))
+    )
     assert result["status"] == "available"
     assert result["period"] == "25.9.1-26.1.31"
     assert [r["quantity"] for r in result["rows"]] == [10, 30]
@@ -40,7 +43,9 @@ def test_company_lifecycle_values_read_by_sheet_row_preserve_source():
 
 @pytest.mark.parametrize("values", [(None, 2), ("", 2), (True, 2), (-1, 2)])
 def test_company_invalid_cell_not_assumed_zero(values):
-    result = read_company_sales(company_sheet(values), requested(), load_forecast_config())
+    result = read_company_sales(
+        company_sheet(values), requested(), load_forecast_config(Path("config/config.example.toml"))
+    )
     assert result["rows"][0]["quantity"] is None
     assert result["rows"][0]["issue"]
 
@@ -49,7 +54,10 @@ def test_multiple_company_columns_are_ambiguous():
     snapshot = company_sheet()
     snapshot["cells"]["B1"] = {"value": "25年销售总数"}
     assert (
-        read_company_sales(snapshot, requested(), load_forecast_config())["status"] == "ambiguous"
+        read_company_sales(
+            snapshot, requested(), load_forecast_config(Path("config/config.example.toml"))
+        )["status"]
+        == "ambiguous"
     )
 
 

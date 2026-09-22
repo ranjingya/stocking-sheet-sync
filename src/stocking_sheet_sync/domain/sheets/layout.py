@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
-import tomllib
 from collections import Counter
 from copy import deepcopy
 from datetime import date, timedelta
-from pathlib import Path
 
 from stocking_sheet_sync.domain.products import (
     column_name,
@@ -17,91 +15,6 @@ from stocking_sheet_sync.domain.products import (
 
 LOG = logging.getLogger(__name__)
 HISTORY_METRICS = {"history", "history_net"}
-
-
-def load_layout_config(path: Path, sales_config: dict) -> dict:
-    """
-    功能说明：读取市场部表头、款式分类及平台顺序规则，并校验配置一致性。
-
-    参数：
-        path：结构规则 TOML 文件路径。
-        sales_config：提供平台 ID、表头别名和商品字段的销量配置。
-
-    返回值：通过校验的结构规则字典。
-    """
-    with path.open("rb") as file:
-        rules = tomllib.load(file)
-    layout = rules["layout"]
-    pattern = re.compile(layout["style_pattern"])
-    if "year" not in pattern.groupindex:
-        raise ValueError("款式分类正则必须包含 year 分组")
-    if type(layout["new_year"]) is not int:
-        raise ValueError("新品年份必须是整数")
-    group_row = layout["group_row"]
-    if type(group_row) is not int or not 1 <= group_row < sales_config["matching"]["header_rows"]:
-        raise ValueError("市场部分类行必须位于字段表头之前")
-    order = layout["platform_order"]
-    ids = {p["id"] for p in sales_config["platforms"]}
-    if len(order) != len(set(order)) or set(order) != ids or set(rules["platforms"]) != ids:
-        raise ValueError("结构平台顺序必须完整覆盖销量配置中的平台，且不能重复")
-    if normalize_text(layout["market_header"]) not in {
-        normalize_text(v) for v in sales_config["matching"]["market_headers"]
-    }:
-        raise ValueError("市场部标题必须属于匹配配置中的市场部别名")
-    aliases = {}
-    for platform in sales_config["platforms"]:
-        pid = platform["id"]
-        settings = rules["platforms"][pid]
-        if "forecast" in rules and not str(settings.get("future_prefix", "")).strip():
-            raise ValueError(f"平台 {pid} 缺少后续周期日期表头前缀")
-        for category in ("new", "legacy"):
-            metrics = settings.get(f"{category}_metrics", layout[f"{category}_metrics"])
-            if (
-                not metrics
-                or len(metrics) != len(set(metrics))
-                or not {"sales", "demand"} <= set(metrics)
-                or not set(metrics) <= HISTORY_METRICS | {"sales", "demand"}
-                or (category == "new" and set(metrics) & HISTORY_METRICS)
-            ):
-                raise ValueError(f"平台 {pid} 的 {category} 字段配置无效")
-            for metric in metrics:
-                if not isinstance(settings.get(metric), str) or not settings[metric].strip():
-                    raise ValueError(f"平台 {pid} 缺少 {metric} 标题")
-                if metric in HISTORY_METRICS:
-                    regex = re.compile(settings[f"{metric}_pattern"])
-                    if "period" not in regex.groupindex or settings[metric].count("{period}") != 1:
-                        raise ValueError("历史字段必须包含 period 分组和表头占位符")
-                    if re.search(r"[{}]", settings[metric].replace("{period}", "")):
-                        raise ValueError("历史表头只支持 period 占位符")
-        for metric in ("sales", "demand"):
-            for label in [settings[metric], *platform[f"{metric}_headers"]]:
-                normalized = normalize_text(label)
-                if normalized in aliases and aliases[normalized] != (pid, metric):
-                    raise ValueError("不同市场部字段的别名不能重叠")
-                aliases[normalized] = (pid, metric)
-    if not set(rules.get("history_periods", {})) <= ids:
-        raise ValueError("历史区间配置包含未知平台")
-    if any(
-        not isinstance(v, str) or not v.strip() for v in rules.get("history_periods", {}).values()
-    ):
-        raise ValueError("历史区间配置必须是非空文本")
-    if "forecast" in rules:
-        forecast = rules["forecast"]
-        if forecast.get("metrics") != ["sales", "previous", "future", "forecast", "demand"]:
-            raise ValueError("公式预估指标顺序需要包含三项历史、公式预估及人工需求")
-        names = [
-            forecast.get(key)
-            for key in ("company_header", "previous_suffix", "future_suffix", "forecast_header")
-        ]
-        if any(not isinstance(v, str) or not v.strip() for v in names) or len(set(names)) != 4:
-            raise ValueError("公式预估表头配置必须非空且互不重复")
-        for template in [forecast["forecast_header"], *forecast.get("forecast_aliases", [])]:
-            if not isinstance(template, str) or template.count("{platform}") != 1:
-                raise ValueError("预估标题模板必须包含一个platform占位符")
-            if re.search(r"[{}]", template.replace("{platform}", "")):
-                raise ValueError("预估标题模板只支持platform占位符")
-    LOG.info("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
-    return rules
 
 
 def dated_forecast_rules(rules: dict, report: dict) -> dict:

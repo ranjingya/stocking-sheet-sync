@@ -12,9 +12,9 @@ from stocking_sheet_sync.domain.products import (
     sku_text,
 )
 from stocking_sheet_sync.services.sales import inspect_sales
-from stocking_sheet_sync.source_settings import load_sales_config
+from stocking_sheet_sync.settings import load_sales_config
 
-CONFIG = Path(__file__).resolve().parents[1] / "config/sales-sources.toml"
+CONFIG = Path(__file__).resolve().parents[1] / "config/config.example.toml"
 
 
 def config():

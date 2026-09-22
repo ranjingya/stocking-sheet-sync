@@ -15,13 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-stocking-sheet-sync-forecast = "stocking_sheet_sync.services.calculation:main"
-stocking-sheet-sync-rerun = "stocking_sheet_sync.entrypoints.rerun:main"
-stocking-sheet-sync-layout = "stocking_sheet_sync.entrypoints.layout:main"
-stocking-sheet-sync-layout-apply = "stocking_sheet_sync.services.layout:main"
-stocking-sheet-sync-inspect = "stocking_sheet_sync.services.sales:main"
-stocking-sheet-sync-sales-fill = "stocking_sheet_sync.domain.sheets.values:main"
-stocking-sheet-sync-notify = "stocking_sheet_sync.entrypoints.notify:main"
+stocking-sheet-sync = "stocking_sheet_sync.entrypoints.cli:main"
 
 [dependency-groups]
 dev = [
