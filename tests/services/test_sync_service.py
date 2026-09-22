@@ -462,12 +462,20 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome,
     assert card["header"]["template"] == "green"
     assert "填充未完成" in card["header"]["title"]["content"]
     assert "处理说明" in json.dumps(card, ensure_ascii=False)
-    again = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
-    assert again.status_code == 202
+    # 同一队列任务恢复沿用批次。
     assert not process_one(queue, service, service.config)
     assert queue.finish.call_args.args[2]["result"] == "unchanged"
     assert client.copy_count == 1
-    assert len(calls) == (2 if outcome == "retryable" else 1)
+    previous_calls = len(calls)
+    # 再次Webhook触发创建独立批次，即使来源记录和表格相同。
+    queue.enqueue.return_value = "2-0"
+    queue.take.return_value = QueuedTask("2-0", "rec_test")
+    again = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
+    assert again.status_code == 202
+    assert not process_one(queue, service, service.config)
+    assert queue.finish.call_args.args[2]["result"] == "copied"
+    assert client.copy_count == 2
+    assert len(calls) == previous_calls + 1
 
 
 def test_force_batches_fill_independently_and_preserve_normal_task(tmp_path):

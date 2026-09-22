@@ -68,3 +68,20 @@ def test_recovered_task_at_attempt_limit_requires_manual_review(tmp_path):
     assert not process_one(queue, service, config)
     service.run_record.assert_not_called()
     assert queue.finish.call_args.args[1] == "failed"
+
+
+def test_retry_uses_same_batch_and_next_trigger_uses_new_batch(tmp_path):
+    from unittest.mock import call
+
+    queue, service, config = setup(tmp_path)
+    service.run_record.side_effect = [ConnectionError("临时失败"),
+                                      SyncSummary(result="copied"), SyncSummary(result="copied")]
+    assert process_one(queue, service, config)
+    assert not process_one(queue, service, config)
+    queue.take.return_value = QueuedTask("2-0", "rec_test")
+    assert not process_one(queue, service, config)
+    assert service.run_record.call_args_list == [
+        call("rec_test", force=True, request_id="webhook-1-0"),
+        call("rec_test", force=True, request_id="webhook-1-0"),
+        call("rec_test", force=True, request_id="webhook-2-0"),
+    ]

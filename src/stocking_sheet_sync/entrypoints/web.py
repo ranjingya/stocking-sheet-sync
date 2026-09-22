@@ -86,7 +86,7 @@ def create_app(
             return jsonify(
                 {
                     "status": "invalid_request",
-                    "message": "Webhook 仅支持普通搬运，请使用 stocking-sheet-sync rerun 重新搬运",
+                    "message": "Webhook 自动创建独立批次，不接受 force 或 request_id",
                 }
             ), 400
 

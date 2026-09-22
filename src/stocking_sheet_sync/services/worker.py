@@ -32,7 +32,9 @@ def process_one(queue, service, config) -> bool:
         "后台任务开始：task_id=%s record_id=%s attempt=%d", task.task_id, task.record_id, attempt
     )
     try:
-        summary = service.run_record(task.record_id)
+        summary = service.run_record(
+            task.record_id, force=True, request_id=f"webhook-{task.task_id}"
+        )
     except SyncBusyError:
         queue.defer(task, "已有搬运任务占用运行锁", busy=True)
         return True
