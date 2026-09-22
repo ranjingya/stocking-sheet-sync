@@ -49,6 +49,7 @@ class CopyState:
     delivery_folder_token: str = ""
     history_enabled: bool = False
     forecast_enabled: bool = False
+    new_history_enabled: bool = False
     backup_name: str = ""
 
 
@@ -85,6 +86,9 @@ class FillState:
     report_path: str = ""
     history_enabled: bool = True
     forecast_enabled: bool = False
+    new_history_enabled: bool = False
+    history_status: str = ""
+    forecast_status: str = ""
 
 
 @dataclass(frozen=True, slots=True)

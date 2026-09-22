@@ -33,7 +33,7 @@ cp config/config.example.toml config/config.toml
 
 在项目根目录运行程序，主配置默认读取 `config/config.toml`，历史销量来源配置默认读取 `config/sales-sources.toml`。`config/sheet-layout.toml` 提供市场部新品、老品结构规则。三份 TOML 分别维护搬运设置、数仓来源和市场部表头结构。
 
-`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`、`FILL_HISTORY_ENABLED`、`FILL_FORECAST_ENABLED` 和历史销量使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例、销量来源和市场部结构规则随项目维护。
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`、`FILL_NEW_HISTORY_ENABLED`、`FILL_HISTORY_ENABLED`、`FILL_FORECAST_ENABLED` 和历史销量使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例、销量来源和市场部结构规则随项目维护。
 
 | 配置区块 | 用途 |
 | --- | --- |
@@ -54,22 +54,24 @@ cp config/config.example.toml config/config.toml
 在 `.env` 中分别设置：
 
 ```dotenv
+FILL_NEW_HISTORY_ENABLED=true
 FILL_HISTORY_ENABLED=true
 FILL_FORECAST_ENABLED=false
 ```
 
 | 开关 | 开启后的行为 |
 | --- | --- |
-| `FILL_HISTORY_ENABLED` | 读取本项目数仓来源，补齐新品市场部销量列并填入近30天历史数据 |
+| `FILL_NEW_HISTORY_ENABLED` | 独立控制新品近30天销量填充；新品始终跳过预测 |
+| `FILL_HISTORY_ENABLED` | 控制老款历史销量填充；与预测同时开启时填写三个历史窗口 |
 | `FILL_FORECAST_ENABLED` | 填充老款公式预估数量；只写独立预估列，保留人工需求 |
 
-两个开关独立。均关闭时只搬运；只开历史时填近30天；只开预测时读取数仓作为计算依据，补齐结构后仅填写公式预估数量；两项都开时同时填写当前30天、去年同期30天、去年对应后续周期及公式预估。全公司占比兜底读取源表提供的去年生命周期销量；缺失、无效或合计为零时，对应预估留空。去年同期平台销量为零时同样留空，供人工判断。新品预测未纳入通用公式，启用预测处理新品会降级交付原始表。未配置的开关默认关闭，示例配置为历史开启、预测关闭。支持 `true/false`、`1/0`、`yes/no`、`on/off`，大小写不敏感，非法值会阻止启动。开关控制 Webhook 和手动重新搬运流程；显式执行的历史检查、补列及填充命令按其命令参数运行。
+三个开关独立。全部关闭时只搬运；以下历史和预测组合描述针对老款。只开历史时填近30天；只开预测时读取数仓作为计算依据，补齐结构后仅填写公式预估数量；两项都开时同时填写当前30天、去年同期30天、去年对应后续周期及公式预估。全公司占比兜底读取源表提供的去年生命周期销量；缺失、无效或合计为零时，对应预估留空。去年同期平台销量为零时同样留空，供人工判断。新品表仅按新品历史开关填写近30天，预测状态为跳过，不查询去年销量或补预测列。新品历史开关关闭时新品表只搬运。未配置的开关默认关闭，示例配置为新品与老款历史开启、老款预测关闭。支持 `true/false`、`1/0`、`yes/no`、`on/off`，大小写不敏感，非法值会阻止启动。开关控制 Webhook 和手动重新搬运流程；显式执行的历史检查、补列及填充命令按其命令参数运行。
 
 自动历史填充以原始备份创建时的上海日期为预估日，使用该日前30个完整自然日的发货数据。数仓缺数据时降级交付原始备份，不自动改用更早窗口。工作表根据商品字段和市场部表头定位，要求唯一候选；当前自动填充支持结构明确的新品和老品近30天销量；老品已有往年区间及实发减实退列保留，缺少时不自动补齐。结构不明确的表格返回待核验。
 
 `summary.history_status` 和 `summary.forecast_status` 分别展示阶段状态，`target_url` 指向保留的副本，`fill_report_path` 指向本次报告。填充未完成时，`fill_degraded=true`，整体按搬运成功返回 HTTP 200：本次创建副本为 `copied`，复用已有副本为 `unchanged`，`failed=0`；成功通知中说明降级原因。搬运本身失败仍返回 `failed`。降级时保留处理备份中的已有写入，交付文件从原始备份创建。`original_backup_url` 和 `filled_backup_url` 分别指向两份备份，`delivery_source` 为 `original` 或 `filled`。交付决定保存后，重复触发只继续未完成的复制步骤，不重新填充、不更换交付来源；需要重新计算时用手动命令创建新批次。
 
-历史执行报告默认保存至 `artifacts/fill/<attempt_id>/`。可在 `config/config.toml` 的 `[runtime]` 设置 `fill_report_dir`。报告包含输入快照、数仓匹配证据、逐步补列日志、销量请求及全量回读核验结果。
+历史执行报告默认保存至 `artifacts/fill/<attempt_id>/`。可在 `config/config.toml` 的 `[runtime]` 设置 `fill_report_dir`。报告包含输入快照、数仓匹配证据、逐步补列日志、销量请求及全量回读核验结果。任务结束时清理该目录下的临时文件（包括Excel、JSON和CSV），按修改时间从旧到新删除，直到文件数不超过100且总容量不超过1 GiB；配置项为 `[runtime] temp_max_files` 和 `temp_max_bytes`。飞书备份与Redis去重记录不受清理影响。
 
 ## Webhook 服务
 

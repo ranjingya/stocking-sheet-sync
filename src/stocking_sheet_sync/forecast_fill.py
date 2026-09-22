@@ -14,7 +14,7 @@ from .layout_apply import apply_update, build_update, verify_update
 from .models import CopyState, FillState
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_fill import verify_sales_update
-from .sheet_layout import dated_forecast_rules, load_layout_config
+from .sheet_layout import dated_forecast_rules, load_layout_config, plan_market_layout
 from .sheet_matching import inspect_sheet
 from .sheets_api import read_sheet, write_sales_ranges
 
@@ -27,6 +27,7 @@ class ForecastFiller(HistoryFiller):
         client,
         *,
         history: bool,
+        new_history: bool = True,
         reader_factory=None,
         source_path=Path("config/sales-sources.toml"),
         layout_path=Path("config/sheet-layout.toml"),
@@ -39,6 +40,7 @@ class ForecastFiller(HistoryFiller):
         参数：
             client：飞书服务端接口客户端。
             history：是否同时填充三个历史窗口，关闭时仍读取计算输入。
+            new_history：是否填写新品近30天，新品始终跳过预测。
             reader_factory：可选独立数仓读取器工厂，默认使用本项目配置。
             source_path：平台销量配置文件。
             layout_path：市场部表头及款式分类配置文件。
@@ -48,6 +50,8 @@ class ForecastFiller(HistoryFiller):
         """
         super().__init__(
             client,
+            new_history=new_history,
+            legacy_history=history,
             source_path=source_path,
             layout_path=layout_path,
             reader_factory=reader_factory or (lambda: ForecastReader(WarehouseSettings.load())),
@@ -96,6 +100,17 @@ class ForecastFiller(HistoryFiller):
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
             )
             save("before.json", before)
+            category = plan_market_layout(before, config, rules, recent_only=True)["category"]
+            if category == "new":
+                LOG.info("新品跳过预测：history=%s", self.new_history)
+                if self.new_history:
+                    result = super().__call__(copy, claim)
+                    result.update(history_status=result["status"], forecast_status="skipped")
+                else:
+                    result = finish("completed", "新品预测跳过，新品历史填充开关关闭")
+                    result.update(history_status="disabled", forecast_status="skipped")
+                save("result.json", result)
+                return result
             product = inspect_sheet(before, config)
             report = inspect_forecast(
                 self.reader_factory(),

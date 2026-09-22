@@ -13,7 +13,7 @@ from .sales_config import WarehouseSettings, load_sales_config
 from .sales_fill import build_sales_update, verify_sales_update
 from .sales_inspect import inspect_sales, write_report
 from .sales_reader import SalesReader
-from .sheet_layout import load_layout_config
+from .sheet_layout import load_layout_config, plan_market_layout
 from .sheet_matching import column_name, inspect_sheet, normalize_text
 from .sheets_api import read_sheet, write_sales_ranges
 
@@ -28,6 +28,8 @@ class HistoryFiller:
         source_path=Path("config/sales-sources.toml"),
         layout_path=Path("config/sheet-layout.toml"),
         reader_factory=None,
+        new_history: bool = True,
+        legacy_history: bool = True,
     ):
         """
         功能说明：组装副本历史销量填充流程，按当前业务配置定位工作表和数仓来源。
@@ -37,8 +39,12 @@ class HistoryFiller:
             source_path：销量及商品匹配配置文件。
             layout_path：市场部表头结构配置文件。
             reader_factory：可选只读数仓客户端工厂，用于隔离测试。
+            new_history：是否填写新品历史销量。
+            legacy_history：是否填写老款历史销量。
         返回值：无。
         """
+        self.new_history = new_history
+        self.legacy_history = legacy_history
         self.client = client
         self.source_path = source_path
         self.layout_path = layout_path
@@ -84,6 +90,15 @@ class HistoryFiller:
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
             )
             save("before.json", before)
+            category = plan_market_layout(before, config, rules, recent_only=True)["category"]
+            if (category == "new" and not self.new_history) or (
+                category == "legacy" and not self.legacy_history
+            ):
+                LOG.info("历史填充按款式开关跳过：category=%s", category)
+                result = finish("completed", "该款式历史填充开关关闭")
+                result["history_status"] = "disabled"
+                save("result.json", result)
+                return result
             layout_update = build_update(before, config, rules)
             save("layout-request.json", layout_update)
             reader = self.reader_factory()

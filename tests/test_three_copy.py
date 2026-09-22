@@ -348,3 +348,29 @@ def test_formula_forecast_delivers_filled_copy_once_and_freezes_flags(tmp_path, 
     repeated = service.run_record("rec_test")
     assert repeated.forecast_status == "completed"
     assert calls == ["copy-2"] and len(ops) == 3
+
+
+def test_new_history_only_runs_and_reuses_frozen_batch(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, history=False)
+    service.config = replace(service.config, fill_new_history_enabled=True)
+    first = service.run_record("rec_test")
+    assert first.history_status == "completed" and first.forecast_status == "disabled"
+    assert len(fills) == 1 and first.delivery_source == "filled"
+    state = service.store.get_state("rec_test", "source-token")
+    assert state.new_history_enabled and not state.history_enabled
+    service.config = replace(service.config, fill_new_history_enabled=False)
+    second = service.run_record("rec_test")
+    assert second.history_status == "completed" and len(fills) == 1
+
+
+def test_new_forecast_skipped_status_survives_delivery_and_repeat(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, forecast=True)
+    service.config = replace(service.config, fill_new_history_enabled=True)
+    service.forecast_filler = lambda *args: {
+        "status": "completed",
+        "history_status": "completed",
+        "forecast_status": "skipped",
+    }
+    first = service.run_record("rec_test")
+    assert first.forecast_status == "skipped" and not first.fill_degraded
+    assert service.run_record("rec_test").forecast_status == "skipped"

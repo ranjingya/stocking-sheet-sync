@@ -42,6 +42,9 @@ public_base_url = "https://stock-sync.example.com"
 [runtime]
 # 每次历史填充保存独立执行证据目录
 fill_report_dir = "artifacts/fill"
+# 本地临时文件同时满足数量与容量上限，超限按修改时间清理最老文件
+temp_max_files = 100
+temp_max_bytes = 1073741824
 lock_ttl_seconds = 300
 request_timeout_seconds = 15
 max_retries = 3

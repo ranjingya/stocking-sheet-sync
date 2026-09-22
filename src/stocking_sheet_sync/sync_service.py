@@ -153,6 +153,7 @@ class SyncService:
                 delivery_folder_token=self.config.target_folder_token,
                 history_enabled=self.config.fill_history_enabled,
                 forecast_enabled=self.config.fill_forecast_enabled,
+                new_history_enabled=self.config.fill_new_history_enabled,
                 target_name=f"{self.config.copy_name_prefix}{source_name}",
                 backup_name=f"{source_name}-{batch_time}",
             )
@@ -212,6 +213,16 @@ class SyncService:
             return summary
         finally:
             try:
+                from .temp_cleanup import cleanup_temp_files
+
+                cleanup_temp_files(
+                    Path(self.config.fill_report_dir),
+                    self.config.temp_max_files,
+                    self.config.temp_max_bytes,
+                )
+            except Exception:
+                self.logger.exception("临时文件清理失败，保留搬运结果")
+            try:
                 self.store.release_run_lock(lock)
             except Exception:
                 self.logger.exception("释放搬运锁失败，等待锁自动过期：record_id=%s", record_id)
@@ -234,11 +245,16 @@ class SyncService:
         summary.target_url = state.target_url
         active = False
         reasons = []
-        if self.config.fill_history_enabled or self.config.fill_forecast_enabled:
+        if (
+            self.config.fill_history_enabled
+            or self.config.fill_forecast_enabled
+            or self.config.fill_new_history_enabled
+        ):
             previous = self.store.get_fill(state)
             mode_changed = previous is not None and (
                 previous.history_enabled != self.config.fill_history_enabled
                 or previous.forecast_enabled != self.config.fill_forecast_enabled
+                or previous.new_history_enabled != self.config.fill_new_history_enabled
             )
             if mode_changed:
                 stage_status = "needs_review"
@@ -268,6 +284,7 @@ class SyncService:
                     report_path=str(Path(self.config.fill_report_dir) / attempt_id),
                     history_enabled=self.config.fill_history_enabled,
                     forecast_enabled=self.config.fill_forecast_enabled,
+                    new_history_enabled=self.config.fill_new_history_enabled,
                 )
                 if not self.store.begin_fill(state, claim):
                     raise RuntimeError("填充已由其他任务接管，请核对状态")
@@ -280,17 +297,27 @@ class SyncService:
                             from .forecast_fill import ForecastFiller
 
                             self.forecast_filler = ForecastFiller(
-                                self.data_client, history=self.config.fill_history_enabled
+                                self.data_client,
+                                history=self.config.fill_history_enabled,
+                                new_history=self.config.fill_new_history_enabled,
                             )
                         result = self.forecast_filler(state, claim)
                     else:
                         if self.history_filler is None:
                             from .fill_service import HistoryFiller
 
-                            self.history_filler = HistoryFiller(self.data_client)
+                            self.history_filler = HistoryFiller(
+                                self.data_client,
+                                new_history=self.config.fill_new_history_enabled,
+                                legacy_history=self.config.fill_history_enabled,
+                            )
                         result = self.history_filler(state, claim)
                     completed = replace(
-                        claim, status=result["status"], reason=result.get("reason", "")
+                        claim,
+                        status=result["status"],
+                        reason=result.get("reason", ""),
+                        history_status=result.get("history_status", ""),
+                        forecast_status=result.get("forecast_status", ""),
                     )
                     if completed.status not in {"completed", "retryable", "needs_review"}:
                         raise ValueError("填充返回了未知状态")
@@ -301,10 +328,15 @@ class SyncService:
                 stage_status = completed.status
                 if completed.status != "completed":
                     reasons.append(completed.reason or "填充需要核验")
-            if self.config.fill_history_enabled:
-                summary.history_status = stage_status
+            details = self.store.get_fill(state)
+            if self.config.fill_history_enabled or self.config.fill_new_history_enabled:
+                summary.history_status = (
+                    details.history_status if details and details.status == "completed" else ""
+                ) or stage_status
             if self.config.fill_forecast_enabled:
-                summary.forecast_status = stage_status
+                summary.forecast_status = (
+                    details.forecast_status if details and details.status == "completed" else ""
+                ) or stage_status
         if reasons:
             self._degrade_fill(summary, "；".join(reasons))
         self.logger.info(
@@ -335,12 +367,15 @@ class SyncService:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
         try:
             enabled = (
-                state.history_enabled or state.forecast_enabled
+                state.history_enabled or state.forecast_enabled or state.new_history_enabled
                 if state.workflow == "triple"
-                else self.config.fill_history_enabled or self.config.fill_forecast_enabled
+                else self.config.fill_history_enabled
+                or self.config.fill_forecast_enabled
+                or self.config.fill_new_history_enabled
             )
             labels = {
                 "disabled": "关闭",
+                "skipped": "跳过",
                 "completed": "完成",
                 "retryable": "待重试",
                 "needs_review": "待核验",

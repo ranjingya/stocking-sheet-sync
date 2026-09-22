@@ -137,3 +137,22 @@ def test_fill_switches_are_independent(tmp_path, history, forecast, expected):
     env["FILL_HISTORY_ENABLED"] = "flase"
     with pytest.raises(ValueError, match="FILL_HISTORY_ENABLED"):
         load_config(env=env, config_path=path)
+
+
+def test_new_history_only_configuration_and_cleanup_limits(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG_TEXT)
+    env = {
+        "FEISHU_DATA_APP_ID": "data",
+        "FEISHU_DATA_APP_SECRET": "secret",
+        "FEISHU_MESSAGE_APP_ID": "message",
+        "FEISHU_MESSAGE_APP_SECRET": "secret",
+        "FILL_NEW_HISTORY_ENABLED": "true",
+    }
+    cfg = load_config(env=env, config_path=path)
+    assert cfg.fill_new_history_enabled
+    assert not cfg.fill_history_enabled and not cfg.fill_forecast_enabled
+    assert cfg.temp_max_files == 100 and cfg.temp_max_bytes == 1073741824
+    env["FILL_NEW_HISTORY_ENABLED"] = "invalid"
+    with pytest.raises(ValueError, match="FILL_NEW_HISTORY_ENABLED"):
+        load_config(env=env, config_path=path)

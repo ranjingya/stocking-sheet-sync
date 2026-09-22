@@ -199,3 +199,41 @@ def test_legacy_pipeline_only_fills_recent_sales(tmp_path, monkeypatch):
     assert len(writes) > 0
     assert reader.dates == [date(2026, 9, 12)] * 5
     assert (tmp_path / "sales-verification.json").exists()
+
+
+def test_new_history_switch_is_independent_of_legacy_history(tmp_path, monkeypatch):
+    filler, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
+    filler.new_history = True
+    filler.legacy_history = False
+    assert filler(copy, claim)["status"] == "completed"
+    assert writes == ["layout", "sales"]
+
+
+def test_new_history_disabled_does_not_query_or_write(tmp_path, monkeypatch):
+    filler, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
+    filler.new_history = False
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert result["history_status"] == "disabled"
+    assert not reader.dates and not writes
+
+
+def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
+    from stocking_sheet_sync.forecast_fill import ForecastFiller
+
+    history, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
+    filler = ForecastFiller(
+        object(), history=False, new_history=True, reader_factory=lambda: reader
+    )
+    monkeypatch.setattr(filler, "find_sheet", lambda *args: "test")
+    monkeypatch.setattr(
+        "stocking_sheet_sync.forecast_fill.read_sheet", lambda *args, **kwargs: incoming()
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.forecast_fill.inspect_forecast",
+        lambda *args, **kwargs: pytest.fail("新品不可查询去年销量或预测"),
+    )
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert result["forecast_status"] == "skipped"
+    assert writes == ["layout", "sales"]

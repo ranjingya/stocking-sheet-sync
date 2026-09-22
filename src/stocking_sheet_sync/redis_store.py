@@ -235,7 +235,14 @@ class RedisStateStore:
             state.target_token,
         ) or result.status not in {"running", "completed", "retryable", "needs_review"}:
             raise ValueError("历史填充记录身份或状态无效")
-        if type(result.history_enabled) is not bool or type(result.forecast_enabled) is not bool:
+        if any(
+            type(value) is not bool
+            for value in (
+                result.history_enabled,
+                result.forecast_enabled,
+                result.new_history_enabled,
+            )
+        ):
             raise ValueError("填充记录开关无效")
         if not result.attempt_id or not result.as_of:
             raise ValueError("历史填充记录缺少执行凭证或预估日")
@@ -269,7 +276,16 @@ class RedisStateStore:
 
     def finish_fill(self, state: CopyState, claim: FillState, result: FillState) -> None:
         """将 state 的 claim 原子更新为 result；占位变化时抛错，避免覆盖另一执行。"""
-        if replace(result, status=claim.status, reason=claim.reason) != claim:
+        if (
+            replace(
+                result,
+                status=claim.status,
+                reason=claim.reason,
+                history_status=claim.history_status,
+                forecast_status=claim.forecast_status,
+            )
+            != claim
+        ):
             raise ValueError("填充结束状态不能改变执行身份、日期或报告路径")
         if result.status == "running":
             raise ValueError("填充结束状态不能为 running")
