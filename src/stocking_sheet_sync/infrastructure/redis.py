@@ -10,6 +10,14 @@ from urllib.parse import urlsplit
 from redis import Redis
 
 from stocking_sheet_sync.domain.models import CopyResult, CopyState, CopyStep, FillState
+from stocking_sheet_sync.infrastructure.lease import assert_run_lock
+
+_COMPARE_EXPIRE = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
 
 _COMPARE_DELETE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -67,6 +75,7 @@ class RedisStateStore:
         return f"{self._key_prefix}:lock:scan"
 
     def _state_key(self, record_id: str, source_token: str, request_id: str = "") -> str:
+        assert_run_lock()
         if request_id:
             return f"{self._key_prefix}:force:{record_id}:{request_id}"
         return f"{self._key_prefix}:{record_id}:{source_token}"
@@ -78,6 +87,17 @@ class RedisStateStore:
         """获取搬运锁；ttl_seconds 为有效秒数，返回锁凭证或 None。"""
         token = uuid.uuid4().hex
         return token if self._redis.set(self._lock_key, token, nx=True, ex=ttl_seconds) else None
+
+    def renew_run_lock(self, token: str, ttl_seconds: int) -> bool:
+        """
+        功能说明：原子核对所有权后刷新运行锁有效期，不重新获取已失效的锁。
+
+        参数：
+            token：本次任务获得的锁凭证。
+            ttl_seconds：从续期时刻起计算的有效秒数。
+        返回值：成功续期为True；锁已失效或属于其他任务时为False。
+        """
+        return bool(self._redis.eval(_COMPARE_EXPIRE, 1, self._lock_key, token, ttl_seconds))
 
     def release_run_lock(self, token: str) -> None:
         """释放属于 token 的搬运锁，无返回值。"""

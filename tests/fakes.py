@@ -51,6 +51,9 @@ class FakeRedis:
             assert key_count == 1
             if self.strings.get(key) != expected:
                 return 0
+            if "redis.call('EXPIRE'" in script:
+                self.expirations[key] = int(args[0])
+                return 1
             if "redis.call('SET'" in script:
                 self.set(key, args[0])
                 return 1

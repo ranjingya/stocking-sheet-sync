@@ -18,6 +18,7 @@ from stocking_sheet_sync.domain.models import (
     SyncSummary,
 )
 from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
+from stocking_sheet_sync.infrastructure.lease import RunLease, assert_run_lock
 from stocking_sheet_sync.infrastructure.redis import RedisStateStore
 from stocking_sheet_sync.services.notification import build_sync_card
 from stocking_sheet_sync.settings import AppConfig
@@ -98,11 +99,13 @@ class SyncService:
         if lock is None:
             self.logger.info("搬运锁被占用：record_id=%s", record_id)
             raise SyncBusyError("已有同步任务正在运行")
+        lease = RunLease(self.store, lock, self.config.lock_ttl_seconds)
         summary = SyncSummary(scanned=1, force=force, request_id=request_id)
         record_url = ""
         source_name = "未知表格"
         current = None
         try:
+            lease.start()
             record = self.data_client.get_base_record(record_id)
             record_url = record.shared_url
             if not matches_required_fields(record.fields, self.config.required_fields):
@@ -223,6 +226,7 @@ class SyncService:
             try:
                 from stocking_sheet_sync.infrastructure.artifacts import cleanup_temp_files
 
+                assert_run_lock()
                 cleanup_temp_files(
                     Path(self.config.fill_report_dir),
                     self.config.temp_max_files,
@@ -230,6 +234,7 @@ class SyncService:
                 )
             except Exception:
                 self.logger.exception("临时文件清理失败，保留搬运结果")
+            lease.close()
             try:
                 self.store.release_run_lock(lock)
             except Exception:

@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from stocking_sheet_sync.infrastructure.lease import assert_run_lock
 from stocking_sheet_sync.settings import AppConfig
 
 from .base import BaseOperations
@@ -86,9 +87,11 @@ class FeishuClient(BaseOperations, DriveOperations):
     ) -> dict[str, Any]:
         last_error: Exception | None = None
         attempts = self.config.max_retries if retry else 1
+        assert_run_lock()
         for attempt in range(1, attempts + 1):
             try:
                 token = self._get_access_token()
+                assert_run_lock()
                 response = self._client.request(
                     method,
                     path,
