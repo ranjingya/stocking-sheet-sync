@@ -15,7 +15,7 @@ def build_service(config: AppConfig, resources: ExitStack, *, migrate: bool = Fa
     参数：
         config：经过校验的应用配置。
         resources：调用方持有的资源栈，初始化失败或退出时按逆序关闭资源。
-        migrate：是否执行已有状态格式迁移，Web服务启动时开启。
+        migrate：是否执行已有状态格式迁移，后台消费启动时开启。
     返回值：已组装的搬运服务。
     """
     store = RedisStateStore(

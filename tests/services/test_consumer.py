@@ -1,8 +1,9 @@
+from threading import Event
 from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.entrypoints import worker
+from stocking_sheet_sync.services import consumer as worker
 from tests.services.test_sync_service import make_config
 
 
@@ -11,18 +12,10 @@ def test_worker_releases_resources_on_shutdown_or_failure(tmp_path, monkeypatch,
     config = make_config(tmp_path)
     queue, owner, lease = Mock(), Mock(), Mock()
     owner.acquire_run_lock.return_value = "owned-token"
-    monkeypatch.setattr(worker, "load_config", lambda: config)
     monkeypatch.setattr(worker, "TaskQueue", lambda _: queue)
     monkeypatch.setattr(worker, "RedisStateStore", lambda *args, **kwargs: owner)
     monkeypatch.setattr(worker, "RunLease", lambda *args: lease)
-    handlers = {}
-
-    def register(sig, handler):
-        previous = handlers.get(sig)
-        handlers[sig] = handler
-        return previous
-
-    monkeypatch.setattr(worker.signal, "signal", register)
+    stop = Event()
     build = Mock()
     if failure == "initialize":
         build.side_effect = ConnectionError("初始化失败")
@@ -33,12 +26,16 @@ def test_worker_releases_resources_on_shutdown_or_failure(tmp_path, monkeypatch,
     monkeypatch.setattr(worker, "assert_run_lock", guard)
 
     def finish_and_stop(*args):
-        handlers[worker.signal.SIGTERM](None, None)
+        stop.set()
         return False
 
     process = Mock(side_effect=finish_and_stop)
     monkeypatch.setattr(worker, "process_one", process)
-    assert worker.run([]) == (1 if failure else 0)
+    if failure:
+        with pytest.raises((ConnectionError, RuntimeError)):
+            worker.consume_session(config, stop)
+    else:
+        worker.consume_session(config, stop)
     if failure:
         process.assert_not_called()
     else:
@@ -47,4 +44,21 @@ def test_worker_releases_resources_on_shutdown_or_failure(tmp_path, monkeypatch,
     owner.release_run_lock.assert_called_once_with("owned-token")
     owner.close.assert_called_once()
     queue.close.assert_called_once()
-    assert all(value is None for value in handlers.values())
+
+
+def test_consumer_recovers_after_connection_failure(tmp_path, monkeypatch):
+    stop = Event()
+    config = make_config(tmp_path)
+    from dataclasses import replace
+    config = replace(config, queue_retry_delay_seconds=0)
+    attempts = []
+
+    def session(config, event):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionError("连接中断")
+        event.set()
+
+    monkeypatch.setattr(worker, "consume_session", session)
+    worker.consume(config, stop)
+    assert len(attempts) == 2

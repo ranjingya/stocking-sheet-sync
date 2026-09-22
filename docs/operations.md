@@ -9,12 +9,10 @@ docker compose up -d
 docker compose logs -f stocking-sheet-sync
 ```
 
-单个应用容器内由Supervisor运行Web与串行Worker，使用已有Redis；服务监听5000端口，Compose通过Traefik提供HTTPS。配置目录默认映射到 `/app/config`。本地开发可运行：
+单个应用容器内运行一个应用进程，Waitress接收HTTP请求，后台线程串行处理任务，使用已有Redis；服务监听5000端口，Compose通过Traefik提供HTTPS。配置目录默认映射到 `/app/config`。本地开发可运行：
 
 ```bash
-# 在两个终端分别运行
-uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.entrypoints.web:create_app()'
-uv run stocking-sheet-sync worker
+uv run stocking-sheet-sync serve
 ```
 
 ## Webhook
@@ -25,9 +23,31 @@ uv run stocking-sheet-sync worker
 {"record_id":"rec_xxx"}
 ```
 
-成功入队返回HTTP 202，例如 `{"status":"accepted","task_id":"123-0","record_id":"rec_xxx"}`；这是接收确认，最终结果通过原有通知和日志查看。入队失败返回503，可重新触发；重复请求在业务执行时去重。`/healthz`仅表示Web进程可响应，不代表Worker和外部依赖均可用。
+成功入队返回HTTP 202，例如 `{"status":"accepted","task_id":"123-0","record_id":"rec_xxx"}`；这是接收确认，最终结果通过原有通知和日志查看。入队失败返回503，可重新触发；重复请求在业务执行时去重。`/healthz`仅表示Web进程可响应，不代表后台消费和外部依赖均可用。
 
 Webhook只执行普通搬运，不接受强制重搬参数。真实业务自动化由使用者选择测试记录触发，首先交付到测试目录。
+
+## 本地Webhook测试
+
+在项目目录运行 `uv run stocking-sheet-sync serve`，同一个终端查看接收与处理日志。另开终端发送请求，替换记录ID：
+
+```bash
+uv run python - <<'PYTHON'
+import httpx
+from stocking_sheet_sync.settings import load_config
+
+config = load_config()
+response = httpx.post(
+    "http://127.0.0.1:5000/webhooks/base-record",
+    headers={"Authorization": f"Bearer {config.webhook_secret}"},
+    json={"record_id": "rec_测试记录ID"},
+    timeout=30,
+)
+print(response.status_code, response.text)
+PYTHON
+```
+
+202表示入队成功。任务实际执行复制、填充和配置中的通知；测试时使用测试目录和接收人。已处理的记录会命中去重，验证完整新流程应换一条未处理记录。源表修改后需要重新生成时使用手动重搬命令。按Ctrl+C停止服务，等待当前任务结束。
 
 ## 手动重搬
 
@@ -71,6 +91,6 @@ uv run stocking-sheet-sync notify --help
 
 INFO日志显示任务开始、复制结果、填充失败原因和最终交付链接；填充失败时明确标记交付未填充原表。`runtime.log_level = "DEBUG"` 可查看队列、锁续期、规则加载和阶段状态等排查细节。临时目录中的报告有数量和容量保留上限，长期证据以飞书原始/处理备份为准。
 
-后台串行执行，运行锁默认300秒，每100秒自动续期。进程异常由Supervisor重启，未确认任务优先恢复。容器停止时Worker最多等待300秒完成当前任务，Compose停止宽限期为330秒；超时终止留下的未确认任务在启动后恢复，结果未知的写入仍按原有占位规则核验。
+后台串行执行，运行锁默认300秒，每100秒自动续期。后台连接异常自动重试；容器进程退出后由Docker重启，未确认任务优先恢复。容器停止时后台线程最多等待300秒完成当前任务，Compose停止宽限期为330秒；超时终止留下的未确认任务在启动后恢复，结果未知的写入仍按原有占位规则核验。
 
-执行失败默认最多3次、间隔10秒，锁忙等待不消耗次数。终态任务结果保留7天，业务去重永久保存。Redis应配置适合运行环境的持久化策略；不要手动裁剪未完成队列。手动 `rerun` 仍直接执行并等待结果，与Worker共享业务运行锁。
+执行失败默认最多3次、间隔10秒，锁忙等待不消耗次数。终态任务结果保留7天，业务去重永久保存。Redis应配置适合运行环境的持久化策略；不要手动裁剪未完成队列。手动 `rerun` 仍直接执行并等待结果，与后台线程共享业务运行锁。

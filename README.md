@@ -17,7 +17,7 @@ cp config/config.example.toml config/config.toml
 填写 `.env` 中的凭证和连接信息，在 `config/config.toml` 中设置来源、目录、通知及运行参数。商品、平台来源、表头和预测规则位于 `config/rules.toml`，日常使用无需修改。
 
 ```bash
-uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.entrypoints.web:create_app()'
+uv run stocking-sheet-sync serve
 ```
 
 Docker 启动与 Webhook 接入见 [运行指南](docs/operations.md)。

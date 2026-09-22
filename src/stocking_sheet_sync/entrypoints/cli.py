@@ -6,7 +6,7 @@ import sys
 
 
 COMMANDS = {
-    "worker": ("worker", "串行消费Redis队列任务"),
+    "serve": ("server", "启动Webhook和后台处理线程"),
     "rerun": ("rerun", "手动重新搬运并填充"),
     "inspect": ("inspect", "只读检查商品和历史销量"),
     "forecast": ("forecast", "只读试算老款公式预估"),
