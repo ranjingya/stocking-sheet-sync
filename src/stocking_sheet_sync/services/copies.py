@@ -43,7 +43,7 @@ def copy_step(
         service.store.cancel_step(state, step)
         raise
     completed = service.store.finish_step(state, step, result, service._now_text())
-    LOG.info(
+    LOG.debug(
         "%s完成：%s",
         {"original": "原表备份", "filled": "处理副本", "delivery": "交付复制"}[stage],
         completed.target_url,

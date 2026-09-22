@@ -454,6 +454,8 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome,
     assert result["result"] == "copied"
     assert result["failed"] == 0
     assert result["fill_degraded"] is True
+    assert "任务开始 [webhook-1-0]" in caplog.text
+    assert "任务结束 [webhook-1-0]" in caplog.text
     assert "填充失败：" in caplog.text
     assert "搬运完成：已交付未填充的原表副本，链接：" in caplog.text
     assert "填充未完成" in result["reason"]

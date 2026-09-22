@@ -173,7 +173,7 @@ def inspect_sheet(snapshot: dict, config: dict) -> dict:
     for row in rows:
         if row["sku"] and duplicates[row["sku"]] > 1:
             row["issues"].append("duplicate_sheet_sku")
-    LOG.info(
+    LOG.debug(
         "表格映射完成：sheet_id=%s sku_rows=%d layout_issues=%d",
         snapshot["sheet_id"],
         len(rows),
@@ -216,7 +216,7 @@ def match_catalog(layout: dict, catalog_rows: list[dict]) -> None:
                 elif normalize_text(row[key]) != normalize_text(candidates[0][key]):
                     row["issues"].append(f"{key}_mismatch")
         row["match_status"] = "matched" if not row["issues"] else "needs_review"
-        LOG.info(
+        LOG.debug(
             "商品匹配结果：row=%d sku=%s status=%s issues=%s",
             row["row"],
             row["sku"],

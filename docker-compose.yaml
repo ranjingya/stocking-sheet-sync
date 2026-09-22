@@ -17,6 +17,7 @@ services:
     volumes:
       - /home/yatui/stocking-sheet-sync/config:/app/config:ro
       - /home/yatui/stocking-sheet-sync/artifacts:/app/artifacts
+      - /home/yatui/stocking-sheet-sync/logs:/app/logs
     networks:
       - traefik-network
 

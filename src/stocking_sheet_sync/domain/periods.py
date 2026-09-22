@@ -69,5 +69,5 @@ def forecast_window(as_of: date, labels: list[str | None], rules: dict) -> dict:
         "history_end": previous_year(end) + timedelta(days=1),
         "deadline": end,
     }
-    LOG.info("预测日期确定：season=%s as_of=%s deadline=%s", season, as_of, end)
+    LOG.debug("预测日期确定：season=%s as_of=%s deadline=%s", season, as_of, end)
     return result

@@ -60,7 +60,7 @@ def check_forecast_target(snapshot: dict, report: dict, config: dict) -> dict:
                     "details": group["issues"],
                 }
             )
-    LOG.info("预测目标核对完成：rows=%d issues=%d", len(layout["rows"]), len(issues))
+    LOG.debug("预测目标核对完成：rows=%d issues=%d", len(layout["rows"]), len(issues))
     return {"rows": layout["rows"], "issues": issues}
 
 
@@ -259,7 +259,7 @@ def build_forecast_values(
         + counts["needs_review"]
         + sum(e["status"] == "needs_review" for e in total_entries)
     )
-    LOG.info("公式预估填充请求生成：entries=%d issues=%d", len(entries), problems)
+    LOG.debug("公式预估填充请求生成：entries=%d issues=%d", len(entries), problems)
     return {
         "as_of": report["as_of"],
         "entries": entries,

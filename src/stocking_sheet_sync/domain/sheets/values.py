@@ -57,7 +57,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
             totals[entry["platform"]] += quantity
         if status == "write":
             pending[target.rstrip("0123456789")].append(item)
-        LOG.info(
+        LOG.debug(
             "销量填充核对：platform=%s sku=%s cell=%s status=%s issues=%s",
             entry["platform"],
             sku,
@@ -120,7 +120,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
                         "expected_quantity": totals[platform],
                     }
                 )
-                LOG.info(
+                LOG.debug(
                     "平台合计核对：platform=%s cell=%s status=%s",
                     platform,
                     total["target_cell"],
@@ -137,7 +137,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
         "total_formulas_to_write": sum(e["status"] == "write" for e in total_entries),
         "platform_totals": dict(totals) if not counts["needs_review"] else None,
     }
-    LOG.info("销量填充请求生成：operations=%d summary=%s", len(operations), summary)
+    LOG.debug("销量填充请求生成：operations=%d summary=%s", len(operations), summary)
     return {
         "as_of": report["as_of"],
         "entries": entries,

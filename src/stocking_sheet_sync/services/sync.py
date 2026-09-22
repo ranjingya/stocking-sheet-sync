@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any, Protocol
 
 from stocking_sheet_sync.domain.models import (
@@ -92,14 +93,14 @@ class SyncService:
         返回值：搬运、重复、跳过或失败的结果汇总；锁被占用时抛出 SyncBusyError。
         """
         validate_run_options(force, request_id)
-        self.logger.info(
-            "开始搬运：record_id=%s", record_id
-        )
         self.logger.debug("搬运参数：force=%s request_id=%s", force, request_id)
         lock = self.store.acquire_run_lock(self.config.lock_ttl_seconds)
         if lock is None:
             self.logger.info("搬运锁被占用：record_id=%s", record_id)
             raise SyncBusyError("已有同步任务正在运行")
+        started = monotonic()
+        batch = request_id or record_id
+        self.logger.info("========== 任务开始 [%s] 记录=%s ==========", batch, record_id)
         lease = RunLease(self.store, lock, self.config.lock_ttl_seconds)
         summary = SyncSummary(scanned=1, force=force, request_id=request_id)
         record_url = ""
@@ -248,6 +249,9 @@ class SyncService:
                 outcome = "复用已有交付" if summary.result == "unchanged" else "已交付"
                 content = "未填充的原表副本" if summary.fill_degraded else "表格"
                 self.logger.info("搬运完成：%s%s，链接：%s", outcome, content, summary.target_url)
+            self.logger.info(
+                "========== 任务结束 [%s] 耗时%.1f秒 ==========", batch, monotonic() - started
+            )
 
     def _fill_copy(self, state: CopyState, summary: SyncSummary) -> bool:
         """

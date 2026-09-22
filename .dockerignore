@@ -7,3 +7,5 @@ artifacts/
 .env
 config.toml
 config/config.toml
+
+logs/

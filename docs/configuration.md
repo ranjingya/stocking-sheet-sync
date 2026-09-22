@@ -93,6 +93,7 @@ temp_max_bytes = 1073741824
 volumes:
   - /home/yatui/stocking-sheet-sync/config:/app/config:ro
   - /home/yatui/stocking-sheet-sync/artifacts:/app/artifacts
+  - /home/yatui/stocking-sheet-sync/logs:/app/logs
 ```
 
 宿主机映射的配置目录需要同时包含 `config.toml` 和随项目提供的 `rules.toml`。无需额外配置目录环境变量。宿主机 `.env` 通过Compose的 `env_file` 注入，修改后需重新创建容器。

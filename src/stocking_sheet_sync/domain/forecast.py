@@ -72,7 +72,7 @@ def allocate_forecast(
             break
     if remaining or sum(r["quantity"] for r in rows.values()) != total:
         raise ValueError("SKU分配合计校验失败")
-    LOG.info(
+    LOG.debug(
         "老款需求计算完成：skus=%d total=%d share_source=%s adjustment=%d",
         len(rows),
         total,

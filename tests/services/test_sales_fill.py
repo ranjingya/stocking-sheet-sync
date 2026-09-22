@@ -28,7 +28,7 @@ def ready():
     before.update(
         spreadsheet_token="test-token",
         revision=1,
-        layout={"revision": 1, "row_heights": [], "column_widths": []},
+        layout={"revision": 1, "column_widths": []},
     )
     before["cells"]["F4"] = {"value": 90, "cell_styles": {"font_size": 14}}
     before["cells"]["C7"] = {"formula": "=SUM(E4:E6)", "value": 0}
@@ -282,14 +282,12 @@ def test_numeric_total_is_not_overwritten_and_partial_subtotals_are_not_copied()
     assert plan["total_entries"] == []
 
 
-def test_height_change_does_not_block_but_width_change_does():
+
+def test_sheet_format_change_blocks_fill():
     before, report = ready()
-    before["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="0" />'
+    before["layout"]["sheet_format"] = {"baseColWidth": 8}
     update = build_sales_update(before, report, config())
     after = applied(before, update)
-    after["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="16" />'
-    after["layout"]["row_heights"] = [16]
-    assert verify_sales_update(before, after, update)["verified"]
-    after["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="9" defaultRowHeight="16" />'
+    after["layout"]["sheet_format"] = {"baseColWidth": 9}
     with pytest.raises(ValueError, match="sheet_format"):
         verify_sales_update(before, after, update)

@@ -34,7 +34,9 @@ def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> 
     result["candidates"] = candidates
     if len(candidates) != 1:
         result["status"] = "ambiguous" if candidates else "missing"
-        LOG.info("表内全公司销量列识别：status=%s candidates=%d", result["status"], len(candidates))
+        LOG.debug(
+            "表内全公司销量列识别：status=%s candidates=%d", result["status"], len(candidates)
+        )
         return result
     result.update(candidates[0], status="available")
     for row in rows:
@@ -50,5 +52,5 @@ def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> 
         result["rows"].append(
             {"sku": row["sku"], "cell": address, "quantity": quantity, "issue": issue}
         )
-    LOG.info("表内全公司生命周期销量读取：column=%s rows=%d", result["column"], len(rows))
+    LOG.debug("表内全公司生命周期销量读取：column=%s rows=%d", result["column"], len(rows))
     return result

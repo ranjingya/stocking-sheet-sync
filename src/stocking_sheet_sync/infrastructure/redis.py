@@ -68,7 +68,7 @@ class RedisStateStore:
             health_check_interval=30,
         )
         self._redis.ping()
-        self._logger.info("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
+        self._logger.debug("Redis 状态存储连接成功：key_prefix=%s", self._key_prefix)
 
     @property
     def _lock_key(self) -> str:
@@ -126,7 +126,7 @@ class RedisStateStore:
             # 为历史普通及强制批次补齐默认字段，使后续比较更新保持一致。
             if not self._redis.eval(_COMPARE_SET, 1, key, raw, _encode(state)):
                 raise RuntimeError("历史批次状态已变化，请重试读取")
-            self._logger.info("历史批次命名字段已补齐：key=%s", key)
+            self._logger.debug("历史批次命名字段已补齐：key=%s", key)
         return state
 
     def begin_copy(self, state: CopyState) -> bool:
@@ -201,7 +201,7 @@ class RedisStateStore:
                 self._logger.error("去重状态无效，保留并阻止重复搬运：key=%s reason=%s", key, error)
                 desired = raw
             converted += bool(self._redis.eval(_COMPARE_SET, 1, key, raw, desired))
-        self._logger.info("永久去重记录加载完成：record_count=%d", converted)
+        self._logger.debug("永久去重记录加载完成：record_count=%d", converted)
 
     def _decode_state(self, key: str, raw: str) -> CopyState:
         data = json.loads(raw)

@@ -80,14 +80,14 @@ def inspect_forecast(
         catalog = reader.catalog(sources["catalog"], wanted)
         catalog = [record for record in catalog if record["sku"] in wanted]
         match_catalog({"rows": requested}, catalog)
-        LOG.info("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
+        LOG.debug("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
     company_source = read_company_sales(snapshot, requested or [], rules)
     sku_styles = defaultdict(set)
     for record in catalog:
         sku_styles[record["sku"]].add(record["style"])
     groups = []
     for style in styles:
-        LOG.info("开始款式预测试算：style=%s as_of=%s", style, as_of)
+        LOG.debug("开始款式预测试算：style=%s as_of=%s", style, as_of)
         records = [r for r in catalog if r["style"] == style]
         skus = sorted({r["sku"] for r in records if isinstance(r["sku"], str) and r["sku"]})
         group = {"style": style, "skus": skus, "catalog": records, "issues": [], "platforms": []}
@@ -259,4 +259,4 @@ def write_forecast_report(output: Path, report: dict) -> None:
                             "issues": ";".join([*group["issues"], *platform.get("issues", [])]),
                         }
                     )
-    LOG.info("预测试算报告已保存：output=%s summary=%s", output, report["summary"])
+    LOG.debug("预测试算报告已保存：output=%s summary=%s", output, report["summary"])

@@ -44,7 +44,7 @@ def dated_forecast_rules(rules: dict, report: dict) -> dict:
         result["forecast"]["future_headers"] = {
             pid: settings["future_prefix"] + label for pid, settings in rules["platforms"].items()
         }
-        LOG.info("后续周期日期表头生成：periods=%s", sorted(periods))
+        LOG.debug("后续周期日期表头生成：periods=%s", sorted(periods))
     return result
 
 
@@ -133,7 +133,7 @@ def plan_market_layout(
 
     返回值：款式分类、现有字段、目标字段、拟议操作与问题；不执行表格写入。
     """
-    LOG.info("开始市场部结构预览：sheet_id=%s", snapshot["sheet_id"])
+    LOG.debug("开始市场部结构预览：sheet_id=%s", snapshot["sheet_id"])
     product = inspect_sheet(snapshot, config)
     cells = snapshot["cells"]
     header_row = config["matching"]["header_rows"]
@@ -409,7 +409,7 @@ def plan_market_layout(
             warnings.append("插入市场部列会使右侧列位置顺移；预览不修改其他部门内容或汇总公式。")
 
     for field in fields:
-        LOG.info(
+        LOG.debug(
             "市场部字段预览：platform=%s metric=%s source=%s target=%s filled=%d",
             field["platform"],
             field["metric"],
@@ -419,7 +419,7 @@ def plan_market_layout(
         )
     status = "needs_review" if issues else "changes_proposed" if operations else "ready"
     LOG.log(
-        logging.WARNING if issues else logging.INFO,
+        logging.WARNING if issues else logging.DEBUG,
         "市场部结构预览完成：status=%s rows=%d fields=%d operations=%d issues=%d",
         status,
         len(style_rows),
@@ -549,7 +549,7 @@ def build_update(snapshot: dict, config: dict, rules: dict, *, forecast: bool = 
             ],
         )
         add("POST", "merge_cells", range=f"{sid}!{change['after_range']}", mergeType="MERGE_ALL")
-    LOG.info(
+    LOG.debug(
         "近30天补列请求生成：sheet_id=%s inserted=%d operations=%d",
         sid,
         len(inserts),

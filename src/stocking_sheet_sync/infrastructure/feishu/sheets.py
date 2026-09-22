@@ -94,7 +94,10 @@ def _xml(value) -> str:
 
 def dimension_snapshot(value) -> dict:
     """提取行列维度 value 的尺寸和实际样式，使用内容比较而非导出文件内的样式编号。"""
-    result = {k: v for k, v in dict(value).items() if k not in {"s", "style"}}
+    fields = {"r", "hidden", "outlineLevel", "collapsed", "thickTop", "thickBot", "customFormat"}
+    if value.__class__.__name__ == "ColumnDimension":
+        fields.update({"width", "bestFit", "min", "max", "customWidth"})
+    result = {k: v for k, v in dict(value).items() if k in fields}
     result["style_definition"] = {
         "font": _xml(value.font),
         "fill": _xml(value.fill),
@@ -231,7 +234,20 @@ def read_sheet(
             "column_dimensions": {
                 k: dimension_snapshot(v) for k, v in ws.column_dimensions.items()
             },
-            "sheet_format": _xml(ws.sheet_format),
+            "sheet_format": {
+                key: value
+                for key, value in dict(ws.sheet_format).items()
+                if key
+                in {
+                    "baseColWidth",
+                    "defaultColWidth",
+                    "zeroHeight",
+                    "thickTop",
+                    "thickBottom",
+                    "outlineLevelRow",
+                    "outlineLevelCol",
+                }
+            },
             "freeze_panes": ws.freeze_panes,
             "data_validations": _xml(ws.data_validations),
         }

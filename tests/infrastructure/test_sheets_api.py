@@ -80,7 +80,7 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
     sheet["A1"] = "00123"
     sheet["B1"] = "=1+1"
     sheet["A1"].border = Border(left=Side(style="thin", color="001F2329"))
-    sheet.row_dimensions[1].height = 25
+    sheet.row_dimensions[1].hidden = True
     if missing_value:
         sheet["A3"] = "服务端遗漏的内容"
     stream = BytesIO()
@@ -136,7 +136,7 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
     assert data["cells"]["B1"]["value"] == 2
     assert "value" not in data["cells"]["B3"]
     assert "001F2329" in data["cells"]["A1"]["border_styles"]
-    assert data["layout"]["row_dimensions"]["1"]["ht"] == "25"
+    assert data["layout"]["row_dimensions"]["1"]["hidden"] == "1"
     client.close.assert_called_once()
 
 

@@ -87,7 +87,7 @@ class SalesReader:
             f"AND {identifier(fields['sku'])} IN ({','.join(['%s'] * len(skus))})"
         )
         rows = self._read(sql, tuple([*params, *skus]))
-        LOG.info("商品主数据读取完成：requested=%d rows=%d", len(skus), len(rows))
+        LOG.debug("商品主数据读取完成：requested=%d rows=%d", len(skus), len(rows))
         return rows
 
     def sales(self, source: dict, skus: list[str], as_of: date) -> dict:
@@ -121,7 +121,7 @@ class SalesReader:
         if source["kind"] == "snapshot" and days_count != 30:
             raise ValueError("滚动30天快照不能用于其他长度的历史区间")
         as_of, end = stop, stop - timedelta(days=1)
-        LOG.info("开始读取平台发货数据：platform=%s start=%s end=%s", source["id"], start, end)
+        LOG.debug("开始读取平台发货数据：platform=%s start=%s end=%s", source["id"], start, end)
         result = {
             "platform": source["id"],
             "source_table": source["table"],
@@ -221,7 +221,7 @@ class SalesReader:
                         "deduplicated_rows": int(row["n"]) - int(row["fact_count"]),
                     }
                 )
-        LOG.info(
+        LOG.debug(
             "平台发货数据读取完成：platform=%s rows=%d issues=%s",
             source["id"],
             len(result["rows"]),
@@ -259,7 +259,7 @@ class ForecastReader(SalesReader):
             f"IN ({','.join(['%s'] * len(styles))})",
             tuple([*params, *styles]),
         )
-        LOG.info("整款主数据读取完成：styles=%d rows=%d", len(styles), len(rows))
+        LOG.debug("整款主数据读取完成：styles=%d rows=%d", len(styles), len(rows))
         return rows
 
     def daily_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
@@ -286,7 +286,7 @@ class ForecastReader(SalesReader):
         projection = ", ".join(
             f"{identifier(value)} AS {identifier(key)}" for key, value in fields.items()
         )
-        LOG.info("开始读取日出库：platform=%s start=%s stop=%s", source["id"], start, stop)
+        LOG.debug("开始读取日出库：platform=%s start=%s stop=%s", source["id"], start, stop)
         raw = self._read(
             f"SELECT {projection} FROM {identifier(source['table'])} WHERE {condition} "
             f"AND {identifier(fields['date'])} >= %s AND {identifier(fields['date'])} < %s "
@@ -338,7 +338,7 @@ class ForecastReader(SalesReader):
             "rows": rows,
             "issues": ["daily_source_needs_review"] if any(r["issues"] for r in rows) else [],
         }
-        LOG.info("日出库读取完成：platform=%s issues=%s", source["id"], result["issues"])
+        LOG.debug("日出库读取完成：platform=%s issues=%s", source["id"], result["issues"])
         return result
 
     def rolling_window(
@@ -359,7 +359,7 @@ class ForecastReader(SalesReader):
         end = stop - timedelta(days=1)
         day = end - timedelta(days=source["business_date_offset_days"])
         condition, params = _filters(source)
-        LOG.info(
+        LOG.debug(
             "读取固定周期销量：platform=%s days=%d end=%s field=%s",
             source["id"],
             (stop - start).days,
@@ -410,5 +410,5 @@ class ForecastReader(SalesReader):
             "rows": rows,
             "issues": ["rolling_source_needs_review"] if any(r["issues"] for r in rows) else [],
         }
-        LOG.info("固定周期销量读取完成：platform=%s issues=%s", source["id"], result["issues"])
+        LOG.debug("固定周期销量读取完成：platform=%s issues=%s", source["id"], result["issues"])
         return result

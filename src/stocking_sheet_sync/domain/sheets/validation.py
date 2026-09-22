@@ -4,7 +4,6 @@ import logging
 from collections import defaultdict
 
 from stocking_sheet_sync.domain.products import column_name, column_number
-from stocking_sheet_sync.domain.sheets.comparison import comparable_layout, log_height_changes
 from stocking_sheet_sync.domain.sheets.layout import _bounds, plan_market_layout
 
 LOG = logging.getLogger(__name__)
@@ -12,7 +11,7 @@ LOG = logging.getLogger(__name__)
 
 def verify_update(before: dict, after: dict, update: dict, config: dict, rules: dict) -> dict:
     """
-    功能说明：核对新增字段、原内容与样式、行高和合并范围，并验证再次运行无操作。
+    功能说明：核对新增字段、原内容与样式和合并范围，并验证再次运行无操作。
 
     参数：
         before：写入前完整快照。
@@ -30,9 +29,8 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     for key in ("spreadsheet_token", "sheet_id", "title"):
         if before.get(key) != after.get(key):
             raise ValueError(f"回读表格身份变化：{key}")
-    log_height_changes(before["layout"], after["layout"])
-    old_layout = comparable_layout(before["layout"])
-    new_layout = comparable_layout(after["layout"])
+    old_layout = before["layout"]
+    new_layout = after["layout"]
     for key in ("hidden", "sheet_format", "data_validations", "row_dimensions"):
         if old_layout.get(key) != new_layout.get(key):
             raise ValueError(f"原工作表布局发生变化：{key}")
@@ -160,9 +158,8 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
             raise ValueError(f"写入后表格身份或结构发生变化：{key}")
     if before["cells"].keys() != after["cells"].keys():
         raise ValueError("回读单元格范围不完整")
-    log_height_changes(before["layout"], after["layout"])
-    old_layout = comparable_layout(before["layout"])
-    new_layout = comparable_layout(after["layout"])
+    old_layout = before["layout"]
+    new_layout = after["layout"]
     for key in old_layout.keys() | new_layout.keys():
         if key != "revision" and old_layout.get(key) != new_layout.get(key):
             raise ValueError(f"写入后布局发生变化：{key}")
