@@ -18,6 +18,9 @@ from stocking_sheet_sync.domain.products import (
     normalize_text,
 )
 
+LOG = logging.getLogger(__name__)
+HISTORY_METRICS = {"history", "history_net"}
+
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
@@ -42,6 +45,7 @@ class AppConfig:
     log_level: str
     public_base_url: str
     webhook_secret: str
+    config_path: str = "config/config.toml"
     fill_new_history_enabled: bool = False
     fill_new_forecast_enabled: bool = False
     temp_max_files: int = 100
@@ -89,6 +93,7 @@ def load_config(
         raise ValueError("source.required_fields 必须是 TOML 对象")
 
     return AppConfig(
+        config_path=str(selected_path),
         feishu_data_app_id=_require_env(environment, "FEISHU_DATA_APP_ID"),
         feishu_data_app_secret=_require_env(environment, "FEISHU_DATA_APP_SECRET"),
         feishu_message_app_id=_require_env_with_fallback(
@@ -568,7 +573,3 @@ def load_forecast_sources(path: Path) -> dict:
         if type(source.get("business_date_offset_days")) is not int:
             raise ValueError("日快照必须明确业务日期偏移")
     return config
-
-
-LOG = logging.getLogger(__name__)
-HISTORY_METRICS = {"history", "history_net"}

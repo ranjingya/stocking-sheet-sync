@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+LOG = logging.getLogger(__name__)
+
 
 def previous_year(day: date) -> date:
     """将 day 映射到去年同日；闰日返回去年2月28日。"""
@@ -69,6 +71,3 @@ def forecast_window(as_of: date, labels: list[str | None], rules: dict) -> dict:
     }
     LOG.info("预测日期确定：season=%s as_of=%s deadline=%s", season, as_of, end)
     return result
-
-
-LOG = logging.getLogger(__name__)

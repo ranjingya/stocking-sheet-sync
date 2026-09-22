@@ -309,6 +309,7 @@ class SyncService:
 
                             self.forecast_filler = ForecastFiller(
                                 self.data_client,
+                                config_path=Path(self.config.config_path),
                                 history=self.config.fill_history_enabled,
                                 legacy_forecast=self.config.fill_forecast_enabled,
                                 new_forecast=self.config.fill_new_forecast_enabled,
@@ -321,6 +322,7 @@ class SyncService:
 
                             self.history_filler = HistoryFiller(
                                 self.data_client,
+                                config_path=Path(self.config.config_path),
                                 new_history=self.config.fill_new_history_enabled,
                                 legacy_history=self.config.fill_history_enabled,
                             )

@@ -7,6 +7,8 @@ from stocking_sheet_sync.domain.products import column_name, column_number
 from stocking_sheet_sync.domain.sheets.comparison import comparable_layout, log_height_changes
 from stocking_sheet_sync.domain.sheets.layout import _bounds, plan_market_layout
 
+LOG = logging.getLogger(__name__)
+
 
 def verify_update(before: dict, after: dict, update: dict, config: dict, rules: dict) -> dict:
     """
@@ -219,6 +221,3 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
         "before_revision": before["revision"],
         "after_revision": after["revision"],
     }
-
-
-LOG = logging.getLogger(__name__)

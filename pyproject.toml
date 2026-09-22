@@ -1,7 +1,7 @@
 [project]
 name = "stocking-sheet-sync"
 version = "0.1.0"
-description = "将飞书多维表中的备货电子表格搬运到共享文件夹"
+description = "下单需求表格的历史销量填充、公式预估与备份交付"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
