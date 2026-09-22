@@ -420,7 +420,11 @@ def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypat
 
 @pytest.mark.parametrize("outcome", ["retryable", "needs_review", "exception"])
 def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome):
+    from unittest.mock import Mock
+
     from stocking_sheet_sync.entrypoints.web import create_app
+    from stocking_sheet_sync.infrastructure.queue import QueuedTask
+    from stocking_sheet_sync.services.worker import process_one
 
     service, client, redis, clock = make_service(tmp_path)
     service.config = replace(service.config, fill_history_enabled=True)
@@ -433,14 +437,22 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome)
         return {"status": outcome, "reason": "历史数据检查未通过"}
 
     service.history_filler = fill
-    app = create_app(config=service.config, service=service).test_client()
+    queue = Mock()
+    queue.enqueue.return_value = "1-0"
+    queue.take.return_value = QueuedTask("1-0", "rec_test")
+    queue.status.return_value = {}
+    queue.begin.return_value = 1
+    app = create_app(config=service.config, service=queue).test_client()
     headers = {"Authorization": "Bearer webhook-secret"}
     response = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
-    assert response.status_code == 200
-    result = response.get_json()
-    assert result["status"] == "success" and result["result"] == "copied"
-    assert result["summary"]["failed"] == 0
-    assert result["summary"]["fill_degraded"] is True
+    assert response.status_code == 202
+    assert client.copy_count == 0
+    assert not process_one(queue, service, service.config)
+    assert queue.finish.call_args.args[1] == "completed"
+    result = queue.finish.call_args.args[2]
+    assert result["result"] == "copied"
+    assert result["failed"] == 0
+    assert result["fill_degraded"] is True
     assert "填充未完成" in result["reason"]
     assert client.sent_to == ["ou_test"]
     card = client.sent_cards[0]
@@ -448,7 +460,9 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome)
     assert "填充未完成" in card["header"]["title"]["content"]
     assert "处理说明" in json.dumps(card, ensure_ascii=False)
     again = app.post("/webhooks/base-record", json={"record_id": "rec_test"}, headers=headers)
-    assert again.status_code == 200 and again.get_json()["result"] == "unchanged"
+    assert again.status_code == 202
+    assert not process_one(queue, service, service.config)
+    assert queue.finish.call_args.args[2]["result"] == "unchanged"
     assert client.copy_count == 1
     assert len(calls) == (2 if outcome == "retryable" else 1)
 

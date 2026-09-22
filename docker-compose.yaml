@@ -3,6 +3,7 @@ services:
     image: ghcr.io/ranjingya/stocking-sheet-sync:latest
     container_name: stocking-sheet-sync
     restart: unless-stopped
+    stop_grace_period: 330s
     labels:
       traefik.enable: "true"
       traefik.docker.network: traefik-network

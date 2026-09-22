@@ -69,3 +69,16 @@ def test_invalid_history_is_retained_without_expiry():
         store.get_state(state.record_id, state.source_token)
     assert redis.get("test:rec_a:source") == "{}"
     assert not redis.expirations
+
+
+def test_migration_does_not_read_queue_stream_as_string(monkeypatch):
+    store, redis, _ = fixture_store()
+    redis.strings["test:queue:tasks"] = "stream"
+    redis.strings["test:queue:result:1-0"] = "hash"
+    redis.strings["test:queue:worker:lock:scan"] = "lock"
+
+    def reject_read(key):
+        raise AssertionError(f"不应读取队列命名空间：{key}")
+
+    monkeypatch.setattr(redis, "get", reject_read)
+    store.migrate_legacy_records()

@@ -4,33 +4,29 @@ import atexit
 import hmac
 import logging
 import re
-from contextlib import ExitStack
-from dataclasses import asdict
 from typing import Protocol
 
 from flask import Flask, jsonify, request
 
-from stocking_sheet_sync.bootstrap import build_service
-from stocking_sheet_sync.domain.models import SyncSummary
+from stocking_sheet_sync.infrastructure.queue import TaskQueue
 from stocking_sheet_sync.logging import configure_logging
-from stocking_sheet_sync.services.sync import SyncBusyError
 from stocking_sheet_sync.settings import AppConfig, load_config
 
 
-class WebhookSyncService(Protocol):
-    def run_record(self, record_id: str) -> SyncSummary: ...
+class WebhookQueue(Protocol):
+    def enqueue(self, record_id: str) -> str: ...
 
 
 def create_app(
     config: AppConfig | None = None,
-    service: WebhookSyncService | None = None,
+    service: WebhookQueue | None = None,
 ) -> Flask:
     """
     功能说明：创建接收飞书多维表自动化请求的 Flask 应用。
 
     参数：
         config：可选的应用配置；未传入时从 .env 和 config/config.toml 加载。
-        service：可选的同步服务；测试时可传入替代实现。
+        service：可选任务队列；测试时可传入替代实现。
 
     返回值：配置完成的 Flask 应用实例。
     """
@@ -41,9 +37,8 @@ def create_app(
     logger = logging.getLogger("stocking_sheet_sync.entrypoints.web")
     owned_resources = None
     if service is None:
-        with ExitStack() as resources:
-            service = build_service(app_config, resources, migrate=True)
-            owned_resources = resources.pop_all()
+        service = TaskQueue(app_config)
+        owned_resources = service
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
@@ -100,66 +95,14 @@ def create_app(
             record_id,
         )
         try:
-            summary = service.run_record(record_id)
-        except SyncBusyError:
-            reason = "已有同步任务正在运行"
-            logger.warning(
-                "多维表自动化 Webhook 处理完成：record_id=%s result=busy reason=%s",
-                record_id,
-                reason,
-            )
+            task_id = service.enqueue(record_id)
+        except Exception:
+            logger.exception("Webhook任务入队失败：record_id=%s", record_id)
             return jsonify(
-                {
-                    "status": "busy",
-                    "result": "busy",
-                    "reason": reason,
-                    "record_id": record_id,
-                }
-            ), 409
-        except Exception as error:
-            logger.error(
-                "多维表自动化 Webhook 处理完成：record_id=%s result=failed reason=%s",
-                record_id,
-                error,
-            )
-            logger.debug(
-                "多维表自动化 Webhook 处理异常堆栈：record_id=%s",
-                record_id,
-                exc_info=True,
-            )
-            return jsonify(
-                {
-                    "status": "error",
-                    "result": "failed",
-                    "reason": str(error),
-                    "record_id": record_id,
-                }
-            ), 500
-
-        response_status = "failed" if summary.result == "failed" else "success"
-        status_code = 500 if summary.result == "failed" else 200
-        if summary.reason:
-            logger.info(
-                "多维表自动化 Webhook 处理完成：record_id=%s result=%s reason=%s",
-                record_id,
-                summary.result,
-                summary.reason,
-            )
-        else:
-            logger.info(
-                "多维表自动化 Webhook 处理完成：record_id=%s result=%s",
-                record_id,
-                summary.result,
-            )
-        return jsonify(
-            {
-                "status": response_status,
-                "result": summary.result,
-                "reason": summary.reason,
-                "record_id": record_id,
-                "summary": asdict(summary),
-            }
-        ), status_code
+                {"status": "error", "reason": "任务入队失败，请稍后重试", "record_id": record_id}
+            ), 503
+        logger.info("Webhook任务已接收：record_id=%s task_id=%s", record_id, task_id)
+        return jsonify({"status": "accepted", "task_id": task_id, "record_id": record_id}), 202
 
     logger.info(
         "Webhook 服务初始化完成：url=%s/webhooks/base-record history=%s forecast=%s",

@@ -9,10 +9,12 @@ docker compose up -d
 docker compose logs -f stocking-sheet-sync
 ```
 
-服务容器监听5000端口，Compose通过Traefik提供HTTPS。配置目录默认映射到 `/app/config`。本地开发可运行：
+单个应用容器内由Supervisor运行Web与串行Worker，使用已有Redis；服务监听5000端口，Compose通过Traefik提供HTTPS。配置目录默认映射到 `/app/config`。本地开发可运行：
 
 ```bash
+# 在两个终端分别运行
 uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.entrypoints.web:create_app()'
+uv run stocking-sheet-sync worker
 ```
 
 ## Webhook
@@ -22,6 +24,8 @@ uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.entrypoints.web:create_app()
 ```json
 {"record_id":"rec_xxx"}
 ```
+
+成功入队返回HTTP 202，例如 `{"status":"accepted","task_id":"123-0","record_id":"rec_xxx"}`；这是接收确认，最终结果通过原有通知和日志查看。入队失败返回503，可重新触发；重复请求在业务执行时去重。`/healthz`仅表示Web进程可响应，不代表Worker和外部依赖均可用。
 
 Webhook只执行普通搬运，不接受强制重搬参数。真实业务自动化由使用者选择测试记录触发，首先交付到测试目录。
 
@@ -67,4 +71,6 @@ uv run stocking-sheet-sync notify --help
 
 优先查看批次日志中的记录ID、文件token、填充状态和降级原因。临时目录中的报告有数量和容量保留上限，长期证据以飞书原始/处理备份为准。
 
-当前任务同步执行，并发锁默认300秒，每100秒自动续期。较大工作簿的耗时及调用端等待时间应在实际运行前验证；不要把HTTP连接中断直接当成任务未执行。
+后台串行执行，运行锁默认300秒，每100秒自动续期。进程异常由Supervisor重启，未确认任务优先恢复。容器停止时Worker最多等待300秒完成当前任务，Compose停止宽限期为330秒；超时终止留下的未确认任务在启动后恢复，结果未知的写入仍按原有占位规则核验。
+
+执行失败默认最多3次、间隔10秒，锁忙等待不消耗次数。终态任务结果保留7天，业务去重永久保存。Redis应配置适合运行环境的持久化策略；不要手动裁剪未完成队列。手动 `rerun` 仍直接执行并等待结果，与Worker共享业务运行锁。

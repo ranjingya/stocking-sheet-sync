@@ -9,6 +9,7 @@ src/stocking_sheet_sync/
 ├── logging.py                   # 日志设置
 ├── entrypoints/                 # Webhook与统一CLI及子命令
 ├── services/
+│   ├── worker.py                # 队列消费、有限重试与结果确认
 │   ├── sync.py                  # 任务协调、去重、填充状态和通知
 │   ├── copies.py                # 三份复制及交付来源决策
 │   ├── fill.py                  # 新老品分流、历史与预测共用写入执行器
@@ -24,13 +25,23 @@ src/stocking_sheet_sync/
 └── infrastructure/
     ├── feishu/                  # 认证请求、多维表、云空间、电子表格
     ├── warehouse.py             # 商品、出库明细与京东固定/任意周期查询
+    ├── queue.py                 # Redis Streams队列和任务结果
+    ├── lease.py                 # 持锁续期和失锁保护
     ├── redis.py                 # 批次与阶段持久化、锁
     └── artifacts.py             # 本地文件容量和数量清理
 ```
 
 入口处理参数、认证和返回值。应用服务编排任务。领域层只处理输入数据，不读取配置文件、不请求飞书/数仓/Redis。基础设施负责外部IO。配置在应用边界加载后以字典或对象传递。
 
-`bootstrap.build_service` 为 Webhook 和手动重搬组装同一服务，资源由 `ExitStack` 管理，初始化失败和正常退出都会释放连接。
+`bootstrap.build_service` 为后台Worker和手动重搬组装同一服务，资源由 `ExitStack` 管理，初始化失败和正常退出都会释放连接。
+
+## 接收与消费
+
+单个应用容器由Supervisor管理Web与Worker两个进程，连接已有Redis。Web完成认证和参数校验后，将记录ID写入Redis Streams并返回HTTP 202和任务ID；入队异常返回503。202表示已接收，不表示已交付。
+
+Worker通过独占消费者锁串行处理任务，优先恢复固定消费者的未确认消息，再读取新消息。业务运行锁同时协调手动重搬。执行失败最多尝试3次、默认间隔10秒；锁忙不消耗次数。结果保存、消息确认和删除在同一个Redis事务内完成。填充降级交付也算完成。达到次数上限的任务记录为失败，需人工核对后处理。
+
+未完成消息保留到确认，终态任务结果默认保留7天；业务去重记录永久保存。重复Webhook可以产生多个队列任务，执行时以业务批次去重。应用进程重启后可恢复未确认任务；Redis自身重启后的数据保留取决于Redis持久化配置。
 
 ## 完整处理流程
 

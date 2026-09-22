@@ -45,6 +45,9 @@ class AppConfig:
     log_level: str
     public_base_url: str
     webhook_secret: str
+    queue_max_attempts: int = 3
+    queue_retry_delay_seconds: int = 10
+    queue_result_ttl_seconds: int = 604800
     config_path: str = "config/config.toml"
     fill_new_history_enabled: bool = False
     fill_new_forecast_enabled: bool = False
@@ -94,6 +97,15 @@ def load_config(
 
     return AppConfig(
         config_path=str(selected_path),
+        queue_max_attempts=_positive_int(
+            runtime.get("queue_max_attempts", 3), "runtime.queue_max_attempts"
+        ),
+        queue_retry_delay_seconds=_positive_int(
+            runtime.get("queue_retry_delay_seconds", 10), "runtime.queue_retry_delay_seconds"
+        ),
+        queue_result_ttl_seconds=_positive_int(
+            runtime.get("queue_result_ttl_seconds", 604800), "runtime.queue_result_ttl_seconds"
+        ),
         feishu_data_app_id=_require_env(environment, "FEISHU_DATA_APP_ID"),
         feishu_data_app_secret=_require_env(environment, "FEISHU_DATA_APP_SECRET"),
         feishu_message_app_id=_require_env_with_fallback(

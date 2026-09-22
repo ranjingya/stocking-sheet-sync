@@ -40,6 +40,10 @@ public_base_url = "https://stock-sync.example.com"
 
 # 程序运行参数
 [runtime]
+# 后台任务最多尝试次数、重试间隔、终态结果保留秒数
+queue_max_attempts = 3
+queue_retry_delay_seconds = 10
+queue_result_ttl_seconds = 604800
 # 每次历史填充保存独立执行证据目录
 fill_report_dir = "artifacts/fill"
 # 本地临时文件同时满足数量与容量上限，超限按修改时间清理最老文件

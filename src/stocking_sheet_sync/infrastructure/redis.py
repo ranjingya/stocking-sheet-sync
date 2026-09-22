@@ -187,6 +187,7 @@ class RedisStateStore:
         for key in self._redis.scan_iter(match=f"{self._key_prefix}:*"):
             if (
                 key == self._lock_key
+                or key.startswith(f"{self._key_prefix}:queue:")
                 or len(key.removeprefix(f"{self._key_prefix}:").split(":")) != 2
             ):
                 continue
