@@ -5,7 +5,7 @@
 ```text
 src/stocking_sheet_sync/
 ├── bootstrap.py                 # 组装服务、管理资源生命周期
-├── settings.py                  # 环境变量、统一配置视图与校验
+├── settings.py                  # 环境变量、运行配置、业务规则视图与校验
 ├── logging.py                   # 日志设置
 ├── entrypoints/                 # Webhook与统一CLI及子命令
 ├── services/

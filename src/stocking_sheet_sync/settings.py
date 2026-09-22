@@ -280,14 +280,15 @@ def _env_bool(env: Mapping[str, str], name: str) -> bool:
 
 def business_view(path: Path, section: str) -> dict:
     """
-    功能说明：读取唯一业务配置并组装指定模块的字段视图。
+    功能说明：读取独立业务规则并组装指定模块的字段视图。
 
     参数：
-        path：统一 TOML 配置文件。
+        path：运行配置路径或规则文件路径；规则固定读取同目录 rules.toml。
         section：sales、layout、forecast 或 sources。
     返回值：对应业务模块的独立配置字典。
     """
-    with path.open("rb") as stream:
+    rules_path = path.parent / "rules.toml"
+    with rules_path.open("rb") as stream:
         data = tomllib.load(stream)
     if section == "forecast":
         return data["forecast"]

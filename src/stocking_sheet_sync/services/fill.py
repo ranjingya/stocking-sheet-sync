@@ -54,7 +54,7 @@ class HistoryFiller:
         功能说明：组装副本历史销量填充流程，按当前业务配置定位工作表和数仓来源。
 
         参数：
-            config_path：统一业务配置文件路径。
+            config_path：运行配置文件路径，业务规则读取同目录 rules.toml。
             client：飞书数据应用客户端，由调用方管理生命周期。
             reader_factory：可选只读数仓客户端工厂，用于隔离测试。
             new_history：是否填写新品历史销量。
@@ -321,7 +321,7 @@ class ForecastFiller(HistoryFiller):
         功能说明：组装老款公式预估填充流程，按历史开关控制辅助历史量写入。
 
         参数：
-            config_path：统一业务配置文件路径。
+            config_path：运行配置文件路径，业务规则读取同目录 rules.toml。
             client：飞书服务端接口客户端。
             history：是否同时填充三个历史窗口，关闭时仍读取计算输入。
             new_history：是否填写新品近30天。

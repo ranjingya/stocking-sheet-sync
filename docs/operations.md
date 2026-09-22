@@ -2,7 +2,7 @@
 
 ## Docker运行
 
-准备宿主机 `config/config.toml`、`.env`、`artifacts` 目录；确认配置对应的数仓、Redis及飞书目录可访问。仓库Compose使用镜像标签，代码修改需要构建/发布对应镜像后才能在服务器生效。
+准备宿主机 `config/config.toml`、`config/rules.toml`、`.env`、`artifacts` 目录；确认配置对应的数仓、Redis及飞书目录可访问。仓库Compose使用镜像标签，代码修改需要构建/发布对应镜像后才能在服务器生效。
 
 ```bash
 docker compose up -d

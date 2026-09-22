@@ -1,6 +1,6 @@
 # 配置说明
 
-运行目录为项目根目录。业务配置默认读取 `config/config.toml`，完整模板为 `config/config.example.toml`。`.env` 与实际配置不提交，也不进入Docker镜像。
+运行目录为项目根目录。运行配置读取 `config/config.toml`，模板为 `config/config.example.toml`；业务规则独立存放在同目录的 `rules.toml`，由项目维护并随代码版本提交。`.env` 与实际配置不提交，也不进入Docker镜像。
 
 ## 环境变量
 
@@ -33,6 +33,8 @@
 
 ## TOML分区
 
+`config.toml` 保存日常维护的运行设置，`rules.toml` 保存由项目维护的业务规则。
+
 | 分区 | 内容 |
 | --- | --- |
 | `feishu` | 飞书接口地址 |
@@ -42,6 +44,11 @@
 | `redis` | 去重命名空间 |
 | `web` | 对外HTTPS地址 |
 | `runtime` | 超时、重试、锁、日志与临时文件策略 |
+
+以下分区位于 `rules.toml`：
+
+| 分区 | 内容 |
+| --- | --- |
 | `catalog` | 唯一商品主数据来源、字段与筛选 |
 | `matching` | SKU、款号、名称、规格的表头别名 |
 | `sheet` | 市场部结构、新老品年份、平台顺序、预估表头 |
@@ -76,4 +83,4 @@ volumes:
   - /home/yatui/stocking-sheet-sync/artifacts:/app/artifacts
 ```
 
-无需额外配置目录环境变量。宿主机 `.env` 通过Compose的 `env_file` 注入，修改后需重新创建容器。
+宿主机映射的配置目录需要同时包含 `config.toml` 和随项目提供的 `rules.toml`。无需额外配置目录环境变量。宿主机 `.env` 通过Compose的 `env_file` 注入，修改后需重新创建容器。

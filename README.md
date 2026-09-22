@@ -14,7 +14,7 @@ cp .env.example .env
 cp config/config.example.toml config/config.toml
 ```
 
-填写 `.env` 中的凭证和连接信息，在 `config/config.toml` 中设置来源、目录和业务规则。
+填写 `.env` 中的凭证和连接信息，在 `config/config.toml` 中设置来源、目录、通知及运行参数。商品、平台来源、表头和预测规则位于 `config/rules.toml`，日常使用无需修改。
 
 ```bash
 uv run gunicorn -c gunicorn.py 'stocking_sheet_sync.entrypoints.web:create_app()'
@@ -51,7 +51,7 @@ uv run stocking-sheet-sync rerun --record-id rec_xxx --request-id batch_xxx
 uv run stocking-sheet-sync forecast --style KQ25073 --as-of 2026-09-04 --output artifacts/trial
 ```
 
-`inspect`、`forecast`、`layout` 用于诊断；`layout-apply`、`sales-fill` 用于指定版本的表格操作；`notify` 用于显式手动通知。各命令使用 `--help` 查看参数，业务配置参数统一为 `--config`。
+`inspect`、`forecast`、`layout` 用于诊断；`layout-apply`、`sales-fill` 用于指定版本的表格操作；`notify` 用于显式手动通知。各命令使用 `--help` 查看参数，运行配置路径参数统一为 `--config`，业务规则固定读取该路径同目录的 `rules.toml`。
 
 ## 文档
 

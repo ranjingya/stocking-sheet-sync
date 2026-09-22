@@ -176,3 +176,15 @@ def test_four_switches_and_explicit_old_flags_take_priority(tmp_path):
     cfg = load_config(env=env, config_path=path)
     assert cfg.fill_new_history_enabled and cfg.fill_new_forecast_enabled
     assert not cfg.fill_history_enabled and not cfg.fill_forecast_enabled
+
+
+def test_business_rules_are_loaded_from_sibling_file(tmp_path):
+    from stocking_sheet_sync.settings import business_view
+
+    runtime = tmp_path / "config.toml"
+    runtime.write_text("[runtime]\nmax_retries = 3\n")
+    (tmp_path / "rules.toml").write_text("[forecast.fallback]\nsku_count_below = 10\n")
+    assert business_view(runtime, "forecast") == {"fallback": {"sku_count_below": 10}}
+    (tmp_path / "rules.toml").unlink()
+    with pytest.raises(FileNotFoundError, match="rules.toml"):
+        business_view(runtime, "forecast")
