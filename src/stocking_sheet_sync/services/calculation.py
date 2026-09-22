@@ -9,10 +9,11 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
-from stocking_sheet_sync.domain.forecast import allocate_forecast, forecast_window
+from stocking_sheet_sync.domain.forecast import allocate_forecast
+from stocking_sheet_sync.domain.periods import forecast_window
 from stocking_sheet_sync.domain.products import match_catalog
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
-from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader
+from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 
 LOG = logging.getLogger(__name__)
 

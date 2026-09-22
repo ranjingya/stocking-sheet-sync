@@ -6,7 +6,7 @@ from pathlib import Path
 
 from stocking_sheet_sync.domain.models import SyncSummary
 from stocking_sheet_sync.entrypoints.web import create_app
-from tests.test_sync_service import make_config
+from tests.services.test_sync_service import make_config
 
 
 class FakeWebhookService:

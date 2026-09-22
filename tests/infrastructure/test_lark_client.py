@@ -8,7 +8,7 @@ from stocking_sheet_sync.infrastructure.feishu.client import (
     CopyRejected,
     FeishuClient,
 )
-from tests.test_sync_service import make_config
+from tests.services.test_sync_service import make_config
 
 
 @pytest.mark.parametrize(

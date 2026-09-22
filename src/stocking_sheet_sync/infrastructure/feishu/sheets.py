@@ -347,3 +347,55 @@ def write_sales_ranges(
     finally:
         if owned:
             client.close()
+
+
+def apply_update(
+    token: str,
+    sheet_id: str,
+    update: dict,
+    expected_revision: int,
+    *,
+    client=None,
+    on_progress=None,
+) -> dict:
+    """
+    功能说明：通过飞书服务端接口顺序执行补列，逐步保存结果并检查版本。
+
+    参数：
+        token：目标副本 token。
+        sheet_id：工作表 ID。
+        update：由 build_update 生成的请求计划。
+        expected_revision：执行前已审阅的版本。
+        client：可选数据应用客户端；传入时由调用方关闭。
+        on_progress：可选回调，每次请求前后保存执行日志。
+    返回值：各步骤结果；任一步失败立即停止，已提交步骤不自动重试或回滚。
+    """
+    owned = client is None
+    client = client or create_client()
+    journal = {"status": "running", "steps": [], "revision": expected_revision}
+    base = f"/open-apis/sheets/v2/spreadsheets/{quote(token, safe='')}"
+    try:
+        for index, operation in enumerate(update["operations"]):
+            if revision(client, token, sheet_id) != journal["revision"]:
+                raise ValueError("补列期间版本发生变化，请回读核对，不要直接重试")
+            step = {"index": index, "operation": operation, "status": "sending"}
+            journal["steps"].append(step)
+            if on_progress:
+                on_progress(journal)
+            LOG.info("补列开始：token=%s step=%d endpoint=%s", token, index, operation["endpoint"])
+            step["response"] = client._request(
+                operation["method"],
+                base + "/" + operation["endpoint"],
+                json_body=operation["body"],
+                retry=False,
+            )
+            step["status"] = "acknowledged"
+            # 部分结构接口不返回版本；下一步前再次读取，最终以全表核验确认。
+            journal["revision"] = revision(client, token, sheet_id)
+            if on_progress:
+                on_progress(journal)
+        journal["status"] = "submitted"
+        return journal
+    finally:
+        if owned:
+            client.close()

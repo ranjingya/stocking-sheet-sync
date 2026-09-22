@@ -317,7 +317,7 @@ class SyncService:
                         result = self.forecast_filler(state, claim)
                     else:
                         if self.history_filler is None:
-                            from stocking_sheet_sync.services.history import HistoryFiller
+                            from stocking_sheet_sync.services.fill import HistoryFiller
 
                             self.history_filler = HistoryFiller(
                                 self.data_client,

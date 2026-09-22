@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.domain.forecast import allocate_forecast, forecast_window
+from stocking_sheet_sync.domain.forecast import allocate_forecast
+from stocking_sheet_sync.domain.periods import forecast_window
 from stocking_sheet_sync.settings import load_forecast_config
 
 

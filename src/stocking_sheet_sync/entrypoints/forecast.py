@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from stocking_sheet_sync.domain.products import inspect_sheet
-from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader
+from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 from stocking_sheet_sync.logging import configure_logging
 from stocking_sheet_sync.services.calculation import (
     inspect_forecast,

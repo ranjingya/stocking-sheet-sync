@@ -14,7 +14,7 @@ from stocking_sheet_sync.domain.products import (
 from stocking_sheet_sync.services.sales import inspect_sales
 from stocking_sheet_sync.settings import load_sales_config
 
-CONFIG = Path(__file__).resolve().parents[1] / "config/config.example.toml"
+CONFIG = Path(__file__).resolve().parents[2] / "config/config.example.toml"
 
 
 def config():

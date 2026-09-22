@@ -9,11 +9,8 @@ from typing import Any
 import pytest
 
 from stocking_sheet_sync.domain.models import BaseRecord, CopyResult
-from stocking_sheet_sync.infrastructure.feishu.client import (
-    CopyRejected,
-    FeishuApiError,
-    _parse_base_record,
-)
+from stocking_sheet_sync.infrastructure.feishu.base import _parse_base_record
+from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected, FeishuApiError
 from stocking_sheet_sync.infrastructure.redis import RedisStateStore
 from stocking_sheet_sync.services.sync import SyncBusyError, SyncService, parse_source_sheet
 from stocking_sheet_sync.settings import AppConfig

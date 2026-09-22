@@ -6,7 +6,7 @@ import pytest
 
 from stocking_sheet_sync.infrastructure.warehouse import SalesReader, units
 from stocking_sheet_sync.settings import WarehouseSettings, identifier
-from tests.test_sales_matching import config
+from tests.domain.test_sales_matching import config
 
 
 def reader():

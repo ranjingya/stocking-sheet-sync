@@ -8,7 +8,8 @@ from pathlib import Path
 
 import httpx
 
-from stocking_sheet_sync.domain.sheets.values import build_sales_update, verify_sales_update
+from stocking_sheet_sync.domain.sheets.validation import verify_sales_update
+from stocking_sheet_sync.domain.sheets.values import build_sales_update
 from stocking_sheet_sync.infrastructure.feishu.sheets import (
     current_revision,
     read_sheet,

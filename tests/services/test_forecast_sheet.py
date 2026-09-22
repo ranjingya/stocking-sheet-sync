@@ -12,14 +12,17 @@ from stocking_sheet_sync.domain.sheets.forecast_values import (
     check_forecast_target,
     project_layout,
 )
-from stocking_sheet_sync.domain.sheets.layout import dated_forecast_rules, plan_market_layout
-from stocking_sheet_sync.domain.sheets.values import verify_sales_update
+from stocking_sheet_sync.domain.sheets.layout import (
+    build_update,
+    dated_forecast_rules,
+    plan_market_layout,
+)
+from stocking_sheet_sync.domain.sheets.validation import verify_sales_update, verify_update
 from stocking_sheet_sync.services.calculation import inspect_forecast
 from stocking_sheet_sync.services.fill import ForecastFiller
-from stocking_sheet_sync.services.layout import build_update, verify_update
-from tests.test_forecast_inspect import config as all_config
-from tests.test_forecast_inspect import fake_reader
-from tests.test_layout_apply import config, incoming, rules
+from tests.services.test_forecast_inspect import config as all_config
+from tests.services.test_forecast_inspect import fake_reader
+from tests.services.test_layout_apply import config, incoming, rules
 
 
 def setup_sheet():

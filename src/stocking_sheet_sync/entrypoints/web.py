@@ -4,16 +4,16 @@ import atexit
 import hmac
 import logging
 import re
+from contextlib import ExitStack
 from dataclasses import asdict
 from typing import Protocol
 
 from flask import Flask, jsonify, request
 
+from stocking_sheet_sync.bootstrap import build_service
 from stocking_sheet_sync.domain.models import SyncSummary
-from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
-from stocking_sheet_sync.infrastructure.redis import RedisStateStore
 from stocking_sheet_sync.logging import configure_logging
-from stocking_sheet_sync.services.sync import SyncBusyError, SyncService
+from stocking_sheet_sync.services.sync import SyncBusyError
 from stocking_sheet_sync.settings import AppConfig, load_config
 
 
@@ -39,51 +39,17 @@ def create_app(
         raise ValueError("启动 Webhook 服务前必须配置 WEBHOOK_SECRET")
     configure_logging(app_config.log_level)
     logger = logging.getLogger("stocking_sheet_sync.entrypoints.web")
-    owned_resources: tuple[FeishuClient, FeishuClient, RedisStateStore] | None = None
-
+    owned_resources = None
     if service is None:
-        store = RedisStateStore(
-            app_config.redis_url,
-            app_config.redis_key_prefix,
-            socket_timeout_seconds=app_config.request_timeout_seconds,
-            logger=logger,
-        )
-        store.migrate_legacy_records()
-        data_client = FeishuClient(
-            app_config,
-            app_config.feishu_data_app_id,
-            app_config.feishu_data_app_secret,
-            "data",
-            logger,
-        )
-        message_client = FeishuClient(
-            app_config,
-            app_config.feishu_message_app_id,
-            app_config.feishu_message_app_secret,
-            "message",
-            logger,
-        )
-        service = SyncService(
-            app_config,
-            data_client,
-            message_client,
-            store,
-            logger,
-        )
-        owned_resources = (data_client, message_client, store)
+        with ExitStack() as resources:
+            service = build_service(app_config, resources, migrate=True)
+            owned_resources = resources.pop_all()
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
     if owned_resources is not None:
-        data_client, message_client, store = owned_resources
-
-        def close_resources() -> None:
-            data_client.close()
-            message_client.close()
-            store.close()
-
-        atexit.register(close_resources)
+        atexit.register(owned_resources.close)
 
     @app.get("/healthz")
     def healthz():
@@ -125,7 +91,7 @@ def create_app(
             return jsonify(
                 {
                     "status": "invalid_request",
-                    "message": "Webhook 仅支持普通搬运，请使用 stocking-sheet-sync-rerun 重新搬运",
+                    "message": "Webhook 仅支持普通搬运，请使用 stocking-sheet-sync rerun 重新搬运",
                 }
             ), 400
 

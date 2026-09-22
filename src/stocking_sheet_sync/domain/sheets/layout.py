@@ -12,6 +12,7 @@ from stocking_sheet_sync.domain.products import (
     inspect_sheet,
     normalize_text,
 )
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows
 
 LOG = logging.getLogger(__name__)
 HISTORY_METRICS = {"history", "history_net"}
@@ -442,4 +443,124 @@ def plan_market_layout(
         "issues": issues,
         "warnings": warnings,
         "preview_only": True,
+    }
+
+
+def build_update(snapshot: dict, config: dict, rules: dict, *, forecast: bool = False) -> dict:
+    """
+    功能说明：为新品及老品生成补齐近30天销量列和市场部合并表头的顺序执行请求。
+
+    参数：
+        snapshot：包含完整值、公式、样式和布局的工作表快照。
+        config：商品和平台别名配置。
+        rules：市场部结构规则。
+        forecast：是否补齐老款公式预估的历史、预估与全公司字段。
+
+    返回值：结构预览、服务端操作、原列到新列映射及新增列位置。
+    """
+    report = plan_market_layout(snapshot, config, rules, recent_only=True, forecast=forecast)
+    if report["category"] not in {"new", "legacy"} or report["issues"]:
+        raise ValueError("实际执行仅支持结构明确的新品或老品，请先查看结构预览")
+    if any(o["action"] == "move_market_column" for o in report["operations"]):
+        raise ValueError("平台顺序需要调整，请先核对；补列命令不移动现有平台列")
+    if any(f["metric"] == "demand" and not f["source_column"] for f in report["target_fields"]):
+        raise ValueError("必须已存在各平台需求列，才能补齐对应销量列")
+    if "layout" not in snapshot:
+        raise ValueError("执行前必须读取完整布局和样式")
+    operations = []
+    total_formulas = {}
+    inherited_columns = {}
+    product_rows = [r["row"] for r in inspect_sheet(snapshot, config)["rows"]]
+    sid = snapshot["sheet_id"]
+
+    def add(method, endpoint, **body):
+        operations.append({"method": method, "endpoint": endpoint, "body": body})
+
+    def set_value(cell, value):
+        add(
+            "POST",
+            "values_batch_update",
+            valueRanges=[{"range": f"{sid}!{cell}:{cell}", "values": [[value]]}],
+        )
+
+    inserts = [o for o in report["operations"] if o["action"] == "insert_market_column"]
+    mapping = {column_name(c): c for c in range(1, snapshot["column_count"] + 1)}
+    group_changes = [o for o in report["operations"] if o["action"] == "set_market_group_header"]
+    if group_changes:
+        change = group_changes[0]
+        if change["before_range"] in snapshot["merges"]:
+            add("POST", "unmerge_cells", range=f"{sid}!{change['before_range']}")
+    for item in inserts:
+        position = column_number(item["position"])
+        add(
+            "POST",
+            "insert_dimension_range",
+            dimension={
+                "sheetId": sid,
+                "majorDimension": "COLUMNS",
+                "startIndex": position - 1,
+                "endIndex": position,
+            },
+            inheritStyle="AFTER",
+        )
+        mapping = {old: new + (new >= position) for old, new in mapping.items()}
+    for field in report["target_fields"]:
+        if field["source_column"]:
+            continue
+        demand = next(
+            f
+            for f in report["target_fields"]
+            if (field["platform"] == "company" or f["platform"] == field["platform"])
+            and f["metric"] == "demand"
+        )
+        target = field["target_column"]
+        right_source = min(value for value in mapping.values() if value > column_number(target))
+        inherited_columns[target] = column_name(right_source)
+        for total in column_total_rows(snapshot, demand["source_column"], target, product_rows):
+            total_formulas[total["target_cell"]] = total["formula"]
+            set_value(total["target_cell"], {"type": "formula", "text": total["formula"]})
+        label_width = sum(2 if ord(c) > 127 else 1 for c in field["header"]) * 8 + 16
+        add(
+            "PUT",
+            "dimension_range",
+            dimension={
+                "sheetId": sid,
+                "majorDimension": "COLUMNS",
+                "startIndex": column_number(target),
+                "endIndex": column_number(target),
+            },
+            dimensionProperties={"fixedSize": label_width},
+        )
+    for item in report["operations"]:
+        if item["action"] == "set_market_field_header":
+            set_value(item["cell"], item["after"])
+    if group_changes:
+        change = group_changes[0]
+        left, top, right, _ = _bounds(change["after_range"])
+        # 只清理经过结构规划确认的市场部组表头，保留其他部门内容。
+        add(
+            "POST",
+            "values_batch_update",
+            valueRanges=[
+                {
+                    "range": f"{sid}!{change['after_range']}",
+                    "values": [[change["header"], *["" for _ in range(right - left)]]],
+                }
+            ],
+        )
+        add("POST", "merge_cells", range=f"{sid}!{change['after_range']}", mergeType="MERGE_ALL")
+    LOG.info(
+        "近30天补列请求生成：sheet_id=%s inserted=%d operations=%d",
+        sid,
+        len(inserts),
+        len(operations),
+    )
+    return {
+        "forecast": forecast,
+        "report": report,
+        "operations": operations,
+        "column_mapping": {k: column_name(v) for k, v in mapping.items()},
+        "inserted_columns": [i["position"] for i in inserts],
+        "total_formulas": total_formulas,
+        "inherited_columns": inherited_columns,
     }

@@ -5,10 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.domain.sheets.values import build_sales_update, verify_sales_update
+from stocking_sheet_sync.domain.sheets.validation import verify_sales_update
+from stocking_sheet_sync.domain.sheets.values import build_sales_update
 from stocking_sheet_sync.entrypoints.sales_fill import run
 from stocking_sheet_sync.services.sales import inspect_sales
-from tests.test_sales_matching import CONFIG, Reader, config, snapshot
+from tests.domain.test_sales_matching import CONFIG, Reader, config, snapshot
 
 
 class CompleteReader(Reader):

@@ -3,9 +3,10 @@ from dataclasses import replace
 
 import pytest
 
+from stocking_sheet_sync import bootstrap
 from stocking_sheet_sync.entrypoints import rerun as manual_rerun
 from stocking_sheet_sync.services.sync import SyncService
-from tests.test_sync_service import make_service
+from tests.services.test_sync_service import make_service
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ def environment(tmp_path, monkeypatch):
     config = replace(service.config, webhook_secret="")
     closed = []
     monkeypatch.setattr(manual_rerun, "load_config", lambda: config)
-    monkeypatch.setattr(manual_rerun, "RedisStateStore", lambda *a, **k: service.store)
+    monkeypatch.setattr(bootstrap, "RedisStateStore", lambda *a, **k: service.store)
     monkeypatch.setattr(service.store, "close", lambda: closed.append("store"))
 
     class Client:
@@ -27,7 +28,7 @@ def environment(tmp_path, monkeypatch):
         def close(self):
             closed.append(self.name)
 
-    monkeypatch.setattr(manual_rerun, "FeishuClient", Client)
+    monkeypatch.setattr(bootstrap, "FeishuClient", Client)
     return service, client, redis, closed
 
 
@@ -79,7 +80,7 @@ def test_command_fill_failure_preserves_copy_and_returns_success(environment, mo
             history_filler=lambda *a: {"status": "needs_review", "reason": "填充失败"},
         )
 
-    monkeypatch.setattr(manual_rerun, "SyncService", factory)
+    monkeypatch.setattr(bootstrap, "SyncService", factory)
     assert manual_rerun.run(["--record-id", "rec_test"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["result"] == "copied" and result["fill_degraded"]
@@ -93,7 +94,7 @@ def test_command_partial_initialization_closes_created_resources(environment, mo
     def fail(*a):
         raise RuntimeError("初始化失败")
 
-    monkeypatch.setattr(manual_rerun, "FeishuClient", fail)
+    monkeypatch.setattr(bootstrap, "FeishuClient", fail)
     assert manual_rerun.run(["--record-id", "rec_test"]) == 1
     assert closed == ["store"]
     assert client.copy_count == 0

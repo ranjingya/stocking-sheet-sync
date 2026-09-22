@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader
+from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 from stocking_sheet_sync.services.calculation import (
     inspect_forecast,
     quantities,

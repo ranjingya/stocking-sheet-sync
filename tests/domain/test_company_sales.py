@@ -7,7 +7,7 @@ import pytest
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
 from stocking_sheet_sync.services.calculation import inspect_forecast
 from stocking_sheet_sync.settings import load_forecast_config
-from tests.test_forecast_inspect import config, fake_reader
+from tests.services.test_forecast_inspect import config, fake_reader
 
 
 def company_sheet(values=(10, 30)):

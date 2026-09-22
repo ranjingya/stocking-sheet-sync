@@ -3,9 +3,10 @@ from copy import deepcopy
 import pytest
 
 from stocking_sheet_sync.domain.products import column_name
+from stocking_sheet_sync.domain.sheets.layout import build_update
+from stocking_sheet_sync.domain.sheets.validation import verify_update
 from stocking_sheet_sync.entrypoints.layout_apply import run
-from stocking_sheet_sync.services.layout import build_update, verify_update
-from tests.test_sheet_layout import ROOT, config, rules, sheet
+from tests.domain.test_sheet_layout import ROOT, config, rules, sheet
 
 
 def incoming():
@@ -149,7 +150,7 @@ def test_new_sales_column_inherits_total_formula_without_demand_values():
 
 
 def test_native_steps_stop_on_uncertain_insert_without_retry():
-    from stocking_sheet_sync.services.layout import apply_update
+    from stocking_sheet_sync.infrastructure.feishu.sheets import apply_update
 
     calls = []
 
@@ -178,7 +179,7 @@ def test_native_steps_stop_on_uncertain_insert_without_retry():
 
 
 def test_native_layout_rejects_revision_change_before_mutation():
-    from stocking_sheet_sync.services.layout import apply_update
+    from stocking_sheet_sync.infrastructure.feishu.sheets import apply_update
 
     class Client:
         def _request(self, method, path, **kwargs):

@@ -7,9 +7,9 @@ from stocking_sheet_sync.domain.products import column_name
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.entrypoints.layout import run
 from stocking_sheet_sync.settings import load_layout_config
-from tests.test_sales_matching import config
+from tests.domain.test_sales_matching import config
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def rules():

@@ -9,10 +9,9 @@ import uuid
 from contextlib import ExitStack
 from dataclasses import asdict
 
-from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
-from stocking_sheet_sync.infrastructure.redis import RedisStateStore
+from stocking_sheet_sync.bootstrap import build_service
 from stocking_sheet_sync.logging import configure_logging
-from stocking_sheet_sync.services.sync import SyncBusyError, SyncService, validate_run_options
+from stocking_sheet_sync.services.sync import SyncBusyError, validate_run_options
 from stocking_sheet_sync.settings import load_config
 
 LOG = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ def run(argv: list[str] | None = None) -> int:
     configure_logging()
     LOG.info("手动搬运开始：record_id=%s request_id=%s", args.record_id, request_id)
     LOG.info(
-        "重试本批次命令：uv run stocking-sheet-sync-rerun --record-id %s --request-id %s",
+        "重试本批次命令：uv run stocking-sheet-sync rerun --record-id %s --request-id %s",
         args.record_id,
         request_id,
     )
@@ -48,21 +47,7 @@ def run(argv: list[str] | None = None) -> int:
         config = load_config()
         configure_logging(config.log_level)
         with ExitStack() as resources:
-            store = RedisStateStore(
-                config.redis_url,
-                config.redis_key_prefix,
-                socket_timeout_seconds=config.request_timeout_seconds,
-            )
-            resources.callback(store.close)
-            data_client = FeishuClient(
-                config, config.feishu_data_app_id, config.feishu_data_app_secret, "data"
-            )
-            resources.callback(data_client.close)
-            message_client = FeishuClient(
-                config, config.feishu_message_app_id, config.feishu_message_app_secret, "message"
-            )
-            resources.callback(message_client.close)
-            service = SyncService(config, data_client, message_client, store)
+            service = build_service(config, resources)
             summary = service.run_record(args.record_id, force=True, request_id=request_id)
             sys.stdout.write(json.dumps(asdict(summary), ensure_ascii=False) + "\n")
             LOG.info(

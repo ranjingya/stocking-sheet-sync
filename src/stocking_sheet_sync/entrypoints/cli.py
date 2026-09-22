@@ -1,8 +1,9 @@
-"""统一命令入口。"""
-
 import argparse
 import importlib
 import sys
+
+"""统一命令入口。"""
+
 
 COMMANDS = {
     "rerun": ("rerun", "手动重新搬运并填充"),

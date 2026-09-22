@@ -4,7 +4,6 @@ import logging
 from collections import Counter, defaultdict
 
 from stocking_sheet_sync.domain.products import column_number, inspect_sheet, units
-from stocking_sheet_sync.domain.sheets.comparison import comparable_layout, log_height_changes
 from stocking_sheet_sync.domain.sheets.totals import column_total_rows
 
 LOG = logging.getLogger(__name__)
@@ -150,83 +149,4 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
         else "changes_proposed"
         if operations
         else "unchanged",
-    }
-
-
-def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
-    """
-    功能说明：全量回读核对销量、平台合计及非目标内容，记录公式自动重算。
-
-    参数：
-        before：写入前完整快照。
-        after：写入后完整快照。
-        update：本次核对通过的销量填充请求与逐项结果。
-
-    返回值：校验统计与公式重算记录；内容、样式或结构异常时抛出错误。
-    """
-    for key in ("spreadsheet_token", "sheet_id", "row_count", "column_count", "merges"):
-        if before[key] != after[key]:
-            raise ValueError(f"写入后表格身份或结构发生变化：{key}")
-    if before["cells"].keys() != after["cells"].keys():
-        raise ValueError("回读单元格范围不完整")
-    log_height_changes(before["layout"], after["layout"])
-    old_layout = comparable_layout(before["layout"])
-    new_layout = comparable_layout(after["layout"])
-    for key in old_layout.keys() | new_layout.keys():
-        if key != "revision" and old_layout.get(key) != new_layout.get(key):
-            raise ValueError(f"写入后布局发生变化：{key}")
-    targets = {e["target_cell"]: e for e in update["entries"]}
-    total_cells = {e["target_cell"]: e for e in update.get("total_entries", [])}
-    totals, recalculated = defaultdict(int), []
-    for address, old in before["cells"].items():
-        new = after["cells"][address]
-        old_rest, new_rest = dict(old), dict(new)
-        if address in targets:
-            entry = targets[address]
-            value = new.get("value")
-            if type(value) not in (int, float) or value != entry["quantity"] or new.get("formula"):
-                raise ValueError(f"销量回读数量或类型不一致：{address}")
-            totals[entry["platform"]] += value
-            old_rest.pop("value", None)
-            new_rest.pop("value", None)
-        elif address in total_cells:
-            total = total_cells[address]
-            if (
-                new.get("formula") != total["formula"]
-                or new.get("value") != total["expected_quantity"]
-            ):
-                raise ValueError(f"平台合计公式或计算值不符合预期：{address}")
-            if type(new.get("value")) not in (int, float):
-                raise ValueError(f"平台合计没有返回数值：{address}")
-            for key in ("formula", "value"):
-                old_rest.pop(key, None)
-                new_rest.pop(key, None)
-        elif old.get("formula"):
-            # 仅允许原公式计算结果随输入更新，公式文本及格式必须保留。
-            old_value, new_value = old_rest.pop("value", None), new_rest.pop("value", None)
-            if old_value != new_value:
-                if isinstance(new_value, str) and new_value.startswith("#"):
-                    raise ValueError(f"公式重算出现错误：{address} {new_value}")
-                recalculated.append(
-                    {
-                        "cell": address,
-                        "formula": old["formula"],
-                        "before": old_value,
-                        "after": new_value,
-                    }
-                )
-        if old_rest != new_rest:
-            raise ValueError(f"单元格内容、公式或格式发生意外变化：{address}")
-    if dict(totals) != update["summary"]["platform_totals"]:
-        raise ValueError("回读平台销量合计不一致")
-    return {
-        "verified": True,
-        "as_of": update["as_of"],
-        "checked_sales_cells": len(targets),
-        "checked_total_formulas": len(total_cells),
-        "checked_all_cells": len(before["cells"]),
-        "platform_totals": dict(totals),
-        "recalculated_formulas": recalculated,
-        "before_revision": before["revision"],
-        "after_revision": after["revision"],
     }

@@ -4,7 +4,7 @@ import pytest
 
 from stocking_sheet_sync.domain.models import CopyResult
 from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
-from tests.test_sync_service import make_service
+from tests.services.test_sync_service import make_service
 
 
 def setup(tmp_path, *, history=True, forecast=False):

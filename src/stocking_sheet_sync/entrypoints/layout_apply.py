@@ -7,13 +7,10 @@ from pathlib import Path
 
 import httpx
 
-from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet
+from stocking_sheet_sync.domain.sheets.layout import build_update
+from stocking_sheet_sync.domain.sheets.validation import verify_update
+from stocking_sheet_sync.infrastructure.feishu.sheets import apply_update, read_sheet
 from stocking_sheet_sync.logging import configure_logging
-from stocking_sheet_sync.services.layout import (
-    apply_update,
-    build_update,
-    verify_update,
-)
 from stocking_sheet_sync.settings import load_layout_config, load_sales_config
 
 LOG = logging.getLogger(__name__)
