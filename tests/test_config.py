@@ -156,3 +156,23 @@ def test_new_history_only_configuration_and_cleanup_limits(tmp_path):
     env["FILL_NEW_HISTORY_ENABLED"] = "invalid"
     with pytest.raises(ValueError, match="FILL_NEW_HISTORY_ENABLED"):
         load_config(env=env, config_path=path)
+
+
+def test_four_switches_and_explicit_old_flags_take_priority(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG_TEXT)
+    env = {
+        "FEISHU_DATA_APP_ID": "data",
+        "FEISHU_DATA_APP_SECRET": "secret",
+        "FEISHU_MESSAGE_APP_ID": "message",
+        "FEISHU_MESSAGE_APP_SECRET": "secret",
+        "FILL_HISTORY_ENABLED": "true",
+        "FILL_FORECAST_ENABLED": "true",
+        "FILL_OLD_HISTORY_ENABLED": "false",
+        "FILL_OLD_FORECAST_ENABLED": "false",
+        "FILL_NEW_HISTORY_ENABLED": "true",
+        "FILL_NEW_FORECAST_ENABLED": "true",
+    }
+    cfg = load_config(env=env, config_path=path)
+    assert cfg.fill_new_history_enabled and cfg.fill_new_forecast_enabled
+    assert not cfg.fill_history_enabled and not cfg.fill_forecast_enabled

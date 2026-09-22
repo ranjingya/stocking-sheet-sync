@@ -154,6 +154,7 @@ class SyncService:
                 history_enabled=self.config.fill_history_enabled,
                 forecast_enabled=self.config.fill_forecast_enabled,
                 new_history_enabled=self.config.fill_new_history_enabled,
+                new_forecast_enabled=self.config.fill_new_forecast_enabled,
                 target_name=f"{self.config.copy_name_prefix}{source_name}",
                 backup_name=f"{source_name}-{batch_time}",
             )
@@ -192,7 +193,7 @@ class SyncService:
                 self._degrade_fill(summary, str(error))
                 if self.config.fill_history_enabled and summary.history_status == "disabled":
                     summary.history_status = "needs_review"
-                if self.config.fill_forecast_enabled:
+                if self.config.fill_forecast_enabled or self.config.fill_new_forecast_enabled:
                     summary.forecast_status = "needs_review"
                 self._notify_result(current, summary)
                 return summary
@@ -249,12 +250,14 @@ class SyncService:
             self.config.fill_history_enabled
             or self.config.fill_forecast_enabled
             or self.config.fill_new_history_enabled
+            or self.config.fill_new_forecast_enabled
         ):
             previous = self.store.get_fill(state)
             mode_changed = previous is not None and (
                 previous.history_enabled != self.config.fill_history_enabled
                 or previous.forecast_enabled != self.config.fill_forecast_enabled
                 or previous.new_history_enabled != self.config.fill_new_history_enabled
+                or previous.new_forecast_enabled != self.config.fill_new_forecast_enabled
             )
             if mode_changed:
                 stage_status = "needs_review"
@@ -285,6 +288,7 @@ class SyncService:
                     history_enabled=self.config.fill_history_enabled,
                     forecast_enabled=self.config.fill_forecast_enabled,
                     new_history_enabled=self.config.fill_new_history_enabled,
+                    new_forecast_enabled=self.config.fill_new_forecast_enabled,
                 )
                 if not self.store.begin_fill(state, claim):
                     raise RuntimeError("填充已由其他任务接管，请核对状态")
@@ -292,13 +296,15 @@ class SyncService:
                 stage_status = "running"
                 summary.fill_report_path = claim.report_path
                 try:
-                    if self.config.fill_forecast_enabled:
+                    if self.config.fill_forecast_enabled or self.config.fill_new_forecast_enabled:
                         if self.forecast_filler is None:
                             from .forecast_fill import ForecastFiller
 
                             self.forecast_filler = ForecastFiller(
                                 self.data_client,
                                 history=self.config.fill_history_enabled,
+                                legacy_forecast=self.config.fill_forecast_enabled,
+                                new_forecast=self.config.fill_new_forecast_enabled,
                                 new_history=self.config.fill_new_history_enabled,
                             )
                         result = self.forecast_filler(state, claim)
@@ -333,7 +339,7 @@ class SyncService:
                 summary.history_status = (
                     details.history_status if details and details.status == "completed" else ""
                 ) or stage_status
-            if self.config.fill_forecast_enabled:
+            if self.config.fill_forecast_enabled or self.config.fill_new_forecast_enabled:
                 summary.forecast_status = (
                     details.forecast_status if details and details.status == "completed" else ""
                 ) or stage_status
@@ -367,11 +373,15 @@ class SyncService:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
         try:
             enabled = (
-                state.history_enabled or state.forecast_enabled or state.new_history_enabled
+                state.history_enabled
+                or state.forecast_enabled
+                or state.new_history_enabled
+                or state.new_forecast_enabled
                 if state.workflow == "triple"
                 else self.config.fill_history_enabled
                 or self.config.fill_forecast_enabled
                 or self.config.fill_new_history_enabled
+                or self.config.fill_new_forecast_enabled
             )
             labels = {
                 "disabled": "关闭",

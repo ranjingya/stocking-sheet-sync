@@ -237,3 +237,29 @@ def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
     assert result["status"] == "completed"
     assert result["forecast_status"] == "skipped"
     assert writes == ["layout", "sales"]
+
+
+def test_new_forecast_enabled_preserves_history_and_reports_unsupported(tmp_path, monkeypatch):
+    from stocking_sheet_sync.forecast_fill import ForecastFiller
+
+    _, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
+    filler = ForecastFiller(
+        object(),
+        history=False,
+        new_history=True,
+        new_forecast=True,
+        legacy_forecast=False,
+        reader_factory=lambda: reader,
+    )
+    monkeypatch.setattr(filler, "find_sheet", lambda *args: "test")
+    monkeypatch.setattr(
+        "stocking_sheet_sync.forecast_fill.read_sheet", lambda *args, **kwargs: incoming()
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.forecast_fill.inspect_forecast",
+        lambda *args, **kwargs: pytest.fail("新品不可套用老款公式"),
+    )
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert result["forecast_status"] == "unsupported"
+    assert writes == ["layout", "sales"]

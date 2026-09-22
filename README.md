@@ -33,7 +33,7 @@ cp config/config.example.toml config/config.toml
 
 在项目根目录运行程序，主配置默认读取 `config/config.toml`，历史销量来源配置默认读取 `config/sales-sources.toml`。`config/sheet-layout.toml` 提供市场部新品、老品结构规则。三份 TOML 分别维护搬运设置、数仓来源和市场部表头结构。
 
-`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`、`FILL_NEW_HISTORY_ENABLED`、`FILL_HISTORY_ENABLED`、`FILL_FORECAST_ENABLED` 和历史销量使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例、销量来源和市场部结构规则随项目维护。
+`.env` 保存飞书应用凭证、`REDIS_URL`、`WEBHOOK_SECRET`、`FILL_NEW_HISTORY_ENABLED`、`FILL_OLD_HISTORY_ENABLED`、`FILL_OLD_FORECAST_ENABLED` 和历史销量使用的 `WAREHOUSE_*` 数仓参数。`.env` 与实际主配置 `config/config.toml` 由 Git 和 Docker 构建上下文忽略；配置示例、销量来源和市场部结构规则随项目维护。
 
 | 配置区块 | 用途 |
 | --- | --- |
@@ -55,17 +55,19 @@ cp config/config.example.toml config/config.toml
 
 ```dotenv
 FILL_NEW_HISTORY_ENABLED=true
-FILL_HISTORY_ENABLED=true
-FILL_FORECAST_ENABLED=false
+FILL_NEW_FORECAST_ENABLED=false
+FILL_OLD_HISTORY_ENABLED=true
+FILL_OLD_FORECAST_ENABLED=false
 ```
 
 | 开关 | 开启后的行为 |
 | --- | --- |
-| `FILL_NEW_HISTORY_ENABLED` | 独立控制新品近30天销量填充；新品始终跳过预测 |
-| `FILL_HISTORY_ENABLED` | 控制老款历史销量填充；与预测同时开启时填写三个历史窗口 |
-| `FILL_FORECAST_ENABLED` | 填充老款公式预估数量；只写独立预估列，保留人工需求 |
+| `FILL_NEW_HISTORY_ENABLED` | 独立控制新品近30天销量填充 |
+| `FILL_NEW_FORECAST_ENABLED` | 新品预测开关，默认关闭；规则未实现时保留空白并报告状态 |
+| `FILL_OLD_HISTORY_ENABLED` | 控制老款历史销量填充；与预测同时开启时填写三个历史窗口 |
+| `FILL_OLD_FORECAST_ENABLED` | 填充老款公式预估数量；只写独立预估列，保留人工需求 |
 
-三个开关独立。全部关闭时只搬运；以下历史和预测组合描述针对老款。只开历史时填近30天；只开预测时读取数仓作为计算依据，补齐结构后仅填写公式预估数量；两项都开时同时填写当前30天、去年同期30天、去年对应后续周期及公式预估。全公司占比兜底读取源表提供的去年生命周期销量；缺失、无效或合计为零时，对应预估留空。去年同期平台销量为零时同样留空，供人工判断。新品表仅按新品历史开关填写近30天，预测状态为跳过，不查询去年销量或补预测列。新品历史开关关闭时新品表只搬运。未配置的开关默认关闭，示例配置为新品与老款历史开启、老款预测关闭。支持 `true/false`、`1/0`、`yes/no`、`on/off`，大小写不敏感，非法值会阻止启动。开关控制 Webhook 和手动重新搬运流程；显式执行的历史检查、补列及填充命令按其命令参数运行。
+四个开关独立。全部关闭时只搬运；以下历史和预测组合描述针对老款。只开历史时填近30天；只开预测时读取数仓作为计算依据，补齐结构后仅填写公式预估数量；两项都开时同时填写当前30天、去年同期30天、去年对应后续周期及公式预估。全公司占比兜底读取源表提供的去年生命周期销量；缺失、无效或合计为零时，对应预估留空。去年同期平台销量为零时同样留空，供人工判断。新品表仅按新品历史开关填写近30天，预测状态为跳过，不查询去年销量或补预测列。新品历史开关关闭时新品表只搬运。未配置的开关默认关闭，示例配置为新品与老款历史开启、老款预测关闭。支持 `true/false`、`1/0`、`yes/no`、`on/off`，大小写不敏感，非法值会阻止启动。开关控制 Webhook 和手动重新搬运流程；显式执行的历史检查、补列及填充命令按其命令参数运行。
 
 自动历史填充以原始备份创建时的上海日期为预估日，使用该日前30个完整自然日的发货数据。数仓缺数据时降级交付原始备份，不自动改用更早窗口。工作表根据商品字段和市场部表头定位，要求唯一候选；当前自动填充支持结构明确的新品和老品近30天销量；老品已有往年区间及实发减实退列保留，缺少时不自动补齐。结构不明确的表格返回待核验。
 
@@ -265,3 +267,5 @@ uv run --group lint ruff check .
 改名失败时保留备份及填充结果，同批次重试只继续改名和交付，不重新填充或复制备份。
 同批次重试沿用首次保存的时间和名称，已完成任务不会重新改名。历史批次沿用其保存的名称。
 强制重搬创建独立批次；交付文件可以同名，去重使用记录、源文件 token 和手动批次标识，不使用文件名。
+
+新品预测开关为 `FILL_NEW_FORECAST_ENABLED`，默认关闭。当前新品预测规则未实现，开启时预测状态为 `unsupported`（规则未实现），保持预测空白，历史填充按新品历史开关正常执行。老品开关为 `FILL_OLD_HISTORY_ENABLED` 和 `FILL_OLD_FORECAST_ENABLED`；兼容旧环境变量 `FILL_HISTORY_ENABLED`、`FILL_FORECAST_ENABLED`，显式的老品开关优先。四个开关均在根目录 `.env`，随搬运批次冻结，修改后需新批次生效。

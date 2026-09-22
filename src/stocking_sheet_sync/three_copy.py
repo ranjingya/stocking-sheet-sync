@@ -106,6 +106,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
             service.config,
             fill_history_enabled=state.history_enabled,
             fill_new_history_enabled=state.new_history_enabled,
+            fill_new_forecast_enabled=state.new_forecast_enabled,
             fill_forecast_enabled=state.forecast_enabled,
         )
         filler_service = SyncService(
@@ -129,7 +130,11 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
             summary.history_status = (
                 "needs_review" if state.history_enabled or state.new_history_enabled else "disabled"
             )
-            summary.forecast_status = "needs_review" if state.forecast_enabled else "disabled"
+            summary.forecast_status = (
+                "needs_review"
+                if state.forecast_enabled or state.new_forecast_enabled
+                else "disabled"
+            )
             service._degrade_fill(summary, str(error))
         finally:
             summary.target_url = ""

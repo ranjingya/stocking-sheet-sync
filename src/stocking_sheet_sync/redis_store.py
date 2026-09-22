@@ -241,6 +241,7 @@ class RedisStateStore:
                 result.history_enabled,
                 result.forecast_enabled,
                 result.new_history_enabled,
+                result.new_forecast_enabled,
             )
         ):
             raise ValueError("填充记录开关无效")

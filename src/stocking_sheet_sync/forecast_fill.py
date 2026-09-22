@@ -28,6 +28,8 @@ class ForecastFiller(HistoryFiller):
         *,
         history: bool,
         new_history: bool = True,
+        new_forecast: bool = False,
+        legacy_forecast: bool = True,
         reader_factory=None,
         source_path=Path("config/sales-sources.toml"),
         layout_path=Path("config/sheet-layout.toml"),
@@ -40,7 +42,9 @@ class ForecastFiller(HistoryFiller):
         参数：
             client：飞书服务端接口客户端。
             history：是否同时填充三个历史窗口，关闭时仍读取计算输入。
-            new_history：是否填写新品近30天，新品始终跳过预测。
+            new_history：是否填写新品近30天。
+            new_forecast：是否请求新品预测；规则未实现时保留空白并标记。
+            legacy_forecast：是否填写老款预测。
             reader_factory：可选独立数仓读取器工厂，默认使用本项目配置。
             source_path：平台销量配置文件。
             layout_path：市场部表头及款式分类配置文件。
@@ -56,6 +60,8 @@ class ForecastFiller(HistoryFiller):
             layout_path=layout_path,
             reader_factory=reader_factory or (lambda: ForecastReader(WarehouseSettings.load())),
         )
+        self.new_forecast = new_forecast
+        self.legacy_forecast = legacy_forecast
         self.history = history
         self.rules_path = rules_path
         self.forecast_sources_path = forecast_sources_path
@@ -109,6 +115,14 @@ class ForecastFiller(HistoryFiller):
                 else:
                     result = finish("completed", "新品预测跳过，新品历史填充开关关闭")
                     result.update(history_status="disabled", forecast_status="skipped")
+                result["forecast_status"] = "unsupported" if self.new_forecast else "skipped"
+                if self.new_forecast:
+                    LOG.warning("新品预测规则未实现，保留预测为空并交付历史结果")
+                save("result.json", result)
+                return result
+            if category == "legacy" and not self.legacy_forecast:
+                result = super().__call__(copy, claim)
+                result["forecast_status"] = "disabled"
                 save("result.json", result)
                 return result
             product = inspect_sheet(before, config)

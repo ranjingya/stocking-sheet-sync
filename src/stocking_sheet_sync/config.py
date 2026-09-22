@@ -36,6 +36,7 @@ class AppConfig:
     public_base_url: str
     webhook_secret: str
     fill_new_history_enabled: bool = False
+    fill_new_forecast_enabled: bool = False
     temp_max_files: int = 100
     temp_max_bytes: int = 1073741824
     fill_history_enabled: bool = False
@@ -123,13 +124,24 @@ def load_config(
         log_level=_parse_log_level(runtime.get("log_level", "INFO")),
         public_base_url=_parse_public_base_url(web.get("public_base_url")),
         webhook_secret=environment.get("WEBHOOK_SECRET", "").strip(),
+        fill_new_forecast_enabled=_env_bool(environment, "FILL_NEW_FORECAST_ENABLED"),
         fill_new_history_enabled=_env_bool(environment, "FILL_NEW_HISTORY_ENABLED"),
         temp_max_files=_positive_int(runtime.get("temp_max_files", 100), "runtime.temp_max_files"),
         temp_max_bytes=_positive_int(
             runtime.get("temp_max_bytes", 1073741824), "runtime.temp_max_bytes"
         ),
-        fill_history_enabled=_env_bool(environment, "FILL_HISTORY_ENABLED"),
-        fill_forecast_enabled=_env_bool(environment, "FILL_FORECAST_ENABLED"),
+        fill_history_enabled=_env_bool(
+            environment,
+            "FILL_OLD_HISTORY_ENABLED"
+            if "FILL_OLD_HISTORY_ENABLED" in environment
+            else "FILL_HISTORY_ENABLED",
+        ),
+        fill_forecast_enabled=_env_bool(
+            environment,
+            "FILL_OLD_FORECAST_ENABLED"
+            if "FILL_OLD_FORECAST_ENABLED" in environment
+            else "FILL_FORECAST_ENABLED",
+        ),
         fill_report_dir=_text(runtime.get("fill_report_dir", "artifacts/fill")),
     )
 

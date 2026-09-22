@@ -11,7 +11,7 @@
 | 关闭 | 开启 | 老款读取三段历史作为计算输入，只填写公式预估数量 |
 | 开启 | 开启 | 老款同时填写近30天、去年同期近30天、去年对应后续周期、公式预估数量 |
 
-以上组合针对老款，使用 `.env` 中 `FILL_HISTORY_ENABLED` 和 `FILL_FORECAST_ENABLED` 控制。新品由独立的 `FILL_NEW_HISTORY_ENABLED` 控制近30天填充，始终跳过预测；该开关关闭时新品只搬运。预测默认关闭；启用后作用于新搬运批次，普通重复触发复用已保存结果。修改开关不代表重新填充，需要手动重新搬运创建新批次。
+以上组合针对老款，使用 `.env` 中 `FILL_OLD_HISTORY_ENABLED` 和 `FILL_OLD_FORECAST_ENABLED` 控制。新品由独立的 `FILL_NEW_HISTORY_ENABLED` 控制近30天填充，始终跳过预测；该开关关闭时新品只搬运。预测默认关闭；启用后作用于新搬运批次，普通重复触发复用已保存结果。修改开关不代表重新填充，需要手动重新搬运创建新批次。
 
 ## 表格结构
 
@@ -81,3 +81,5 @@
 ## 临时文件保留
 
 每次搬运任务结束时，对 `runtime.fill_report_dir` 下的Excel、JSON、CSV等文件按修改时间从旧到新清理，同时满足最多100个文件、总容量不超过1 GiB。上限由 `runtime.temp_max_files`、`runtime.temp_max_bytes` 配置；清理不跟随符号链接，不影响飞书备份和Redis记录。
+
+新品预测开关为 `FILL_NEW_FORECAST_ENABLED`，默认关闭。当前新品预测规则未实现，开启时预测状态为 `unsupported`（规则未实现），保持预测空白，历史填充按新品历史开关正常执行。老品开关为 `FILL_OLD_HISTORY_ENABLED` 和 `FILL_OLD_FORECAST_ENABLED`；兼容旧环境变量 `FILL_HISTORY_ENABLED`、`FILL_FORECAST_ENABLED`，显式的老品开关优先。四个开关均在根目录 `.env`，随搬运批次冻结，修改后需新批次生效。
