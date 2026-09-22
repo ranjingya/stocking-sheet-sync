@@ -7,10 +7,10 @@ from pathlib import Path
 
 import httpx
 
-from .logging_config import configure_logging
-from .sales_config import load_sales_config
-from .sheet_layout import load_layout_config, plan_market_layout
-from .sheets_api import read_sheet
+from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.source_settings import load_sales_config
 
 LOG = logging.getLogger(__name__)
 

@@ -5,18 +5,18 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.forecast_fill import ForecastFiller
-from stocking_sheet_sync.forecast_inspect import inspect_forecast
-from stocking_sheet_sync.forecast_sheet import (
+from stocking_sheet_sync.domain.models import CopyState, FillState
+from stocking_sheet_sync.domain.products import inspect_sheet
+from stocking_sheet_sync.domain.sheets.forecast_values import (
     build_forecast_values,
     check_forecast_target,
     project_layout,
 )
-from stocking_sheet_sync.layout_apply import build_update, verify_update
-from stocking_sheet_sync.models import CopyState, FillState
-from stocking_sheet_sync.sales_fill import verify_sales_update
-from stocking_sheet_sync.sheet_layout import dated_forecast_rules, plan_market_layout
-from stocking_sheet_sync.sheet_matching import inspect_sheet
+from stocking_sheet_sync.domain.sheets.layout import dated_forecast_rules, plan_market_layout
+from stocking_sheet_sync.domain.sheets.values import verify_sales_update
+from stocking_sheet_sync.services.calculation import inspect_forecast
+from stocking_sheet_sync.services.fill import ForecastFiller
+from stocking_sheet_sync.services.layout import build_update, verify_update
 from tests.test_forecast_inspect import config as all_config
 from tests.test_forecast_inspect import fake_reader
 from tests.test_layout_apply import config, incoming, rules
@@ -142,12 +142,12 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, prepared, after])
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.read_sheet", lambda *a, **kw: next(reads)
+        "stocking_sheet_sync.services.fill.read_sheet", lambda *a, **kw: next(reads)
     )
     apply = Mock(return_value={})
     write = Mock(return_value={})
-    monkeypatch.setattr("stocking_sheet_sync.forecast_fill.apply_update", apply)
-    monkeypatch.setattr("stocking_sheet_sync.forecast_fill.write_sales_ranges", write)
+    monkeypatch.setattr("stocking_sheet_sync.services.fill.apply_update", apply)
+    monkeypatch.setattr("stocking_sheet_sync.services.fill.write_sales_ranges", write)
     copy = CopyState("r", "s", "name", "url", "record", "copied", target_token="test-token")
     claim = FillState("r", "s", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path))
     assert filler(copy, claim)["status"] == "completed"
@@ -164,9 +164,9 @@ def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path,
     reader.styles.return_value.pop()
     filler = ForecastFiller(object(), history=True, reader_factory=lambda: reader)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
-    monkeypatch.setattr("stocking_sheet_sync.forecast_fill.read_sheet", lambda *a, **kw: before)
+    monkeypatch.setattr("stocking_sheet_sync.services.fill.read_sheet", lambda *a, **kw: before)
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.apply_update", lambda *a, **kw: pytest.fail("不可写入")
+        "stocking_sheet_sync.services.fill.apply_update", lambda *a, **kw: pytest.fail("不可写入")
     )
     copy = CopyState("r", "s", "name", "url", "record", "copied", target_token="test-token")
     claim = FillState("r", "s", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path))
@@ -221,7 +221,7 @@ def test_future_header_dates_migrate_without_inserting_or_changing_values():
 
 
 def test_future_header_keeps_manual_history_with_same_date_label():
-    from stocking_sheet_sync.sheet_layout import _recognize_column
+    from stocking_sheet_sync.domain.sheets.layout import _recognize_column
 
     cells = {
         "A3": {"value": "唯品25.9.12-26.1.31"},

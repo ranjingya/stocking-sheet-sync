@@ -1,4 +1,4 @@
-from stocking_sheet_sync.config import load_config
+from stocking_sheet_sync.settings import load_config
 
 runtime_log_level = load_config().log_level.lower()
 

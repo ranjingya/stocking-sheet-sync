@@ -6,7 +6,7 @@ import pytest
 from openpyxl import Workbook
 from openpyxl.styles import Border, Side
 
-from stocking_sheet_sync.sheets_api import read_sheet, write_sales_ranges
+from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet, write_sales_ranges
 
 
 def transport_client(monkeypatch, *, nonempty=False, current=1, timeout=False):
@@ -27,7 +27,9 @@ def transport_client(monkeypatch, *, nonempty=False, current=1, timeout=False):
         return {"revision": 2, "responses": [{"updatedCells": 2}]}
 
     client._request.side_effect = request
-    monkeypatch.setattr("stocking_sheet_sync.sheets_api.create_client", lambda: client)
+    monkeypatch.setattr(
+        "stocking_sheet_sync.infrastructure.feishu.sheets.create_client", lambda: client
+    )
     return client, requests
 
 
@@ -114,9 +116,12 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
         return {"spreadsheet": {"title": "样本"}}
 
     client._request.side_effect = request
-    monkeypatch.setattr("stocking_sheet_sync.sheets_api.create_client", lambda: client)
     monkeypatch.setattr(
-        "stocking_sheet_sync.sheets_api.export_workbook", lambda *a: stream.getvalue()
+        "stocking_sheet_sync.infrastructure.feishu.sheets.create_client", lambda: client
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.infrastructure.feishu.sheets.export_workbook",
+        lambda *a: stream.getvalue(),
     )
     if missing_value:
         with pytest.raises(ValueError, match="完整导出不一致"):
@@ -147,7 +152,7 @@ def test_native_writer_rejects_oversized_or_overlapping_ranges_before_access(
     monkeypatch, operations
 ):
     create = Mock(side_effect=AssertionError("无效范围不应访问飞书"))
-    monkeypatch.setattr("stocking_sheet_sync.sheets_api.create_client", create)
+    monkeypatch.setattr("stocking_sheet_sync.infrastructure.feishu.sheets.create_client", create)
     with pytest.raises(ValueError):
         write_sales_ranges("token", "test", operations, expected_revision=1)
     create.assert_not_called()
@@ -167,7 +172,7 @@ def test_native_writer_sends_typed_formula_and_rejects_circular_total(monkeypatc
 def test_dimension_snapshot_compares_style_definitions_instead_of_export_ids():
     from openpyxl.styles import Font
 
-    from stocking_sheet_sync.sheets_api import dimension_snapshot
+    from stocking_sheet_sync.infrastructure.feishu.sheets import dimension_snapshot
 
     first, second = Workbook(), Workbook()
     first.active.row_dimensions[1].font = Font(name="宋体", size=14)

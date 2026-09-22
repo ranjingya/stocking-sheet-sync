@@ -7,11 +7,15 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.forecast import load_forecast_config
-from stocking_sheet_sync.forecast_inspect import inspect_forecast, quantities, write_forecast_report
-from stocking_sheet_sync.forecast_reader import ForecastReader, load_forecast_sources
-from stocking_sheet_sync.sales_config import WarehouseSettings, load_sales_config
-from stocking_sheet_sync.sheet_layout import load_layout_config
+from stocking_sheet_sync.domain.forecast import load_forecast_config
+from stocking_sheet_sync.domain.sheets.layout import load_layout_config
+from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader, load_forecast_sources
+from stocking_sheet_sync.services.calculation import (
+    inspect_forecast,
+    quantities,
+    write_forecast_report,
+)
+from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
 
 
 def config():

@@ -4,8 +4,8 @@ import logging
 import uuid
 from dataclasses import replace
 
-from .lark_client import CopyRejected
-from .models import CopyResult, CopyState, CopyStep, SyncSummary
+from stocking_sheet_sync.domain.models import CopyResult, CopyState, CopyStep, SyncSummary
+from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
 
 LOG = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         summary：本次请求结果，原位补充各副本链接和填充状态。
     返回值：交付或复用结果；复制失败保留已完成阶段供重试，不将半成品交付。
     """
-    from .sync_service import SyncService
+    from stocking_sheet_sync.services.sync import SyncService
 
     known = [service.store.get_step(state, stage) for stage in ("original", "filled", "delivery")]
     frozen = service.store.get_outcome(state)

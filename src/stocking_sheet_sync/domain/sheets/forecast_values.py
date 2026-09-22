@@ -5,10 +5,15 @@ import re
 from collections import Counter, defaultdict
 from copy import deepcopy
 
-from .sales_reader import units
-from .sales_totals import column_total_rows
-from .sheet_layout import plan_market_layout
-from .sheet_matching import column_name, column_number, inspect_sheet, match_catalog
+from stocking_sheet_sync.domain.products import (
+    column_name,
+    column_number,
+    inspect_sheet,
+    match_catalog,
+)
+from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+from stocking_sheet_sync.infrastructure.warehouse import units
 
 LOG = logging.getLogger(__name__)
 INPUT_METRICS = {"sales": "current", "previous": "previous", "future": "historical_future"}
@@ -90,7 +95,7 @@ def project_layout(snapshot: dict, update: dict, config: dict, rules: dict) -> d
         "value": rules["layout"]["market_header"]
     }
     # 投影只用于坐标与已有内容检查；真实公式引用和样式由服务端插列处理。
-    from .sheet_layout import _bounds
+    from stocking_sheet_sync.domain.sheets.layout import _bounds
 
     projected["merges"] = []
     for area in snapshot["merges"]:

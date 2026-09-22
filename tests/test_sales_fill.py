@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.sales_fill import build_sales_update, run, verify_sales_update
-from stocking_sheet_sync.sales_inspect import inspect_sales
+from stocking_sheet_sync.domain.sheets.values import build_sales_update, run, verify_sales_update
+from stocking_sheet_sync.services.sales import inspect_sales
 from tests.test_sales_matching import CONFIG, Reader, config, snapshot
 
 
@@ -134,11 +134,17 @@ def test_cli_blocks_version_changes_and_calls_no_writer_when_unchanged(monkeypat
     before, report = ready()
     update = build_sales_update(before, report, config())
     after = applied(before, update)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.read_sheet", lambda *a, **k: after)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: CompleteReader())
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.read_sheet", lambda *a, **k: after
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.WarehouseSettings.load", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.SalesReader", lambda *a: CompleteReader()
+    )
     writer = Mock(side_effect=AssertionError("不应调用写入工具"))
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
+    monkeypatch.setattr("stocking_sheet_sync.domain.sheets.values.write_sales_ranges", writer)
     argv = [
         "--spreadsheet-token",
         "test-token",
@@ -161,12 +167,18 @@ def test_cli_blocks_version_changes_and_calls_no_writer_when_unchanged(monkeypat
 
 def test_cli_rechecks_revision_after_warehouse_read_before_write(monkeypatch, tmp_path):
     before, _ = ready()
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.read_sheet", lambda *a, **k: before)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: CompleteReader())
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.current_revision", lambda *a: 2)
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.read_sheet", lambda *a, **k: before
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.WarehouseSettings.load", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.SalesReader", lambda *a: CompleteReader()
+    )
+    monkeypatch.setattr("stocking_sheet_sync.domain.sheets.values.current_revision", lambda *a: 2)
     writer = Mock(return_value={"ok": True})
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
+    monkeypatch.setattr("stocking_sheet_sync.domain.sheets.values.write_sales_ranges", writer)
     assert (
         run(
             [
@@ -198,11 +210,17 @@ def test_cli_source_gap_blocks_even_when_target_is_already_zero(monkeypatch, tmp
         def sales(self, source, skus, as_of):
             return {**super().sales(source, skus, as_of), "issues": ["incomplete_daily_coverage"]}
 
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.read_sheet", lambda *a, **k: after)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.WarehouseSettings.load", lambda *a: None)
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.SalesReader", lambda *a: Missing())
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.read_sheet", lambda *a, **k: after
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.WarehouseSettings.load", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.domain.sheets.values.SalesReader", lambda *a: Missing()
+    )
     writer = Mock(side_effect=AssertionError("来源异常时不应提交"))
-    monkeypatch.setattr("stocking_sheet_sync.sales_fill.write_sales_ranges", writer)
+    monkeypatch.setattr("stocking_sheet_sync.domain.sheets.values.write_sales_ranges", writer)
     assert (
         run(
             [

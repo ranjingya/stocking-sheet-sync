@@ -1,4 +1,4 @@
-from stocking_sheet_sync.card import build_sync_card
+from stocking_sheet_sync.services.notification import build_sync_card
 
 
 def test_build_success_card_contains_record_and_target_links() -> None:

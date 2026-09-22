@@ -9,12 +9,12 @@ from typing import Protocol
 
 from flask import Flask, jsonify, request
 
-from .config import AppConfig, load_config
-from .lark_client import FeishuClient
-from .logging_config import configure_logging
-from .models import SyncSummary
-from .redis_store import RedisStateStore
-from .sync_service import SyncBusyError, SyncService
+from stocking_sheet_sync.domain.models import SyncSummary
+from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
+from stocking_sheet_sync.infrastructure.redis import RedisStateStore
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.services.sync import SyncBusyError, SyncService
+from stocking_sheet_sync.settings import AppConfig, load_config
 
 
 class WebhookSyncService(Protocol):
@@ -38,7 +38,7 @@ def create_app(
     if not app_config.webhook_secret:
         raise ValueError("启动 Webhook 服务前必须配置 WEBHOOK_SECRET")
     configure_logging(app_config.log_level)
-    logger = logging.getLogger("stocking_sheet_sync.web")
+    logger = logging.getLogger("stocking_sheet_sync.entrypoints.web")
     owned_resources: tuple[FeishuClient, FeishuClient, RedisStateStore] | None = None
 
     if service is None:

@@ -6,8 +6,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from .sales_config import identifier
-from .sales_reader import SalesReader, _filters, units
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader, _filters, units
+from stocking_sheet_sync.source_settings import identifier
 
 LOG = logging.getLogger(__name__)
 

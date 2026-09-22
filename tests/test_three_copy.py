@@ -2,8 +2,8 @@ from dataclasses import replace
 
 import pytest
 
-from stocking_sheet_sync.lark_client import CopyRejected
-from stocking_sheet_sync.models import CopyResult
+from stocking_sheet_sync.domain.models import CopyResult
+from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
 from tests.test_sync_service import make_service
 
 

@@ -3,9 +3,9 @@ from datetime import date
 
 import pytest
 
-from stocking_sheet_sync.company_sales import read_company_sales
-from stocking_sheet_sync.forecast import load_forecast_config
-from stocking_sheet_sync.forecast_inspect import inspect_forecast
+from stocking_sheet_sync.domain.forecast import load_forecast_config
+from stocking_sheet_sync.domain.sheets.company import read_company_sales
+from stocking_sheet_sync.services.calculation import inspect_forecast
 from tests.test_forecast_inspect import config, fake_reader
 
 

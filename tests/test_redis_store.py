@@ -2,8 +2,8 @@ from dataclasses import replace
 
 import pytest
 
-from stocking_sheet_sync.models import CopyResult, CopyState
-from stocking_sheet_sync.redis_store import RedisStateStore
+from stocking_sheet_sync.domain.models import CopyResult, CopyState
+from stocking_sheet_sync.infrastructure.redis import RedisStateStore
 from tests.fakes import FakeRedis
 
 

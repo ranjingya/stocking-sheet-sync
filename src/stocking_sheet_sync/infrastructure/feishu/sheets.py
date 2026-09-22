@@ -14,9 +14,9 @@ import httpx
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import to_excel
 
-from .config import load_config
-from .lark_client import FeishuClient
-from .sheet_matching import column_name
+from stocking_sheet_sync.domain.products import column_name
+from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
+from stocking_sheet_sync.settings import load_config
 
 LOG = logging.getLogger(__name__)
 

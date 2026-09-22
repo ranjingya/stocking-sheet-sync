@@ -9,11 +9,18 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .card import build_sync_card
-from .config import AppConfig
-from .lark_client import CopyRejected
-from .models import BaseRecord, CopyResult, CopyState, FillState, SourceSheet, SyncSummary
-from .redis_store import RedisStateStore
+from stocking_sheet_sync.domain.models import (
+    BaseRecord,
+    CopyResult,
+    CopyState,
+    FillState,
+    SourceSheet,
+    SyncSummary,
+)
+from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
+from stocking_sheet_sync.infrastructure.redis import RedisStateStore
+from stocking_sheet_sync.services.notification import build_sync_card
+from stocking_sheet_sync.settings import AppConfig
 
 
 class DataClient(Protocol):
@@ -122,7 +129,7 @@ class SyncService:
             )
             if current is not None:
                 if current.workflow == "triple":
-                    from .three_copy import run_three_copy
+                    from stocking_sheet_sync.services.copies import run_three_copy
 
                     return run_three_copy(self, current, summary)
                 if current.status == "copied":
@@ -161,7 +168,7 @@ class SyncService:
             if not self.store.begin_copy(state):
                 raise RuntimeError("该源表格已被其他任务接管，请重新检查搬运状态")
             if state.workflow == "triple":
-                from .three_copy import run_three_copy
+                from stocking_sheet_sync.services.copies import run_three_copy
 
                 current = state
                 return run_three_copy(self, state, summary)
@@ -214,7 +221,7 @@ class SyncService:
             return summary
         finally:
             try:
-                from .temp_cleanup import cleanup_temp_files
+                from stocking_sheet_sync.infrastructure.artifacts import cleanup_temp_files
 
                 cleanup_temp_files(
                     Path(self.config.fill_report_dir),
@@ -298,7 +305,7 @@ class SyncService:
                 try:
                     if self.config.fill_forecast_enabled or self.config.fill_new_forecast_enabled:
                         if self.forecast_filler is None:
-                            from .forecast_fill import ForecastFiller
+                            from stocking_sheet_sync.services.fill import ForecastFiller
 
                             self.forecast_filler = ForecastFiller(
                                 self.data_client,
@@ -310,7 +317,7 @@ class SyncService:
                         result = self.forecast_filler(state, claim)
                     else:
                         if self.history_filler is None:
-                            from .fill_service import HistoryFiller
+                            from stocking_sheet_sync.services.history import HistoryFiller
 
                             self.history_filler = HistoryFiller(
                                 self.data_client,

@@ -2,8 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from stocking_sheet_sync.layout_apply import build_update, run, verify_update
-from stocking_sheet_sync.sheet_matching import column_name
+from stocking_sheet_sync.domain.products import column_name
+from stocking_sheet_sync.services.layout import build_update, run, verify_update
 from tests.test_sheet_layout import ROOT, config, rules, sheet
 
 
@@ -101,10 +101,10 @@ def test_special_period_and_missing_demand_prevent_write():
 
 def test_expected_revision_rejected_before_batch(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        "stocking_sheet_sync.layout_apply.read_sheet", lambda *args, **kwargs: incoming()
+        "stocking_sheet_sync.services.layout.read_sheet", lambda *args, **kwargs: incoming()
     )
     monkeypatch.setattr(
-        "stocking_sheet_sync.layout_apply.apply_update",
+        "stocking_sheet_sync.services.layout.apply_update",
         lambda *args, **kwargs: pytest.fail("版本不符时不应提交"),
     )
     assert (
@@ -147,7 +147,7 @@ def test_new_sales_column_inherits_total_formula_without_demand_values():
 
 
 def test_native_steps_stop_on_uncertain_insert_without_retry():
-    from stocking_sheet_sync.layout_apply import apply_update
+    from stocking_sheet_sync.services.layout import apply_update
 
     calls = []
 
@@ -176,7 +176,7 @@ def test_native_steps_stop_on_uncertain_insert_without_retry():
 
 
 def test_native_layout_rejects_revision_change_before_mutation():
-    from stocking_sheet_sync.layout_apply import apply_update
+    from stocking_sheet_sync.services.layout import apply_update
 
     class Client:
         def _request(self, method, path, **kwargs):

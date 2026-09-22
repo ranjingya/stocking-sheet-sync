@@ -5,10 +5,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .card import build_sync_card
-from .config import load_config
-from .lark_client import FeishuClient
-from .logging_config import configure_logging
+from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.services.notification import build_sync_card
+from stocking_sheet_sync.settings import load_config
 
 
 class CardMessageClient(Protocol):
@@ -107,7 +107,7 @@ def run(argv: list[str] | None = None) -> int:
 
     config = load_config()
     configure_logging(config.log_level)
-    logger = logging.getLogger("stocking_sheet_sync.manual_notify")
+    logger = logging.getLogger("stocking_sheet_sync.entrypoints.notify")
     message_client = FeishuClient(
         config,
         config.feishu_message_app_id,

@@ -3,8 +3,8 @@ from dataclasses import replace
 
 import pytest
 
-from stocking_sheet_sync import manual_rerun
-from stocking_sheet_sync.sync_service import SyncService
+from stocking_sheet_sync.entrypoints import rerun as manual_rerun
+from stocking_sheet_sync.services.sync import SyncService
 from tests.test_sync_service import make_service
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from stocking_sheet_sync.manual_notify import send_manual_notification
+from stocking_sheet_sync.entrypoints.notify import send_manual_notification
 
 
 class FakeMessageClient:

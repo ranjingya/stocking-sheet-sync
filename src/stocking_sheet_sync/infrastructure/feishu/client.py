@@ -7,8 +7,8 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from .config import AppConfig
-from .models import BaseRecord, CopyResult
+from stocking_sheet_sync.domain.models import BaseRecord, CopyResult
+from stocking_sheet_sync.settings import AppConfig
 
 
 class FeishuApiError(RuntimeError):

@@ -4,8 +4,8 @@ from unittest.mock import Mock
 import pymysql
 import pytest
 
-from stocking_sheet_sync.sales_config import WarehouseSettings, identifier
-from stocking_sheet_sync.sales_reader import SalesReader, units
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader, units
+from stocking_sheet_sync.source_settings import WarehouseSettings, identifier
 from tests.test_sales_matching import config
 
 

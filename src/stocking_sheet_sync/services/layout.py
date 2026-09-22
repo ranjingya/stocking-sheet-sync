@@ -8,13 +8,13 @@ from urllib.parse import quote
 
 import httpx
 
-from .layout_compare import comparable_layout, log_height_changes
-from .logging_config import configure_logging
-from .sales_config import load_sales_config
-from .sales_totals import column_total_rows
-from .sheet_layout import _bounds, load_layout_config, plan_market_layout
-from .sheet_matching import column_name, column_number, inspect_sheet
-from .sheets_api import create_client, read_sheet, revision
+from stocking_sheet_sync.domain.products import column_name, column_number, inspect_sheet
+from stocking_sheet_sync.domain.sheets.comparison import comparable_layout, log_height_changes
+from stocking_sheet_sync.domain.sheets.layout import _bounds, load_layout_config, plan_market_layout
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+from stocking_sheet_sync.infrastructure.feishu.sheets import create_client, read_sheet, revision
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.source_settings import load_sales_config
 
 LOG = logging.getLogger(__name__)
 

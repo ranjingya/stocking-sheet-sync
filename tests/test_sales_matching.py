@@ -4,15 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.sales_config import load_sales_config
-from stocking_sheet_sync.sales_inspect import inspect_sales
-from stocking_sheet_sync.sheet_matching import (
+from stocking_sheet_sync.domain.products import (
     cells_from_envelope,
     column_name,
     inspect_sheet,
     match_catalog,
     sku_text,
 )
+from stocking_sheet_sync.services.sales import inspect_sales
+from stocking_sheet_sync.source_settings import load_sales_config
 
 CONFIG = Path(__file__).resolve().parents[1] / "config/sales-sources.toml"
 

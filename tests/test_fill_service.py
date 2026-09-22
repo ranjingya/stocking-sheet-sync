@@ -3,11 +3,11 @@ from datetime import date
 
 import pytest
 
-from stocking_sheet_sync.fill_service import HistoryFiller, remap_report
-from stocking_sheet_sync.layout_apply import build_update
-from stocking_sheet_sync.models import CopyState, FillState
-from stocking_sheet_sync.sales_inspect import inspect_sales
-from stocking_sheet_sync.sheet_matching import inspect_sheet
+from stocking_sheet_sync.domain.models import CopyState, FillState
+from stocking_sheet_sync.domain.products import inspect_sheet
+from stocking_sheet_sync.services.history import HistoryFiller, remap_report
+from stocking_sheet_sync.services.layout import build_update
+from stocking_sheet_sync.services.sales import inspect_sales
 from tests.test_layout_apply import completed, config, incoming, rules
 
 
@@ -41,14 +41,16 @@ def setup_fill(tmp_path, monkeypatch, issues=()):
     filler = HistoryFiller(object(), reader_factory=lambda: reader)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, prepared, after])
-    monkeypatch.setattr("stocking_sheet_sync.fill_service.read_sheet", lambda *a, **k: next(reads))
+    monkeypatch.setattr(
+        "stocking_sheet_sync.services.history.read_sheet", lambda *a, **k: next(reads)
+    )
     writes = []
     monkeypatch.setattr(
-        "stocking_sheet_sync.fill_service.apply_update",
+        "stocking_sheet_sync.services.history.apply_update",
         lambda *a, **k: writes.append("layout") or {},
     )
     monkeypatch.setattr(
-        "stocking_sheet_sync.fill_service.write_sales_ranges",
+        "stocking_sheet_sync.services.history.write_sales_ranges",
         lambda *a, **k: writes.append("sales") or {},
     )
     copy = CopyState(
@@ -101,7 +103,7 @@ def test_uncertain_structural_write_requires_review_without_sales_write(tmp_path
         writes.append("layout")
         raise RuntimeError("写入响应未知")
 
-    monkeypatch.setattr("stocking_sheet_sync.fill_service.apply_update", fail)
+    monkeypatch.setattr("stocking_sheet_sync.services.history.apply_update", fail)
     assert filler(copy, claim)["status"] == "needs_review"
     assert writes == ["layout"]
 
@@ -109,7 +111,7 @@ def test_uncertain_structural_write_requires_review_without_sales_write(tmp_path
 def test_failed_readback_does_not_retry_sales(tmp_path, monkeypatch):
     filler, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        "stocking_sheet_sync.fill_service.verify_sales_update",
+        "stocking_sheet_sync.services.history.verify_sales_update",
         lambda *a: (_ for _ in ()).throw(ValueError("原公式变化")),
     )
     assert filler(copy, claim)["status"] == "needs_review"
@@ -172,14 +174,16 @@ def test_legacy_pipeline_only_fills_recent_sales(tmp_path, monkeypatch):
     filler = HistoryFiller(object(), reader_factory=lambda: reader)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, after])
-    monkeypatch.setattr("stocking_sheet_sync.fill_service.read_sheet", lambda *a, **k: next(reads))
     monkeypatch.setattr(
-        "stocking_sheet_sync.fill_service.apply_update",
+        "stocking_sheet_sync.services.history.read_sheet", lambda *a, **k: next(reads)
+    )
+    monkeypatch.setattr(
+        "stocking_sheet_sync.services.history.apply_update",
         lambda *a, **k: pytest.fail("已有完整结构不需要写表头"),
     )
     writes = []
     monkeypatch.setattr(
-        "stocking_sheet_sync.fill_service.write_sales_ranges",
+        "stocking_sheet_sync.services.history.write_sales_ranges",
         lambda *a, **k: writes.extend(a[2]) or {},
     )
     copy = CopyState(
@@ -219,7 +223,7 @@ def test_new_history_disabled_does_not_query_or_write(tmp_path, monkeypatch):
 
 
 def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
-    from stocking_sheet_sync.forecast_fill import ForecastFiller
+    from stocking_sheet_sync.services.fill import ForecastFiller
 
     history, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
     filler = ForecastFiller(
@@ -227,10 +231,10 @@ def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(filler, "find_sheet", lambda *args: "test")
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.read_sheet", lambda *args, **kwargs: incoming()
+        "stocking_sheet_sync.services.fill.read_sheet", lambda *args, **kwargs: incoming()
     )
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.inspect_forecast",
+        "stocking_sheet_sync.services.fill.inspect_forecast",
         lambda *args, **kwargs: pytest.fail("新品不可查询去年销量或预测"),
     )
     result = filler(copy, claim)
@@ -240,7 +244,7 @@ def test_forecast_routes_new_styles_to_history_only(tmp_path, monkeypatch):
 
 
 def test_new_forecast_enabled_preserves_history_and_reports_unsupported(tmp_path, monkeypatch):
-    from stocking_sheet_sync.forecast_fill import ForecastFiller
+    from stocking_sheet_sync.services.fill import ForecastFiller
 
     _, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch)
     filler = ForecastFiller(
@@ -253,10 +257,10 @@ def test_new_forecast_enabled_preserves_history_and_reports_unsupported(tmp_path
     )
     monkeypatch.setattr(filler, "find_sheet", lambda *args: "test")
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.read_sheet", lambda *args, **kwargs: incoming()
+        "stocking_sheet_sync.services.fill.read_sheet", lambda *args, **kwargs: incoming()
     )
     monkeypatch.setattr(
-        "stocking_sheet_sync.forecast_fill.inspect_forecast",
+        "stocking_sheet_sync.services.fill.inspect_forecast",
         lambda *args, **kwargs: pytest.fail("新品不可套用老款公式"),
     )
     result = filler(copy, claim)

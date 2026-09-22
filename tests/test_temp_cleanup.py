@@ -1,6 +1,6 @@
 import os
 
-from stocking_sheet_sync.temp_cleanup import cleanup_temp_files
+from stocking_sheet_sync.infrastructure.artifacts import cleanup_temp_files
 
 
 def test_cleanup_keeps_newest_and_enforces_both_limits(tmp_path):

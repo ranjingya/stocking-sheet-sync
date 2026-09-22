@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.layout_preview import run
-from stocking_sheet_sync.sheet_layout import load_layout_config, plan_market_layout
-from stocking_sheet_sync.sheet_matching import column_name
+from stocking_sheet_sync.domain.products import column_name
+from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.entrypoints.layout import run
 from tests.test_sales_matching import config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -212,7 +212,7 @@ def test_offline_cli_needs_no_warehouse_and_emits_reviewable_files(tmp_path, mon
     path.write_text(json.dumps(sheet()), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "stocking_sheet_sync.layout_preview.read_sheet",
+        "stocking_sheet_sync.entrypoints.layout.read_sheet",
         lambda *args: pytest.fail("不应读取线上表格"),
     )
     output = tmp_path / "preview"

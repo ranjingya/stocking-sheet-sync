@@ -4,8 +4,8 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
-from stocking_sheet_sync.models import SyncSummary
-from stocking_sheet_sync.web import create_app
+from stocking_sheet_sync.domain.models import SyncSummary
+from stocking_sheet_sync.entrypoints.web import create_app
 from tests.test_sync_service import make_config
 
 
@@ -39,7 +39,7 @@ def test_webhook_processes_one_record(tmp_path: Path, caplog) -> None:
     service = FakeWebhookService()
     app = create_app(config, service)
     client = app.test_client()
-    caplog.set_level(logging.INFO, logger="stocking_sheet_sync.web")
+    caplog.set_level(logging.INFO, logger="stocking_sheet_sync.entrypoints.web")
     caplog.clear()
 
     response = client.post(
@@ -54,7 +54,9 @@ def test_webhook_processes_one_record(tmp_path: Path, caplog) -> None:
     assert response.get_json()["summary"]["copied"] == 1
     assert service.record_ids == ["rec_test"]
     messages = [
-        record.getMessage() for record in caplog.records if record.name == "stocking_sheet_sync.web"
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "stocking_sheet_sync.entrypoints.web"
     ]
     assert messages == [
         "收到多维表自动化 Webhook：record_id=rec_test",

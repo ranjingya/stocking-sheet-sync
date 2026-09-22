@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from redis import Redis
 
-from .models import CopyResult, CopyState, CopyStep, FillState
+from stocking_sheet_sync.domain.models import CopyResult, CopyState, CopyStep, FillState
 
 _COMPARE_DELETE = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then

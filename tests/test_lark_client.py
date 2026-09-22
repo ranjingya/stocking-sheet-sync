@@ -3,7 +3,11 @@ import time
 import httpx
 import pytest
 
-from stocking_sheet_sync.lark_client import CopyOutcomeUnknown, CopyRejected, FeishuClient
+from stocking_sheet_sync.infrastructure.feishu.client import (
+    CopyOutcomeUnknown,
+    CopyRejected,
+    FeishuClient,
+)
 from tests.test_sync_service import make_config
 
 
@@ -89,7 +93,9 @@ def test_read_request_still_retries(tmp_path, monkeypatch):
     )
     client._access_token = "test-token"
     client._token_expires_at = time.monotonic() + 3600
-    monkeypatch.setattr("stocking_sheet_sync.lark_client.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "stocking_sheet_sync.infrastructure.feishu.client.time.sleep", lambda _: None
+    )
     try:
         assert client._request("GET", "/test") == {"ok": True}
         assert len(attempts) == 2

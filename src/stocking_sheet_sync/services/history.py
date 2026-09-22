@@ -7,15 +7,15 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from .layout_apply import apply_update, build_update, verify_update
-from .models import CopyState, FillState
-from .sales_config import WarehouseSettings, load_sales_config
-from .sales_fill import build_sales_update, verify_sales_update
-from .sales_inspect import inspect_sales, write_report
-from .sales_reader import SalesReader
-from .sheet_layout import load_layout_config, plan_market_layout
-from .sheet_matching import column_name, inspect_sheet, normalize_text
-from .sheets_api import read_sheet, write_sales_ranges
+from stocking_sheet_sync.domain.models import CopyState, FillState
+from stocking_sheet_sync.domain.products import column_name, inspect_sheet, normalize_text
+from stocking_sheet_sync.domain.sheets.layout import load_layout_config, plan_market_layout
+from stocking_sheet_sync.domain.sheets.values import build_sales_update, verify_sales_update
+from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet, write_sales_ranges
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader
+from stocking_sheet_sync.services.layout import apply_update, build_update, verify_update
+from stocking_sheet_sync.services.sales import inspect_sales, write_report
+from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
 
 LOG = logging.getLogger(__name__)
 

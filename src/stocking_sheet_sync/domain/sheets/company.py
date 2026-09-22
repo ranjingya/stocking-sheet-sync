@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import re
 
-from .sales_reader import units
-from .sheet_matching import column_name, normalize_text
+from stocking_sheet_sync.domain.products import column_name, normalize_text
+from stocking_sheet_sync.infrastructure.warehouse import units
 
 LOG = logging.getLogger(__name__)
 

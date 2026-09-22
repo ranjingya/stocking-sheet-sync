@@ -10,11 +10,11 @@ from pathlib import Path
 
 import httpx
 
-from .logging_config import configure_logging
-from .sales_config import WarehouseSettings, load_sales_config
-from .sales_reader import SalesReader
-from .sheet_matching import inspect_sheet, match_catalog
-from .sheets_api import read_sheet as read_sheet_api
+from stocking_sheet_sync.domain.products import inspect_sheet, match_catalog
+from stocking_sheet_sync.infrastructure.feishu.sheets import read_sheet as read_sheet_api
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
 
 LOG = logging.getLogger(__name__)
 

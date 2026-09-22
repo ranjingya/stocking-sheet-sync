@@ -8,7 +8,12 @@ from copy import deepcopy
 from datetime import date, timedelta
 from pathlib import Path
 
-from .sheet_matching import column_name, column_number, inspect_sheet, normalize_text
+from stocking_sheet_sync.domain.products import (
+    column_name,
+    column_number,
+    inspect_sheet,
+    normalize_text,
+)
 
 LOG = logging.getLogger(__name__)
 HISTORY_METRICS = {"history", "history_net"}

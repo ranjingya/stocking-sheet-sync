@@ -8,7 +8,7 @@ from typing import Any
 
 import pymysql
 
-from .sales_config import WarehouseSettings, identifier
+from stocking_sheet_sync.source_settings import WarehouseSettings, identifier
 
 LOG = logging.getLogger(__name__)
 

@@ -10,13 +10,17 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
-from .company_sales import read_company_sales
-from .forecast import allocate_forecast, forecast_window, load_forecast_config
-from .forecast_reader import ForecastReader, load_forecast_sources
-from .logging_config import configure_logging
-from .sales_config import WarehouseSettings, load_sales_config
-from .sheet_layout import load_layout_config
-from .sheet_matching import inspect_sheet, match_catalog
+from stocking_sheet_sync.domain.forecast import (
+    allocate_forecast,
+    forecast_window,
+    load_forecast_config,
+)
+from stocking_sheet_sync.domain.products import inspect_sheet, match_catalog
+from stocking_sheet_sync.domain.sheets.company import read_company_sales
+from stocking_sheet_sync.domain.sheets.layout import load_layout_config
+from stocking_sheet_sync.infrastructure.forecast_source import ForecastReader, load_forecast_sources
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
 
 LOG = logging.getLogger(__name__)
 

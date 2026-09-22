@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.config import load_config
+from stocking_sheet_sync.settings import load_config
 
 CONFIG_TEXT = """
 [feishu]

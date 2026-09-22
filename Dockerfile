@@ -16,4 +16,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 5000
 
-CMD ["./.venv/bin/gunicorn", "-c", "gunicorn.py", "stocking_sheet_sync.web:create_app()"]
+CMD ["./.venv/bin/gunicorn", "-c", "gunicorn.py", "stocking_sheet_sync.entrypoints.web:create_app()"]

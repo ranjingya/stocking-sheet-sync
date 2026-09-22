@@ -8,11 +8,15 @@ from typing import Any
 
 import pytest
 
-from stocking_sheet_sync.config import AppConfig
-from stocking_sheet_sync.lark_client import CopyRejected, FeishuApiError, _parse_base_record
-from stocking_sheet_sync.models import BaseRecord, CopyResult
-from stocking_sheet_sync.redis_store import RedisStateStore
-from stocking_sheet_sync.sync_service import SyncBusyError, SyncService, parse_source_sheet
+from stocking_sheet_sync.domain.models import BaseRecord, CopyResult
+from stocking_sheet_sync.infrastructure.feishu.client import (
+    CopyRejected,
+    FeishuApiError,
+    _parse_base_record,
+)
+from stocking_sheet_sync.infrastructure.redis import RedisStateStore
+from stocking_sheet_sync.services.sync import SyncBusyError, SyncService, parse_source_sheet
+from stocking_sheet_sync.settings import AppConfig
 from tests.fakes import FakeRedis
 
 
@@ -419,7 +423,7 @@ def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypat
 
 @pytest.mark.parametrize("outcome", ["retryable", "needs_review", "exception"])
 def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome):
-    from stocking_sheet_sync.web import create_app
+    from stocking_sheet_sync.entrypoints.web import create_app
 
     service, client, redis, clock = make_service(tmp_path)
     service.config = replace(service.config, fill_history_enabled=True)

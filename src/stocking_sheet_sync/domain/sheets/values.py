@@ -9,14 +9,18 @@ from pathlib import Path
 
 import httpx
 
-from .layout_compare import comparable_layout, log_height_changes
-from .logging_config import configure_logging
-from .sales_config import WarehouseSettings, load_sales_config
-from .sales_inspect import inspect_sales, write_report
-from .sales_reader import SalesReader, units
-from .sales_totals import column_total_rows
-from .sheet_matching import column_number, inspect_sheet
-from .sheets_api import current_revision, read_sheet, write_sales_ranges
+from stocking_sheet_sync.domain.products import column_number, inspect_sheet
+from stocking_sheet_sync.domain.sheets.comparison import comparable_layout, log_height_changes
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+from stocking_sheet_sync.infrastructure.feishu.sheets import (
+    current_revision,
+    read_sheet,
+    write_sales_ranges,
+)
+from stocking_sheet_sync.infrastructure.warehouse import SalesReader, units
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.services.sales import inspect_sales, write_report
+from stocking_sheet_sync.source_settings import WarehouseSettings, load_sales_config
 
 LOG = logging.getLogger(__name__)
 

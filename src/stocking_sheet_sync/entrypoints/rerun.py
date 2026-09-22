@@ -9,11 +9,11 @@ import uuid
 from contextlib import ExitStack
 from dataclasses import asdict
 
-from .config import load_config
-from .lark_client import FeishuClient
-from .logging_config import configure_logging
-from .redis_store import RedisStateStore
-from .sync_service import SyncBusyError, SyncService, validate_run_options
+from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
+from stocking_sheet_sync.infrastructure.redis import RedisStateStore
+from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.services.sync import SyncBusyError, SyncService, validate_run_options
+from stocking_sheet_sync.settings import load_config
 
 LOG = logging.getLogger(__name__)
 

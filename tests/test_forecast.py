@@ -2,7 +2,11 @@ from datetime import date
 
 import pytest
 
-from stocking_sheet_sync.forecast import allocate_forecast, forecast_window, load_forecast_config
+from stocking_sheet_sync.domain.forecast import (
+    allocate_forecast,
+    forecast_window,
+    load_forecast_config,
+)
 
 
 @pytest.mark.parametrize(
@@ -85,7 +89,7 @@ def test_rounding_never_goes_negative_and_matches_total():
 
 
 def test_arbitrary_detail_window_checks_all_dates():
-    from stocking_sheet_sync.sales_reader import SalesReader
+    from stocking_sheet_sync.infrastructure.warehouse import SalesReader
 
     class Reader(SalesReader):
         def _read(self, sql, params):
@@ -109,7 +113,7 @@ def test_arbitrary_detail_window_checks_all_dates():
 
 
 def test_rolling_snapshot_rejects_season_sum():
-    from stocking_sheet_sync.sales_reader import SalesReader
+    from stocking_sheet_sync.infrastructure.warehouse import SalesReader
 
     with pytest.raises(ValueError, match="滚动"):
         SalesReader(None).sales_window(
