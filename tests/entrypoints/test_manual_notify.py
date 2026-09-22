@@ -31,7 +31,7 @@ def test_manual_notification_sends_green_card_to_all_recipients() -> None:
     assert [item[0] for item in client.sent] == ["ou_first", "ou_second"]
     card = client.sent[0][1]
     assert card["header"]["template"] == "green"
-    assert card["header"]["title"]["content"] == "产品下单同步 · 搬运成功"
+    assert card["header"]["title"]["content"] == "下单需求 · 搬运完成"
 
 
 def test_manual_copy_notification_uses_green_card() -> None:

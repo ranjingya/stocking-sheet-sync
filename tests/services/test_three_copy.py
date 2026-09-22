@@ -216,18 +216,17 @@ def test_fill_state_commit_failure_prevents_premature_delivery(tmp_path, monkeyp
     assert len(ops) == 2 and fills == ["copy-2"]
 
 
-def test_notification_contains_all_three_links_and_delivery_source(tmp_path):
+def test_notification_only_shows_delivery_link_and_degradation(tmp_path):
     import json
 
     service, client, redis, clock, ops, files, fills = setup(tmp_path)
     service.history_filler = lambda *a: {"status": "needs_review", "reason": "填充失败"}
     result = service.run_record("rec_test")
     card = json.dumps(client.sent_cards[-1], ensure_ascii=False)
-    assert all(
-        link in card
-        for link in [result.original_backup_url, result.filled_backup_url, result.target_url]
-    )
-    assert "交付内容：原始备份" in card and "填充未完成" in card
+    assert result.target_url in card
+    assert result.original_backup_url not in card
+    assert result.filled_backup_url not in card
+    assert "已交付未填充原表" in card and "仅搬运完成" in card
 
 
 def test_forecast_failure_delivers_original_and_preserves_processing_copy(tmp_path):
@@ -374,3 +373,23 @@ def test_new_forecast_skipped_status_survives_delivery_and_repeat(tmp_path):
     first = service.run_record("rec_test")
     assert first.forecast_status == "skipped" and not first.fill_degraded
     assert service.run_record("rec_test").forecast_status == "skipped"
+
+
+def test_platform_notification_summary_survives_task_recovery(tmp_path):
+    service, client, redis, clock, ops, files, fills = setup(tmp_path, forecast=True)
+    details = {
+        "forecast": {
+            "status": "partial",
+            "completed": 4,
+            "total": 5,
+            "reasons": ["唯品会：去年同期销量为0，保留原预测内容"],
+        }
+    }
+    service.forecast_filler = lambda *a: {"status": "completed", "notification_details": details}
+    first = service.run_record("rec_test")
+    assert first.notification_details == details
+    service.forecast_filler = lambda *a: pytest.fail("恢复时不应重新填充")
+    again = service.run_record("rec_test")
+    assert again.notification_details == details
+    assert "部分完成" in client.sent_cards[-1]["header"]["title"]["content"]
+    assert "4/5平台" in client.sent_cards[-1]["body"]["elements"][0]["content"]

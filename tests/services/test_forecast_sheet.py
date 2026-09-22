@@ -131,10 +131,23 @@ def test_history_only_does_not_require_available_forecast():
     assert blocked["status"] == "needs_review" and not blocked["operations"]
 
 
+@pytest.mark.parametrize("manual_platform", [False, True])
 def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, manual_platform
 ):
     before, reader, report, layout, prepared = setup_sheet()
+    if manual_platform:
+        original_window = reader.sales_window.side_effect
+
+        def window(source, skus, start, stop):
+            result = original_window(source, skus, start, stop)
+            if source["id"] == "vip" and start.year == 2025 and (stop - start).days <= 31:
+                for row in result["rows"]:
+                    row["quantity"] = 0
+            return result
+
+        reader.sales_window.side_effect = window
+        report = inspect_forecast(reader, ["KQ25001"], date(2026, 9, 12), *all_config())
     reader.reset_mock()
     dated = dated_forecast_rules(rules(), report)
     layout = build_update(before, config(), dated, forecast=True)
@@ -158,7 +171,13 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     monkeypatch.setattr("stocking_sheet_sync.services.fill.write_sales_ranges", write)
     copy = CopyState("r", "s", "name", "url", "record", "copied", target_token="test-token")
     claim = FillState("r", "s", "test-token", "2026-09-12", "attempt", report_path=str(tmp_path))
-    assert filler(copy, claim)["status"] == "completed"
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert result["notification_details"]["forecast"]["status"] == (
+        "partial" if manual_platform else "completed"
+    )
+    assert result["notification_details"]["forecast"]["completed"] == (4 if manual_platform else 5)
+    assert result["notification_details"]["forecast"]["total"] == 5
     reader.styles.assert_not_called()
     reader.catalog.assert_called_once()
     assert reader.daily_window.call_count == 3 and reader.sales_window.call_count == 12

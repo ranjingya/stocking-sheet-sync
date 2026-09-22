@@ -305,6 +305,7 @@ class RedisStateStore:
                 reason=claim.reason,
                 history_status=claim.history_status,
                 forecast_status=claim.forecast_status,
+                notification_details=claim.notification_details,
             )
             != claim
         ):

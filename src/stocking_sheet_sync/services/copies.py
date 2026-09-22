@@ -147,6 +147,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         outcome = service.store.save_outcome(
             state,
             {
+                "notification_details": summary.notification_details,
                 "history_status": summary.history_status,
                 "forecast_status": summary.forecast_status,
                 "fill_degraded": summary.fill_degraded,
@@ -158,6 +159,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
                 else filled.target_token,
             },
         )
+    summary.notification_details = outcome.get("notification_details", {})
     expected = original if outcome["delivery_source"] == "original" else filled
     if outcome["source_token"] != expected.target_token:
         raise ValueError("交付决策与已确认的备份文件不一致")

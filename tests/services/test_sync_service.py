@@ -414,7 +414,7 @@ def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypat
     assert result.history_status == "needs_review"
     assert result.target_url.endswith("target-1")
     card = json.dumps(client.sent_cards[-1], ensure_ascii=False)
-    assert "搬运成功，填充未完成" in card
+    assert "仅搬运完成" in card
     assert "sheets/target-1" in card
 
 
@@ -461,9 +461,9 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome,
     assert "填充未完成" in result["reason"]
     assert client.sent_to == ["ou_test"]
     card = client.sent_cards[0]
-    assert card["header"]["template"] == "green"
-    assert "填充未完成" in card["header"]["title"]["content"]
-    assert "处理说明" in json.dumps(card, ensure_ascii=False)
+    assert card["header"]["template"] == "orange"
+    assert "仅搬运完成" in card["header"]["title"]["content"]
+    assert "原因：" in json.dumps(card, ensure_ascii=False)
     # 同一队列任务恢复沿用批次。
     assert not process_one(queue, service, service.config)
     assert queue.finish.call_args.args[2]["result"] == "unchanged"

@@ -3,7 +3,58 @@ from __future__ import annotations
 import html
 import re
 from typing import Any, Literal
-from urllib.parse import urlsplit
+
+
+def summarize_forecast(report: dict, config: dict) -> dict:
+    """
+    功能说明：汇总核验完成的各平台预测结果，保存完整平台数和人工判断原因。
+
+    参数：
+        report：已完成写入核验的预测报告。
+        config：包含平台ID和名称的配置。
+    返回值：可持久化的通知摘要，不依赖本地报告文件。
+    """
+    reasons = []
+    complete = 0
+    any_ready = False
+    reasons_map = {
+        "previous_sales_zero": "去年同期销量为0",
+        "company_lifecycle_sales_unavailable": "缺少可用的全公司生命周期销量",
+    }
+    platforms = config["platforms"]
+    for platform in platforms:
+        items = [
+            (group["style"], item)
+            for group in report["groups"]
+            for item in group["platforms"]
+            if item["platform"] == platform["id"]
+        ]
+        ready = sum(item["status"] == "ready" for _, item in items)
+        any_ready |= bool(ready)
+        if items and ready == len(items):
+            complete += 1
+        for style, item in items:
+            if item["status"] != "ready":
+                label = platform.get("name", platform["id"])
+                if len(report["groups"]) > 1:
+                    label += f"（{style}）"
+                reason = (
+                    "、".join(reasons_map.get(x, "数据需人工核对") for x in item.get("issues", []))
+                    or "数据需人工核对"
+                )
+                reasons.append(f"{label}：{reason}，保留原预测内容")
+    return {
+        "forecast": {
+            "status": "completed"
+            if complete == len(platforms) and platforms
+            else "partial"
+            if any_ready
+            else "manual",
+            "completed": complete,
+            "total": len(platforms),
+            "reasons": list(dict.fromkeys(reasons)),
+        }
+    }
 
 
 def build_sync_card(
@@ -11,123 +62,123 @@ def build_sync_card(
     original_name: str,
     record_url: str,
     status: Literal["success", "failure"],
-    target_folder_token: str,
+    target_folder_token: str = "",
     target_name: str = "",
     target_url: str = "",
     reason: str = "",
-    fill_summary: str = "",
+    history_status: str = "unknown",
+    forecast_status: str = "unknown",
+    details: dict | None = None,
+    degraded: bool = False,
     original_backup_url: str = "",
     filled_backup_url: str = "",
 ) -> dict[str, Any]:
     """
-    功能说明：生成统一样式的产品下单同步结果卡片。
+    功能说明：生成紧凑通知，保留原始记录、实际填充状态、原因和结果按钮。
 
     参数：
-        original_name：原文档名称。
-        record_url：原多维表记录链接。
-        status：搬运状态，支持 success 或 failure。
-        target_folder_token：目标共享文件夹 token。
-        target_name：同步后表格名称，成功时必填。
-        target_url：同步后表格链接，成功时必填。
-        reason：失败或填充降级原因，失败时必填。
-        fill_summary：可选的历史与预测填充阶段说明。
-        original_backup_url：可选原始备份链接。
-        filled_backup_url：可选处理备份链接，具体填充结果由阶段状态说明。
-
-    返回值：
-        可直接发送为 interactive 消息的 Card 2.0 对象。
+        original_name：原记录名称。
+        record_url：原记录链接。
+        status：搬运成功或失败。
+        target_folder_token：调用方提供的目录上下文，不在卡片显示。
+        target_name：调用方提供的交付名称，不在卡片重复显示。
+        target_url：已确认的结果链接。
+        reason：失败或降级原因。
+        history_status：历史阶段状态，unknown表示未核验。
+        forecast_status：预测阶段状态，unknown表示未核验。
+        details：已持久化的平台汇总。
+        degraded：是否交付未填充原表。
+        original_backup_url：原备份上下文，不在卡片显示。
+        filled_backup_url：处理备份上下文，不在卡片显示。
+    返回值：飞书Card 2.0消息体。
     """
-    success = status == "success"
     if status not in {"success", "failure"}:
         raise ValueError("status 必须填写 success 或 failure")
-
-    original_name = _escape_markdown(_clean_text(original_name))
-    record_url = _validate_url(record_url, "原始记录链接")
-    folder_url = _build_folder_url(record_url, target_folder_token)
-    target_name = _escape_markdown(_clean_text(target_name))
-    target_url = _validate_url(target_url, "同步表格链接") if target_url else ""
-    reason = _escape_markdown(_clean_text(reason))
-
-    if not original_name:
+    name = _escape_markdown(_clean_text(original_name))
+    if not name:
         raise ValueError("原文档名称不能为空")
-    if success and (not target_name or not target_url):
-        raise ValueError("同步成功时目标表格名称和链接不能为空")
-    if not success and not reason:
-        raise ValueError("同步失败时失败原因不能为空")
-
-    result_text = f"搬运{'成功' if success else '失败'}"
-    if not success and target_url:
-        result_text = "搬运成功，填充待处理"
-    if success and fill_summary and reason:
-        result_text = "搬运成功，填充未完成"
-    if success:
-        detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n同步副本： [{target_name}]({target_url})"
-        )
-        if fill_summary and reason:
-            detail_content += f"\n处理说明： {reason}"
-        action_text = "查看同步副本"
-        action_url = target_url
-    elif target_url:
-        detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n"
-            f"同步副本： [{target_name}]({target_url})\n"
-            f"处理说明： {reason}"
-        )
-        action_text, action_url = "查看同步副本", target_url
+    record_url = _validate_url(record_url, "原始记录链接")
+    target_url = _validate_url(target_url, "结果表格链接") if target_url else ""
+    if status == "success" and not target_url:
+        raise ValueError("搬运成功时结果链接不能为空")
+    if status == "failure" and not reason:
+        raise ValueError("搬运失败时原因不能为空")
+    details = details or {}
+    reasons = []
+    states = []
+    texts = []
+    for key, label, stage, done in (
+        ("history", "历史数据", history_status, "已填充"),
+        ("forecast", "预测", forecast_status, "已计算"),
+    ):
+        info = details.get(key, {}) if not degraded and status == "success" else {}
+        state = info.get("status", stage)
+        if degraded and state not in {"disabled", "unsupported", "skipped"}:
+            state = "needs_review"
+        states.append(state)
+        if state == "completed":
+            text = "✅ " + done
+        elif state == "partial":
+            text = f"⚠️ 部分完成（{info['completed']}/{info['total']}平台全部完成）"
+        elif state == "disabled":
+            text = "未开启"
+            reasons.append(label + "开关关闭")
+        elif state in {"skipped", "unsupported"}:
+            text = "暂不支持" if key == "forecast" else "未填充"
+            reasons.append("新品预测暂不支持" if key == "forecast" else "当前款式未开启历史填充")
+        elif state == "unknown":
+            text = "未核验"
+            reasons.append(label + "未提供执行结果")
+        else:
+            text = "未填充" if key == "history" else "未计算"
+            if not info.get("reasons") and not reason:
+                reasons.append(label + "执行结果待核验")
+        reasons.extend(info.get("reasons", []))
+        texts.append(f"{label}：{text}")
+    if reason:
+        reasons.insert(0, reason)
+    if degraded:
+        reasons.append("已交付未填充原表")
+    if status == "failure":
+        title, color = "搬运失败", "red"
+    elif degraded:
+        title, color = "仅搬运完成", "orange"
+    elif "partial" in states or ("completed" in states and "manual" in states):
+        title, color = "部分完成", "orange"
+    elif any(s in {"manual", "needs_review", "retryable", "running"} for s in states):
+        title, color = "待人工处理", "orange"
+    elif "completed" in states:
+        title, color = "处理完成", "green"
     else:
-        detail_content = (
-            f"原始记录： [{original_name}]({record_url})\n"
-            "同步副本： 请核对目标文件夹\n"
-            f"失败原因： <font color='red'>{reason}</font>"
-        )
-        action_text = "查看原始记录"
-        action_url = record_url
-
-    for label, url in (("原始备份", original_backup_url), ("处理备份", filled_backup_url)):
-        if url:
-            detail_content += f"\n{label}： [{label}]({_validate_url(url, label)})"
-
-    if fill_summary:
-        detail_content += "\n" + _escape_markdown(_clean_text(fill_summary))
-
+        title, color = "搬运完成", "green"
+    content = f"原始记录：[{name}]({record_url})\n" + " ｜ ".join(texts)
+    if reasons:
+        content += "\n原因：" + _escape_markdown(_clean_text("；".join(dict.fromkeys(reasons))))
+    title = "下单需求 · " + title
     return {
         "schema": "2.0",
-        "config": {
-            "update_multi": True,
-            "width_mode": "default",
-            "summary": {"content": f"产品下单同步 · {result_text}"},
-        },
-        "header": {
-            "title": {"tag": "plain_text", "content": f"产品下单同步 · {result_text}"},
-            "template": ("green" if success else "red"),
-        },
+        "config": {"width_mode": "default", "summary": {"content": title}},
+        "header": {"title": {"tag": "plain_text", "content": title}, "template": color},
         "body": {
             "direction": "vertical",
-            "vertical_spacing": "large",
+            "vertical_spacing": "medium",
             "elements": [
-                {"tag": "markdown", "content": detail_content},
+                {"tag": "markdown", "content": content},
                 {
                     "tag": "column_set",
                     "flex_mode": "none",
-                    "horizontal_spacing": "8px",
                     "columns": [
                         {
                             "tag": "column",
                             "width": "auto",
                             "elements": [
                                 _build_button(
-                                    action_text,
-                                    action_url,
-                                    "primary" if success else "danger",
+                                    "查看结果表格" if target_url else "查看原始记录",
+                                    target_url or record_url,
+                                    "primary",
                                 )
                             ],
-                        },
-                        {
-                            "tag": "column",
-                            "width": "auto",
-                            "elements": [_build_button("打开目标文件夹", folder_url, "default")],
-                        },
+                        }
                     ],
                 },
             ],
@@ -144,14 +195,6 @@ def _build_button(text: str, url: str, button_type: str) -> dict[str, Any]:
         "width": "default",
         "behaviors": [{"type": "open_url", "default_url": url}],
     }
-
-
-def _build_folder_url(reference_url: str, folder_token: str) -> str:
-    token = _clean_text(folder_token)
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
-        raise ValueError("目标文件夹 token 格式无效")
-    parsed = urlsplit(reference_url)
-    return f"{parsed.scheme}://{parsed.netloc}/drive/folder/{token}"
 
 
 def _clean_text(value: object) -> str:

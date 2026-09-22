@@ -458,7 +458,14 @@ class ForecastFiller(HistoryFiller):
                 save,
                 "values",
             )
-            return finish("completed")
+            from stocking_sheet_sync.services.notification import summarize_forecast
+
+            result = finish("completed")
+            result["history_status"] = "completed" if self.history else "disabled"
+            result["forecast_status"] = "completed"
+            result["notification_details"] = summarize_forecast(report, config)
+            save("result.json", result)
+            return result
         except Exception as error:
             LOG.log(
                 logging.DEBUG if isinstance(error, ValueError) else logging.ERROR,

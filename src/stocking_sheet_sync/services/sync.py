@@ -345,6 +345,7 @@ class SyncService:
                         reason=result.get("reason", ""),
                         history_status=result.get("history_status", ""),
                         forecast_status=result.get("forecast_status", ""),
+                        notification_details=result.get("notification_details", {}),
                     )
                     if completed.status not in {"completed", "retryable", "needs_review"}:
                         raise ValueError("填充返回了未知状态")
@@ -356,6 +357,8 @@ class SyncService:
                 if completed.status != "completed":
                     reasons.append(completed.reason or "填充需要核验")
             details = self.store.get_fill(state)
+            if details and details.status == "completed":
+                summary.notification_details = details.notification_details
             if self.config.fill_history_enabled or self.config.fill_new_history_enabled:
                 summary.history_status = (
                     details.history_status if details and details.status == "completed" else ""
@@ -393,35 +396,6 @@ class SyncService:
     def _notify_result(self, state: CopyState, summary: SyncSummary) -> None:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
         try:
-            enabled = (
-                state.history_enabled
-                or state.forecast_enabled
-                or state.new_history_enabled
-                or state.new_forecast_enabled
-                if state.workflow == "triple"
-                else self.config.fill_history_enabled
-                or self.config.fill_forecast_enabled
-                or self.config.fill_new_history_enabled
-                or self.config.fill_new_forecast_enabled
-            )
-            labels = {
-                "disabled": "关闭",
-                "skipped": "跳过",
-                "completed": "完成",
-                "retryable": "待重试",
-                "needs_review": "待核验",
-                "running": "执行结果待确认",
-                "unsupported": "规则未实现",
-            }
-            fill_summary = (
-                f"历史数据：{labels[summary.history_status]}；预测数据：{labels[summary.forecast_status]}"
-                if enabled
-                else ""
-            )
-            if summary.delivery_source:
-                fill_summary += "；交付内容：" + (
-                    "原始备份" if summary.delivery_source == "original" else "处理备份"
-                )
             card = build_sync_card(
                 original_name=state.source_name,
                 record_url=state.record_url,
@@ -430,7 +404,10 @@ class SyncService:
                 target_name=state.target_name,
                 target_url=state.target_url,
                 reason=summary.reason if summary.fill_degraded or summary.failed else "",
-                fill_summary=fill_summary,
+                history_status=summary.history_status,
+                forecast_status=summary.forecast_status,
+                details=summary.notification_details,
+                degraded=summary.fill_degraded,
                 original_backup_url=summary.original_backup_url,
                 filled_backup_url=summary.filled_backup_url,
             )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 SyncResult = Literal["copied", "unchanged", "skipped", "busy", "failed"]
@@ -63,6 +63,7 @@ class SyncSummary:
     failed: int = 0
     result: SyncResult = "unchanged"
     reason: str = ""
+    notification_details: dict[str, Any] = field(default_factory=dict)
     history_status: str = "disabled"
     forecast_status: str = "disabled"
     target_url: str = ""
@@ -89,6 +90,7 @@ class FillState:
     forecast_enabled: bool = False
     new_history_enabled: bool = False
     new_forecast_enabled: bool = False
+    notification_details: dict[str, Any] = field(default_factory=dict)
     history_status: str = ""
     forecast_status: str = ""
 
