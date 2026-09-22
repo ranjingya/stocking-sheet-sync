@@ -95,7 +95,7 @@ class HistoryFiller:
                 "target_url": copy.target_url,
             }
             save("result.json", result)
-            LOG.info(
+            LOG.debug(
                 "历史填充结束：target=%s status=%s reason=%s", copy.target_token, status, reason
             )
             return result
@@ -160,7 +160,13 @@ class HistoryFiller:
             )
             return finish("completed")
         except Exception as error:
-            LOG.exception("历史填充异常：target=%s writing=%s", copy.target_token, writing)
+            LOG.log(
+                logging.DEBUG if isinstance(error, ValueError) else logging.ERROR,
+                "历史填充异常：target=%s writing=%s",
+                copy.target_token,
+                writing,
+                exc_info=True,
+            )
             # 只读阶段的外部故障可重试；任何已经开始的写入都保留现场供核验。
             status = (
                 "needs_review"
@@ -241,6 +247,8 @@ class HistoryFiller:
             "GET", f"/open-apis/sheets/v3/spreadsheets/{quote(token, safe='')}/sheets/query"
         )["sheets"]
         candidates = []
+        rejected = []
+        titles = []
         matching = config["matching"]
         for sheet in sheets:
             if sheet.get("resource_type", "sheet") != "sheet":
@@ -258,8 +266,8 @@ class HistoryFiller:
             labels = {
                 normalize_text(v) for row in data["valueRanges"][0].get("values", []) for v in row
             }
-            if all(
-                labels & {normalize_text(a) for a in matching[key]}
+            missing = [
+                " / ".join(matching[key])
                 for key in (
                     "sku_headers",
                     "style_headers",
@@ -267,10 +275,18 @@ class HistoryFiller:
                     "spec_headers",
                     "market_headers",
                 )
-            ):
+                if not labels & {normalize_text(a) for a in matching[key]}
+            ]
+            title = sheet.get("title", sheet["sheet_id"])
+            if missing:
+                rejected.append(f"工作表「{title}」缺少「{'、'.join(missing)}」表头")
+            else:
                 candidates.append(sheet["sheet_id"])
-        if len(candidates) != 1:
-            raise ValueError(f"需要唯一的下单工作表，实际候选：{candidates}")
+                titles.append(title)
+        if not candidates:
+            raise ValueError("；".join(rejected) or "未找到唯一的下单工作表：没有普通工作表")
+        if len(candidates) > 1:
+            raise ValueError(f"无法确定唯一的下单工作表：{'、'.join(titles)}均符合条件")
         return candidates[0]
 
 
@@ -367,7 +383,7 @@ class ForecastFiller(HistoryFiller):
                 "target_url": copy.target_url,
             }
             save("result.json", result)
-            LOG.info(
+            LOG.debug(
                 "公式预估填充结束：target=%s status=%s reason=%s", copy.target_token, status, reason
             )
             return result
@@ -444,7 +460,13 @@ class ForecastFiller(HistoryFiller):
             )
             return finish("completed")
         except Exception as error:
-            LOG.exception("公式预估填充异常：target=%s writing=%s", copy.target_token, writing)
+            LOG.log(
+                logging.DEBUG if isinstance(error, ValueError) else logging.ERROR,
+                "公式预估填充异常：target=%s writing=%s",
+                copy.target_token,
+                writing,
+                exc_info=True,
+            )
             return finish(
                 "needs_review"
                 if writing or isinstance(error, (ValueError, KeyError))

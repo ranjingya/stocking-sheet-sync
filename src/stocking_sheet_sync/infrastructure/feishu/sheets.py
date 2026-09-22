@@ -62,7 +62,7 @@ def export_workbook(client: FeishuClient, token: str) -> bytes:
         retry=False,
         json_body={"token": token, "type": "sheet", "file_extension": "xlsx"},
     )
-    LOG.info("表格样式导出开始：token=%s", token)
+    LOG.debug("表格样式导出开始：token=%s", token)
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         result = client._request(
@@ -79,7 +79,7 @@ def export_workbook(client: FeishuClient, token: str) -> bytes:
             )
             if not response.is_success or not response.content.startswith(b"PK"):
                 raise RuntimeError(f"表格导出下载失败：status={response.status_code}")
-            LOG.info("表格样式导出完成：bytes=%d", len(response.content))
+            LOG.debug("表格样式导出完成：bytes=%d", len(response.content))
             return response.content
         if result["job_status"] not in (1, 2):
             raise RuntimeError(f"表格导出任务失败：job_status={result['job_status']}")
@@ -220,7 +220,7 @@ def read_sheet(
                                 "author": cell.comment.author,
                             }
                     cells[f"{column_name(col)}{row_no}"] = item
-            LOG.info("服务端读取分页完成：sheet_id=%s rows=%s:%s", sheet_id, start, stop)
+            LOG.debug("服务端读取分页完成：sheet_id=%s rows=%s:%s", sheet_id, start, stop)
         if revision(client, token, sheet_id) != initial:
             raise RuntimeError("读取期间表格有修改，请重新运行")
         layout = {
@@ -335,7 +335,7 @@ def write_sales_ranges(
             for v in row
         ):
             raise ValueError("写入前目标单元格已有内容，请重新核对")
-        LOG.info("开始服务端销量写入：ranges=%d revision=%d", len(operations), expected_revision)
+        LOG.debug("开始服务端销量写入：ranges=%d revision=%d", len(operations), expected_revision)
         return client._request(
             "POST",
             path + "/values_batch_update",
@@ -382,7 +382,7 @@ def apply_update(
             journal["steps"].append(step)
             if on_progress:
                 on_progress(journal)
-            LOG.info("补列开始：token=%s step=%d endpoint=%s", token, index, operation["endpoint"])
+            LOG.debug("补列开始：token=%s step=%d endpoint=%s", token, index, operation["endpoint"])
             step["response"] = client._request(
                 operation["method"],
                 base + "/" + operation["endpoint"],

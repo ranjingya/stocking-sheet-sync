@@ -31,19 +31,23 @@ def copy_step(
             raise ValueError("已保存步骤与本次复制来源或目标不一致")
         if previous.status != "copied":
             raise RuntimeError(f"{stage} 阶段已有未确认复制，请核对文件夹和状态")
-        LOG.info("复用复制步骤：stage=%s token=%s", stage, previous.target_token)
+        LOG.debug("复用复制步骤：stage=%s token=%s", stage, previous.target_token)
         return previous
     step = CopyStep(stage, source, folder, name, uuid.uuid4().hex)
     if not service.store.begin_step(state, step):
         raise RuntimeError(f"{stage} 阶段已由其他任务接管")
-    LOG.info("复制步骤开始：stage=%s source=%s folder=%s", stage, source, folder)
+    LOG.debug("复制步骤开始：stage=%s source=%s folder=%s", stage, source, folder)
     try:
         result = service.data_client.copy_spreadsheet(source, name, folder_token=folder)
     except CopyRejected:
         service.store.cancel_step(state, step)
         raise
     completed = service.store.finish_step(state, step, result, service._now_text())
-    LOG.info("复制步骤完成：stage=%s target=%s", stage, completed.target_url)
+    LOG.info(
+        "%s完成：%s",
+        {"original": "原表备份", "filled": "处理副本", "delivery": "交付复制"}[stage],
+        completed.target_url,
+    )
     return completed
 
 
@@ -175,7 +179,7 @@ def run_three_copy(service, state: CopyState, summary: SyncSummary) -> SyncSumma
         if filled.name != final_name:
             service.data_client.rename_spreadsheet(filled.target_token, final_name)
             filled = service.store.finish_step_rename(state, filled, final_name)
-            LOG.info("备份命名已保存：token=%s name=%s", filled.target_token, final_name)
+            LOG.debug("备份命名已保存：token=%s name=%s", filled.target_token, final_name)
     delivered = copy_step(
         service,
         state,

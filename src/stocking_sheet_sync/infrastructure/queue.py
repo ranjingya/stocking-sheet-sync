@@ -62,7 +62,7 @@ class TaskQueue:
         task_id = self.redis.eval(
             _ENQUEUE, 1, self.stream, record_id, self.status_prefix, self._now()
         )
-        LOG.info("任务已入队：task_id=%s record_id=%s", task_id, record_id)
+        LOG.debug("任务已入队：task_id=%s record_id=%s", task_id, record_id)
         return task_id
 
     def take(self) -> QueuedTask | None:
@@ -121,7 +121,7 @@ class TaskQueue:
             pipe.xack(self.stream, self.group, task.task_id)
             pipe.xdel(self.stream, task.task_id)
             pipe.execute()
-        LOG.info("队列任务完成：task_id=%s status=%s", task.task_id, status)
+        LOG.debug("队列任务完成：task_id=%s status=%s", task.task_id, status)
 
     @staticmethod
     def _now():

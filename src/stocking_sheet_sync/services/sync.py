@@ -93,8 +93,9 @@ class SyncService:
         """
         validate_run_options(force, request_id)
         self.logger.info(
-            "开始处理搬运：record_id=%s force=%s request_id=%s", record_id, force, request_id
+            "开始搬运：record_id=%s", record_id
         )
+        self.logger.debug("搬运参数：force=%s request_id=%s", force, request_id)
         lock = self.store.acquire_run_lock(self.config.lock_ttl_seconds)
         if lock is None:
             self.logger.info("搬运锁被占用：record_id=%s", record_id)
@@ -239,12 +240,14 @@ class SyncService:
                 self.store.release_run_lock(lock)
             except Exception:
                 self.logger.exception("释放搬运锁失败，等待锁自动过期：record_id=%s", record_id)
-            self.logger.info(
-                "搬运处理结束：record_id=%s result=%s reason=%s",
-                record_id,
-                summary.result,
-                summary.reason,
-            )
+            if summary.result == "failed":
+                self.logger.error("搬运失败：record_id=%s 原因：%s", record_id, summary.reason)
+            elif summary.result == "skipped":
+                self.logger.info("跳过搬运：record_id=%s 原因：%s", record_id, summary.reason)
+            else:
+                outcome = "复用已有交付" if summary.result == "unchanged" else "已交付"
+                content = "未填充的原表副本" if summary.fill_degraded else "表格"
+                self.logger.info("搬运完成：%s%s，链接：%s", outcome, content, summary.target_url)
 
     def _fill_copy(self, state: CopyState, summary: SyncSummary) -> bool:
         """
@@ -359,7 +362,7 @@ class SyncService:
                 ) or stage_status
         if reasons:
             self._degrade_fill(summary, "；".join(reasons))
-        self.logger.info(
+        self.logger.debug(
             "副本填充阶段状态：target=%s history=%s forecast=%s report=%s",
             state.target_token,
             summary.history_status,
@@ -381,7 +384,7 @@ class SyncService:
         summary.failed = 0
         summary.result = "copied" if summary.copied else "unchanged"
         summary.reason = "已降级为仅搬运，填充未完成：" + reason
-        self.logger.warning("填充降级：target=%s reason=%s", summary.target_url, reason)
+        self.logger.warning("填充失败：%s", reason)
 
     def _notify_result(self, state: CopyState, summary: SyncSummary) -> None:
         """按 summary 发送 state 的阶段结果卡片，通知异常不会改变已保存的去重记录。"""
@@ -444,7 +447,7 @@ class SyncService:
         for open_id in dict.fromkeys(open_ids):
             try:
                 self.message_client.send_card(open_id, card)
-                self.logger.info("搬运通知发送成功：open_id=%s", open_id)
+                self.logger.debug("搬运通知发送成功：open_id=%s", open_id)
             except Exception:
                 self.logger.exception("搬运通知发送失败：open_id=%s", open_id)
 

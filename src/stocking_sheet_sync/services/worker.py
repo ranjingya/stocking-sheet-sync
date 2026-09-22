@@ -24,10 +24,11 @@ def process_one(queue, service, config) -> bool:
         return False
     state = queue.status(task.task_id)
     if int(state.get("attempts", 0)) >= config.queue_max_attempts:
+        LOG.error("任务停止重试：record_id=%s 已达次数上限，请人工核对", task.record_id)
         queue.finish(task, "failed", {"reason": "达到最大执行次数，请核对批次与在线文件后手动处理"})
         return False
     attempt = queue.begin(task)
-    LOG.info(
+    LOG.debug(
         "后台任务开始：task_id=%s record_id=%s attempt=%d", task.task_id, task.record_id, attempt
     )
     try:
@@ -46,7 +47,11 @@ def process_one(queue, service, config) -> bool:
             queue.finish(task, "completed", result)
             return False
     if attempt >= config.queue_max_attempts:
+        LOG.error("任务停止重试：record_id=%s 已达次数上限，请人工核对", task.record_id)
         queue.finish(task, "failed", result)
         return False
+    LOG.warning(
+        "任务将重试：record_id=%s 第%d/%d次", task.record_id, attempt + 1, config.queue_max_attempts
+    )
     queue.defer(task, result.get("reason", "任务执行失败"))
     return True

@@ -419,7 +419,7 @@ def test_fill_storage_failure_card_keeps_confirmed_copy_link(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("outcome", ["retryable", "needs_review", "exception"])
-def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome):
+def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome, caplog):
     from unittest.mock import Mock
 
     from stocking_sheet_sync.entrypoints.web import create_app
@@ -437,6 +437,7 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome)
         return {"status": outcome, "reason": "历史数据检查未通过"}
 
     service.history_filler = fill
+    caplog.set_level("INFO")
     queue = Mock()
     queue.enqueue.return_value = "1-0"
     queue.take.return_value = QueuedTask("1-0", "rec_test")
@@ -453,6 +454,8 @@ def test_fill_failure_returns_successful_copy_through_webhook(tmp_path, outcome)
     assert result["result"] == "copied"
     assert result["failed"] == 0
     assert result["fill_degraded"] is True
+    assert "填充失败：" in caplog.text
+    assert "搬运完成：已交付未填充的原表副本，链接：" in caplog.text
     assert "填充未完成" in result["reason"]
     assert client.sent_to == ["ou_test"]
     card = client.sent_cards[0]

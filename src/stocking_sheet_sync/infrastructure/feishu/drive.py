@@ -97,11 +97,11 @@ class DriveOperations:
         path = f"/open-apis/sheets/v3/spreadsheets/{quote(spreadsheet_token, safe='')}"
         current = self._request("GET", path)["spreadsheet"]["title"]
         if current == title:
-            self.logger.info("备份标题已匹配：token=%s title=%s", spreadsheet_token, title)
+            self.logger.debug("备份标题已匹配：token=%s title=%s", spreadsheet_token, title)
             return
-        self.logger.info("更新备份标题：token=%s title=%s", spreadsheet_token, title)
+        self.logger.debug("更新备份标题：token=%s title=%s", spreadsheet_token, title)
         self._request("PATCH", path, retry=False, json_body={"title": title})
         actual = self._request("GET", path)["spreadsheet"]["title"]
         if actual != title:
             raise RuntimeError("备份标题回读不一致，请重试同一批次核对")
-        self.logger.info("备份标题核验完成：token=%s", spreadsheet_token)
+        self.logger.debug("备份标题核验完成：token=%s", spreadsheet_token)

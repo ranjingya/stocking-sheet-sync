@@ -47,7 +47,7 @@ class RunLease:
             _CURRENT.reset(self.context_token)
             self.context_token = None
             raise
-        LOG.info("运行锁自动续期开始：ttl=%s interval=%s", self.ttl, self.ttl / 3)
+        LOG.debug("运行锁自动续期开始：ttl=%s interval=%s", self.ttl, self.ttl / 3)
 
     def renew(self) -> bool:
         """续期一次；失败后标记失效，禁止重新获取或覆盖其他任务的锁。"""
@@ -82,4 +82,4 @@ class RunLease:
             self.thread.join()
         if self.context_token is not None:
             _CURRENT.reset(self.context_token)
-        LOG.info("运行锁自动续期结束：lost=%s", self.lost.is_set())
+        LOG.debug("运行锁自动续期结束：lost=%s", self.lost.is_set())

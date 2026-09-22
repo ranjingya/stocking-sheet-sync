@@ -13,7 +13,11 @@ def configure_logging(level_name: str = "INFO") -> None:
     level = getattr(logging, level_name, logging.INFO)
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        format=(
+            "%(asctime)s %(levelname)s %(name)s - %(message)s"
+            if level <= logging.DEBUG
+            else "%(asctime)s %(levelname)s %(message)s"
+        ),
     )
     dependency_level = logging.DEBUG if level <= logging.DEBUG else logging.WARNING
     logging.getLogger("httpx").setLevel(dependency_level)

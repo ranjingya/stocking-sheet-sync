@@ -29,7 +29,7 @@ def cleanup_temp_files(root: Path, max_files: int, max_bytes: int) -> None:
             stat = path.stat()
             files.append((stat.st_mtime_ns, str(path), path, stat.st_size))
     count, size = len(files), sum(f[3] for f in files)
-    LOG.info("临时文件清理开始：files=%d bytes=%d", count, size)
+    LOG.debug("临时文件清理开始：files=%d bytes=%d", count, size)
     for _, _, path, length in sorted(files):
         if count <= max_files and size <= max_bytes:
             break
@@ -40,4 +40,4 @@ def cleanup_temp_files(root: Path, max_files: int, max_bytes: int) -> None:
             LOG.info("清理最老临时文件：path=%s bytes=%d", path, length)
         except OSError:
             LOG.warning("临时文件删除失败：path=%s", path, exc_info=True)
-    LOG.info("临时文件清理结束：files=%d bytes=%d", count, size)
+    LOG.debug("临时文件清理结束：files=%d bytes=%d", count, size)

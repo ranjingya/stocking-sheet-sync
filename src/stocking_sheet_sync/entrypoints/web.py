@@ -90,7 +90,7 @@ def create_app(
                 }
             ), 400
 
-        logger.info(
+        logger.debug(
             "收到多维表自动化 Webhook：record_id=%s",
             record_id,
         )

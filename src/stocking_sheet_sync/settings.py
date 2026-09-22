@@ -469,7 +469,7 @@ def load_forecast_config(path: Path = Path("config/config.toml")) -> dict:
         value = rules["fallback"][name]
         if type(value) is not int or value <= 0:
             raise ValueError("兜底阈值必须为正整数")
-    LOG.info("预测规则加载完成：path=%s", path)
+    LOG.debug("预测规则加载完成：path=%s", path)
     return rules
 
 
@@ -553,7 +553,7 @@ def load_layout_config(path: Path, sales_config: dict) -> dict:
                 raise ValueError("预估标题模板必须包含一个platform占位符")
             if re.search(r"[{}]", template.replace("{platform}", "")):
                 raise ValueError("预估标题模板只支持platform占位符")
-    LOG.info("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
+    LOG.debug("市场部结构规则加载完成：path=%s platforms=%d", path, len(order))
     return rules
 
 

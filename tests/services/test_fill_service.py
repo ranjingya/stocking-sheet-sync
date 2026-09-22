@@ -130,7 +130,8 @@ def test_report_remapping_rejects_changed_product():
 
 
 @pytest.mark.parametrize("count", [0, 1, 2])
-def test_select_sheet_by_headers_requires_unique_candidate(count):
+@pytest.mark.parametrize("missing_market", [False, True])
+def test_select_sheet_by_headers_requires_unique_candidate(count, missing_market):
     class Client:
         def _request(self, method, path, **kwargs):
             if path.endswith("sheets/query"):
@@ -149,7 +150,8 @@ def test_select_sheet_by_headers_requires_unique_candidate(count):
                 "valueRanges": [
                     {
                         "range": kwargs["params"]["ranges"],
-                        "values": [["商品编码", "款式编码", "商品名称", "颜色规格", "市场部"]],
+                        "values": [["商品编码", "款式编码", "商品名称", "颜色规格"]
+                                   + ([] if missing_market else ["市场部"])],
                     }
                 ]
             }
@@ -158,7 +160,10 @@ def test_select_sheet_by_headers_requires_unique_candidate(count):
         Client(),
         config_path=Path("config/config.example.toml"),
     )
-    if count == 1:
+    if count and missing_market:
+        with pytest.raises(ValueError, match="工作表「任意名称」缺少「市场部」表头"):
+            filler.find_sheet("token", config())
+    elif count == 1:
         assert filler.find_sheet("token", config()) == "0"
     else:
         with pytest.raises(ValueError, match="唯一"):

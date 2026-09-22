@@ -61,7 +61,6 @@ def test_webhook_processes_one_record(tmp_path: Path, caplog) -> None:
         if record.name == "stocking_sheet_sync.entrypoints.web"
     ]
     assert messages == [
-        "收到多维表自动化 Webhook：record_id=rec_test",
         "Webhook任务已接收：record_id=rec_test task_id=123-0",
     ]
 
