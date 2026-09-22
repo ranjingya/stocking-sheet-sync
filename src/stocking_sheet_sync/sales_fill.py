@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from .layout_compare import comparable_layout, log_height_changes
 from .logging_config import configure_logging
 from .sales_config import WarehouseSettings, load_sales_config
 from .sales_inspect import inspect_sales, write_report
@@ -179,8 +180,11 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
             raise ValueError(f"写入后表格身份或结构发生变化：{key}")
     if before["cells"].keys() != after["cells"].keys():
         raise ValueError("回读单元格范围不完整")
-    for key in before["layout"]:
-        if key != "revision" and before["layout"][key] != after["layout"].get(key):
+    log_height_changes(before["layout"], after["layout"])
+    old_layout = comparable_layout(before["layout"])
+    new_layout = comparable_layout(after["layout"])
+    for key in old_layout.keys() | new_layout.keys():
+        if key != "revision" and old_layout.get(key) != new_layout.get(key):
             raise ValueError(f"写入后布局发生变化：{key}")
     targets = {e["target_cell"]: e for e in update["entries"]}
     total_cells = {e["target_cell"]: e for e in update.get("total_entries", [])}

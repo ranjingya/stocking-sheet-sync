@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .layout_compare import comparable_layout, log_height_changes
 from .logging_config import configure_logging
 from .sales_config import load_sales_config
 from .sales_totals import column_total_rows
@@ -158,8 +159,11 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     for key in ("spreadsheet_token", "sheet_id", "title"):
         if before.get(key) != after.get(key):
             raise ValueError(f"回读表格身份变化：{key}")
-    for key in ("hidden", "sheet_format", "data_validations"):
-        if before["layout"].get(key) != after["layout"].get(key):
+    log_height_changes(before["layout"], after["layout"])
+    old_layout = comparable_layout(before["layout"])
+    new_layout = comparable_layout(after["layout"])
+    for key in ("hidden", "sheet_format", "data_validations", "row_dimensions"):
+        if old_layout.get(key) != new_layout.get(key):
             raise ValueError(f"原工作表布局发生变化：{key}")
     if "column_dimensions" in before["layout"]:
         for old, new in update["column_mapping"].items():
@@ -229,10 +233,6 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
                     f"{update.get('inherited_columns', {}).get(target, demand)}{row}"
                 ].get(key):
                     raise ValueError(f"新增销量列未继承需求列样式：{target}{row}")
-    if before["layout"].get("row_dimensions", before["layout"].get("row_heights")) != after[
-        "layout"
-    ].get("row_dimensions", after["layout"].get("row_heights")):
-        raise ValueError("原行高发生变化")
     expected_merges = set()
     changed_groups = {
         op["before_range"]

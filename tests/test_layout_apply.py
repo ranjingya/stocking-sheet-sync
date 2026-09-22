@@ -256,3 +256,13 @@ def test_layout_verifier_preserves_rich_text_segments():
     after["cells"]["E4"]["rich_text"][0]["segmentStyle"]["bold"] = False
     with pytest.raises(ValueError, match="rich_text"):
         verify_update(before, after, update, config(), rules())
+
+
+def test_layout_height_change_is_allowed():
+    before = incoming()
+    before["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="0" />'
+    update = build_update(before, config(), rules())
+    after = completed(before, update)
+    after["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="16" />'
+    after["layout"]["row_heights"] = [{"rows": "1:7", "height": 16}]
+    assert verify_update(before, after, update, config(), rules())["verified"]

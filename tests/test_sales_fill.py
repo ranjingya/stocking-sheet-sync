@@ -260,3 +260,16 @@ def test_numeric_total_is_not_overwritten_and_partial_subtotals_are_not_copied()
     before["cells"]["F7"]["formula"] = "=SUM(F4:F4)"
     plan = build_sales_update(before, report, config())
     assert plan["total_entries"] == []
+
+
+def test_height_change_does_not_block_but_width_change_does():
+    before, report = ready()
+    before["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="0" />'
+    update = build_sales_update(before, report, config())
+    after = applied(before, update)
+    after["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="8" defaultRowHeight="16" />'
+    after["layout"]["row_heights"] = [16]
+    assert verify_sales_update(before, after, update)["verified"]
+    after["layout"]["sheet_format"] = '<sheetFormatPr baseColWidth="9" defaultRowHeight="16" />'
+    with pytest.raises(ValueError, match="sheet_format"):
+        verify_sales_update(before, after, update)
