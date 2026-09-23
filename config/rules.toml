@@ -45,6 +45,7 @@ forecast_header = "预估-{platform}"
 forecast_aliases = ["{platform}公式预估"]
 
 [forecast]
+rounding_unit = 10
 
 [forecast.seasons]
 summer_labels = ["夏款"]

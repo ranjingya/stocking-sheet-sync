@@ -62,11 +62,11 @@ def test_platform_growth_and_decline():
         {"a": 30, "b": 10}, 80, 100, None, load_forecast_config(Path("config/config.example.toml"))
     )
     assert r["total"] == 50
-    assert r["rows"]["a"]["rounded"] == 38
-    assert r["rows"]["b"]["rounded"] == 13
-    assert r["rows"]["a"]["quantity"] == 37
-    assert r["rows"]["b"]["quantity"] == 13
-    assert r["rounding_difference"] == -1
+    assert r["rows"]["a"]["rounded"] == 40
+    assert r["rows"]["b"]["rounded"] == 10
+    assert r["rows"]["a"]["quantity"] == 40
+    assert r["rows"]["b"]["quantity"] == 10
+    assert r["rounding_difference"] == "0"
 
 
 def test_company_fallback_only_changes_shares():
@@ -110,7 +110,7 @@ def test_rounding_never_goes_negative_and_matches_total():
             current = {str(i): 20 for i in range(n)}
             r = allocate_forecast(current, 100, historical, None, rules)
             assert sum(v["quantity"] for v in r["rows"].values()) == r["total"]
-            assert all(v["quantity"] >= 0 for v in r["rows"].values())
+            assert all(v["quantity"] >= 0 and v["quantity"] % 10 == 0 for v in r["rows"].values())
 
 
 def test_arbitrary_detail_window_checks_all_dates():
@@ -144,3 +144,20 @@ def test_rolling_snapshot_rejects_season_sum():
         SalesReader(None).sales_window(
             {"kind": "snapshot"}, ["sku"], date(2025, 9, 1), date(2026, 2, 1)
         )
+
+
+@pytest.mark.parametrize("raw,expected", [(0, 0), (4, 0), (5, 10), (14, 10), (15, 20), (25, 30)])
+def test_forecast_rounds_each_sku_to_nearest_ten(raw, expected):
+    rules = load_forecast_config(Path("config/config.example.toml"))
+    result = allocate_forecast({"a": 20}, 20, raw, None, rules)
+    assert result["rows"]["a"]["quantity"] == expected
+    assert result["total"] == expected
+
+
+def test_forecast_rounds_directly_without_prior_integer_rounding_or_rebalancing():
+    rules = load_forecast_config(Path("config/config.example.toml"))
+    result = allocate_forecast({"a": 20, "b": 20}, 100, 74, None, rules)
+    assert result["rows"]["a"]["unrounded"] == "14.8"
+    assert [row["quantity"] for row in result["rows"].values()] == [10, 10]
+    assert result["total"] == 20
+    assert result["rounding_difference"] == "-9.6"

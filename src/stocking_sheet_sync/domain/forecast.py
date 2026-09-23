@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 LOG = logging.getLogger(__name__)
 
@@ -14,15 +14,15 @@ def allocate_forecast(
     rules: dict,
 ) -> dict:
     """
-    功能说明：计算单平台单款老品同比需求、SKU占比和整件分配。
+    功能说明：计算单平台单款老品同比需求、SKU占比和整倍数四舍五入。
 
     参数：
         current：本次查询范围内的同款SKU集合及当前30天平台实发量。
         previous：该平台该款去年同期30天实发总量，必须大于零。
         historical_future：该平台该款去年对应后续周期实发总量。
         company：可选表内全公司同款相同SKU范围的去年生命周期销量，仅用于占比兜底。
-        rules：经过校验的预测规则，包含严格小于阈值。
-    返回值：款式总量、占比来源、逐SKU四舍五入及差额调整证据；无效输入抛错。
+        rules：经过校验的预测规则，包含严格小于阈值和取整单位rounding_unit。
+    返回值：款式总量、占比来源、逐SKU四舍五入证据；无效输入抛错。
     """
     if not current or any(not isinstance(k, str) or not k for k in current):
         raise ValueError("需要完整且有效的SKU集合")
@@ -47,12 +47,14 @@ def allocate_forecast(
     if denominator == 0:
         raise ValueError("占比参考销量为零，无法分配需求")
     exact_total = Decimal(historical_future) * total_sales / previous
-    total = int(exact_total.to_integral_value(rounding=ROUND_CEILING))
+    unit = rules.get("rounding_unit", 10)
+    if type(unit) is not int or unit <= 0:
+        raise ValueError("预测取整单位必须为正整数")
     rows = {}
     order = sorted(weights, key=lambda k: (-weights[k], k))
     for sku in order:
-        exact = Decimal(total) * weights[sku] / denominator
-        rounded = int(exact.to_integral_value(rounding=ROUND_HALF_UP))
+        exact = exact_total * weights[sku] / denominator
+        rounded = int((exact / unit).to_integral_value(rounding=ROUND_HALF_UP)) * unit
         rows[sku] = {
             "weight": weights[sku],
             "share": str(Decimal(weights[sku]) / denominator),
@@ -61,19 +63,10 @@ def allocate_forecast(
             "adjustment": 0,
             "quantity": rounded,
         }
-    difference = total - sum(r["quantity"] for r in rows.values())
-    remaining = difference
-    for sku in order:
-        change = remaining if remaining >= 0 else -min(-remaining, rows[sku]["quantity"])
-        rows[sku]["adjustment"] = change
-        rows[sku]["quantity"] += change
-        remaining -= change
-        if remaining == 0:
-            break
-    if remaining or sum(r["quantity"] for r in rows.values()) != total:
-        raise ValueError("SKU分配合计校验失败")
+    total = sum(r["quantity"] for r in rows.values())
+    difference = Decimal(total) - exact_total
     LOG.debug(
-        "老款需求计算完成：skus=%d total=%d share_source=%s adjustment=%d",
+        "老款需求计算完成：skus=%d total=%d share_source=%s rounding_difference=%s",
         len(rows),
         total,
         "company" if use_company else "platform",
@@ -86,6 +79,6 @@ def allocate_forecast(
         "unrounded_total": str(exact_total),
         "total": total,
         "share_source": "company" if use_company else "platform",
-        "rounding_difference": difference,
+        "rounding_difference": str(difference),
         "rows": rows,
     }
