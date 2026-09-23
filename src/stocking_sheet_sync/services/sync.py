@@ -127,6 +127,11 @@ class SyncService:
                 if document_type != "sheet":
                     raise RuntimeError(f"链接对应的文档不是电子表格，而是 {document_type}")
                 source_name = title or source_name
+            self.logger.info(
+                "任务来源：record_id=%s 源表名=%s",
+                record_id,
+                " ".join(source_name.split()),
+            )
             current = (
                 self.store.get_state(record_id, source_token, request_id=request_id)
                 if force
