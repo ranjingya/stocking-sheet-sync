@@ -213,3 +213,27 @@ sales = "猫超近30天"
 demand = "天猫超市"
 history = "猫超{period}"
 history_pattern = "^(?:猫超|天猫超市)(?P<period>\\d.+)$"
+
+[platforms.jd_self.summary]
+table = "ads_rpa_jd_inventory_product_detail"
+sku = "spec_code"
+date = "stat_date"
+row_id = "__id"
+current = "sale_jdzy_qty_30d"
+previous = "ly_sale_jdzy_qty_30d"
+
+[platforms.pdd.summary]
+table = "ads_whs_outstock_pdd_base_sku_window"
+sku = "spec_code"
+date = "stat_date"
+row_id = "__id"
+current = "sales_out_qty_30d"
+previous = "ly_sales_out_qty_30d"
+
+[platforms.vip.summary]
+table = "ads_whs_outstock_wp_base_sku_window"
+sku = "spec_code"
+date = "stat_date"
+row_id = "__id"
+current = "sales_out_qty_30d"
+previous = "ly_sales_out_qty_30d"

@@ -64,7 +64,7 @@ def test_snapshot_requires_exact_requested_end_date(monkeypatch):
     result = client.sales(config()["platforms"][0], ["00123"], date(2026, 9, 14))
     assert result["issues"] == ["snapshot_or_skus_missing"]
     assert calls[-1][1][-3:] == ("2026-09-13", "2026-09-14", "00123")
-    assert "outbound_30d" in calls[-1][0] and "transaction_product" not in calls[-1][0]
+    assert "sale_jdzy_qty_30d" in calls[-1][0] and "transaction_product" not in calls[-1][0]
 
 
 def test_conflicting_duplicate_facts_produce_no_quantity(monkeypatch):
@@ -217,3 +217,44 @@ def test_unrelated_database_environment_cannot_supply_warehouse_credentials(tmp_
                 "DB_PASSWORD": "unrelated-secret",
             }
         )
+
+
+def test_summary_previous_uses_current_snapshot_date_and_ly_field(monkeypatch):
+    client = reader()
+    source = next(p for p in config()["platforms"] if p["id"] == "vip")
+    source = {**source, "summary_metric": "previous", "summary_as_of": date(2026, 9, 23)}
+    calls = []
+
+    def read(sql, params):
+        calls.append((sql, params))
+        return (
+            [{"latest": "2026-09-22"}]
+            if "MAX(" in sql
+            else [{"sku": "001", "row_id": 1, "quantity": 0}]
+        )
+
+    monkeypatch.setattr(client, "_read", read)
+    result = client.sales_window(source, ["001", "002"], date(2025, 8, 24), date(2025, 9, 23))
+    assert "ly_sales_out_qty_30d" in calls[-1][0]
+    assert "ads_whs_outstock_wp_base_sku_window" in calls[-1][0]
+    assert calls[-1][1][:2] == ("2026-09-22", "2026-09-23")
+    assert result["start"] == "2025-08-24" and result["end"] == "2025-09-22"
+    assert result["snapshot_date"] == "2026-09-22"
+    assert result["rows"][0]["quantity"] == 0
+    assert result["rows"][1]["quantity"] is None
+    assert result["rows"][1]["status"] == "missing_summary_sku"
+
+
+def test_summary_missing_date_never_falls_back_to_detail(monkeypatch):
+    client = reader()
+    source = next(p for p in config()["platforms"] if p["id"] == "pdd")
+    calls = []
+
+    def read(sql, params):
+        calls.append(sql)
+        return [{"latest": "2026-09-21"}] if "MAX(" in sql else []
+
+    monkeypatch.setattr(client, "_read", read)
+    result = client.sales(source, ["001"], date(2026, 9, 23))
+    assert result["issues"] == ["snapshot_or_skus_missing"]
+    assert all("ads_whs_outstock_pdd_base_sku_window" in sql for sql in calls)

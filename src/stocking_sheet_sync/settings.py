@@ -436,6 +436,9 @@ def load_sales_config(path: Path) -> dict[str, Any]:
     if not {"sku", "style", "name", "spec"} <= config["catalog"]["fields"].keys():
         raise ValueError("商品主数据字段配置不完整")
     for platform in platforms:
+        if platform.get("summary"):
+            for key in ("table", "sku", "date", "row_id", "current", "previous"):
+                identifier(platform["summary"][key])
         if platform["kind"] not in {"snapshot", "detail"}:
             raise ValueError("平台来源类型只支持 snapshot 或 detail")
         required = {"sku", "date", "quantity"}

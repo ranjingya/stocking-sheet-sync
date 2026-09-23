@@ -101,7 +101,57 @@ class SalesReader:
 
         返回值：统一统计区间、逐 SKU 数据、来源日期和覆盖异常。
         """
-        return self.sales_window(source, skus, as_of - timedelta(days=30), as_of)
+        return self.sales_window(
+            {**source, "summary_metric": "current", "summary_as_of": as_of},
+            skus,
+            as_of - timedelta(days=30),
+            as_of,
+        )
+
+    def summary_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
+        """
+        功能说明：读取基准日对应ADS快照中的今年或去年同期近30天字段。
+
+        参数：
+            source：平台配置，含summary字段映射、summary_metric指标和summary_as_of基准日。
+            skus：需求表SKU集合。
+            start：指标包含的起始日期。
+            stop：指标不包含的结束日期。
+        返回值：逐SKU数量及来源日期证据；缺失记录保持未知，不记零。
+        """
+        if (stop - start).days != 30:
+            raise ValueError("ADS汇总只支持30天窗口")
+        summary = source["summary"]
+        metric = source["summary_metric"]
+        if metric not in {"current", "previous"}:
+            raise ValueError("ADS指标必须为current或previous")
+        as_of = source["summary_as_of"]
+        selected = {
+            "id": source["id"],
+            "kind": "snapshot",
+            "table": summary["table"],
+            "fields": {
+                "sku": summary["sku"],
+                "date": summary["date"],
+                "row_id": summary["row_id"],
+                "quantity": summary[metric],
+            },
+        }
+        result = self.sales_window(selected, skus, as_of - timedelta(days=30), as_of)
+        found = {r["sku"] for r in result["rows"]}
+        result["rows"].extend(
+            {"sku": sku, "quantity": None, "status": "missing_summary_sku"}
+            for sku in skus
+            if sku not in found
+        )
+        result.update(
+            start=start.isoformat(),
+            end=(stop - timedelta(days=1)).isoformat(),
+            source_field=summary[metric],
+            kind="summary",
+            snapshot_date=(as_of - timedelta(days=1)).isoformat(),
+        )
+        return result
 
     def sales_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
         """
@@ -114,6 +164,8 @@ class SalesReader:
             stop：不包含的业务结束日期。
         返回值：逐SKU数量及覆盖问题；快照任意区间不允许以滚动值代替。
         """
+        if source.get("summary") and source.get("summary_metric"):
+            return self.summary_window(source, skus, start, stop)
         self._validate_skus(skus)
         days_count = (stop - start).days
         if not 1 <= days_count <= 366:
@@ -273,6 +325,8 @@ class ForecastReader(SalesReader):
             stop：不包含的业务结束日期。
         返回值：逐SKU数量及实际取数方式；缺失、重复或非法值对应数量留空。
         """
+        if source.get("summary") and source.get("summary_metric"):
+            return self.summary_window(source, skus, start, stop)
         self._validate_skus(skus)
         days_count = (stop - start).days
         if not skus or len(set(skus)) != len(skus) or not 1 <= days_count <= 366:

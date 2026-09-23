@@ -132,10 +132,15 @@ def inspect_forecast(
             ):
                 try:
                     daily = sources.get("daily", {}).get(pid)
+                    selected = dict(daily or platform)
+                    if key in {"current", "previous"} and platform.get("summary"):
+                        selected.update(
+                            summary=platform["summary"], summary_metric=key, summary_as_of=as_of
+                        )
                     source = (
-                        reader.daily_window(daily, skus, start, stop)
+                        reader.daily_window(selected, skus, start, stop)
                         if daily
-                        else reader.sales_window(platform, skus, start, stop)
+                        else reader.sales_window(selected, skus, start, stop)
                     )
                     item["sources"][key] = source
                     data[key] = quantities(
