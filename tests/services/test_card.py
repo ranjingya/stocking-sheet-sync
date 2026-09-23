@@ -69,7 +69,7 @@ def test_partial_forecast_and_reason_are_displayed_without_blank_lines():
     assert "部分完成（1/2平台全部完成）" in text
     assert "原因" not in text
     note = card["body"]["elements"][-2]
-    assert "**原因：**乙平台：去年同期销量为0" in note["content"]
+    assert "原因：乙平台：去年同期销量为0" in note["content"]
     assert note["text_size"] == "notation"
     assert "**原始记录：**" in text
     assert "\n\n" not in text

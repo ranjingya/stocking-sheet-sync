@@ -238,7 +238,7 @@ def build_sync_card(
             1,
             {
                 "tag": "markdown",
-                "content": f"<font color='grey'>**原因：**{reason_text}</font>",
+                "content": f"<font color='grey'>原因：{reason_text}</font>",
                 "text_size": "notation",
             }
         )
