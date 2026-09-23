@@ -18,7 +18,7 @@ def test_build_success_card_contains_record_and_target_links() -> None:
     assert "备货测试表" in content
     assert "record-token" in content
     assert "\n\n" not in content
-    actions = card["body"]["elements"][1]["columns"]
+    actions = card["body"]["elements"][-1]["columns"]
     assert len(actions) == 1
     assert actions[0]["elements"][0]["behaviors"][0]["default_url"].endswith("target-token")
 
@@ -33,7 +33,7 @@ def test_build_failure_card_contains_reason() -> None:
     )
 
     assert card["header"]["template"] == "red"
-    assert "没有访问权限" in card["body"]["elements"][-1]["content"]
+    assert "没有访问权限" in card["body"]["elements"][-2]["content"]
 
     assert "未生成" not in card["body"]["elements"][0]["content"]
 
@@ -68,7 +68,7 @@ def test_partial_forecast_and_reason_are_displayed_without_blank_lines():
     assert "**历史数据：**✅ 已填充" in text
     assert "部分完成（1/2平台全部完成）" in text
     assert "原因" not in text
-    note = card["body"]["elements"][-1]
+    note = card["body"]["elements"][-2]
     assert "**原因：**乙平台：去年同期销量为0" in note["content"]
     assert note["text_size"] == "notation"
     assert "**原始记录：**" in text
@@ -109,7 +109,7 @@ def test_disabled_unsupported_and_degraded_states_have_reasons():
     card = build_sync_card(**common, history_status="disabled", forecast_status="unsupported")
     text = card["body"]["elements"][0]["content"]
     assert "**历史数据：**未开启" in text and "**预测：**暂不支持" in text
-    note = card["body"]["elements"][-1]["content"]
+    note = card["body"]["elements"][-2]["content"]
     assert "开关关闭" in note and "新品预测暂不支持" in note
     card = build_sync_card(
         **common,
@@ -120,7 +120,7 @@ def test_disabled_unsupported_and_degraded_states_have_reasons():
     )
     text = card["body"]["elements"][0]["content"]
     assert "已填充" not in text and "已计算" not in text
-    assert "已交付未填充原表" in card["body"]["elements"][-1]["content"]
+    assert "已交付未填充原表" in card["body"]["elements"][-2]["content"]
 
 
 def test_all_manual_forecast_does_not_report_completed():

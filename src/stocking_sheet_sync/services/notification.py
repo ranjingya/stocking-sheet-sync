@@ -234,7 +234,8 @@ def build_sync_card(
 
     if reasons:
         reason_text = _escape_markdown(_clean_text("；".join(dict.fromkeys(reasons))))
-        card["body"]["elements"].append(
+        card["body"]["elements"].insert(
+            1,
             {
                 "tag": "markdown",
                 "content": f"<font color='grey'>**原因：**{reason_text}</font>",
