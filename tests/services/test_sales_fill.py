@@ -44,6 +44,11 @@ def applied(before, update):
         if e["status"] == "write":
             c = after["cells"][e["target_cell"]]
             c["value"] = e["quantity"]
+    for total in update.get("total_entries", []):
+        after["cells"][total["target_cell"]] = {
+            "formula": total["formula"],
+            "value": total["expected_quantity"],
+        }
     after["cells"]["C7"]["value"] = 1
     return after
 
@@ -315,3 +320,27 @@ def test_partial_history_preserves_failed_platform_and_verifies_others(failure):
     after["cells"]["E4"] = {"value": 123}
     with pytest.raises(ValueError):
         verify_sales_update(before, after, update)
+
+
+def test_missing_platform_demand_and_sales_totals_use_unique_peer_total_row():
+    before, report = ready()
+    columns = report["layout"]["columns"]
+    peer = columns["vip"]["demand"]
+    cat = columns["tmall_supermarket"]
+    before["cells"][f"{peer}7"] = {"formula": f"=SUM({peer}4:{peer}6)", "value": 90}
+    plan = build_sales_update(before, report, config(), partial=True)
+    totals = {t["target_cell"]: t for t in plan["total_entries"]}
+    assert totals[f"{cat['demand']}7"]["formula"] == f"=SUM({cat['demand']}4:{cat['demand']}6)"
+    assert f"{cat['sales']}7" in totals
+    after = applied(before, plan)
+    assert verify_sales_update(before, after, plan)["verified"]
+    assert after["cells"][f"{peer}7"] == before["cells"][f"{peer}7"]
+
+
+def test_ambiguous_total_rows_do_not_create_missing_platform_totals():
+    from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+
+    before, _ = ready()
+    before["cells"]["F7"] = {"formula": "=SUM(F4:F6)"}
+    before["cells"]["H8"] = {"formula": "=SUM(H4:H6)"}
+    assert column_total_rows(before, "L", "K", [4, 6]) == []

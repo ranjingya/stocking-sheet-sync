@@ -47,7 +47,7 @@ def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) 
                     "、".join(reasons_map.get(x, "数据需人工核对") for x in item.get("issues", []))
                     or "数据需人工核对"
                 )
-                reasons.append(f"{label}：{reason}，保留原预测内容")
+                reasons.append(f"{label}：{reason}，本次未计算预测（已有值不覆盖）")
     return {
         "forecast": {
             "status": "completed"
@@ -233,14 +233,16 @@ def build_sync_card(
     }
 
     if reasons:
-        reason_text = _escape_markdown(_clean_text("；".join(dict.fromkeys(reasons))))
+        reason_text = "\n".join(
+            _escape_markdown(_clean_text(item)) for item in dict.fromkeys(reasons)
+        )
         card["body"]["elements"].insert(
             1,
             {
                 "tag": "markdown",
                 "content": f"<font color='grey'>原因：{reason_text}</font>",
                 "text_size": "notation",
-            }
+            },
         )
     return card
 

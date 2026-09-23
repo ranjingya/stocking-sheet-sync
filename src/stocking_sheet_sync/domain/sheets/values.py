@@ -4,7 +4,7 @@ import logging
 from collections import Counter, defaultdict
 
 from stocking_sheet_sync.domain.products import column_number, inspect_sheet, units
-from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows, supplement_demand_totals
 
 LOG = logging.getLogger(__name__)
 
@@ -157,5 +157,15 @@ def build_sales_update(
     if partial:
         from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
 
-        return isolate_platforms(result, snapshot["sheet_id"])
+        result = isolate_platforms(result, snapshot["sheet_id"])
+    supplement_demand_totals(
+        result,
+        snapshot,
+        {
+            pid: cols["demand"]
+            for pid, cols in layout["columns"].items()
+            if pid not in result.get("blocked_platforms", {})
+        },
+        [r["row"] for r in layout["rows"]],
+    )
     return result

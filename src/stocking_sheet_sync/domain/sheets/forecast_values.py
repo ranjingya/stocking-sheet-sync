@@ -12,7 +12,7 @@ from stocking_sheet_sync.domain.products import (
 )
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.domain.sheets.platforms import compact_ranges
-from stocking_sheet_sync.domain.sheets.totals import column_total_rows
+from stocking_sheet_sync.domain.sheets.totals import column_total_rows, supplement_demand_totals
 
 LOG = logging.getLogger(__name__)
 INPUT_METRICS = {"sales": "current", "previous": "previous", "future": "historical_future"}
@@ -288,4 +288,14 @@ def build_forecast_values(
                 if platform["status"] == "needs_review":
                     blocked.setdefault(platform["platform"], []).extend(platform["issues"])
         result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
+    supplement_demand_totals(
+        result,
+        snapshot,
+        {
+            pid: fields[(pid, "demand")]
+            for pid in expected_platforms
+            if pid not in result.get("blocked_platforms", {})
+        },
+        [r["row"] for r in checked["rows"]],
+    )
     return result

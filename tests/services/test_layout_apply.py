@@ -135,7 +135,9 @@ def test_new_sales_column_inherits_total_formula_without_demand_values():
     before = incoming()
     before["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 100}
     update = build_update(before, config(), rules())
-    assert update["total_formulas"] == {"F7": "=SUM(F4:F6)"}
+    assert update["total_formulas"] == {
+        f"{col}7": f"=SUM({col}4:{col}6)" for col in ("F", "H", "J", "L", "N")
+    }
     assert before["cells"]["F7"]["value"] == 100
     assert any(
         op["body"].get("valueRanges")
@@ -144,7 +146,8 @@ def test_new_sales_column_inherits_total_formula_without_demand_values():
     )
     after = completed(before, update)
     after["cells"]["G7"]["formula"] = "=SUM(G4:G6)"
-    after["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 0}
+    for address, formula in update["total_formulas"].items():
+        after["cells"][address] = {"formula": formula, "value": 0}
     assert verify_update(before, after, update, config(), rules())["verified"]
 
 

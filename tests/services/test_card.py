@@ -150,3 +150,26 @@ def test_all_manual_forecast_does_not_report_completed():
     )
     assert "**预测：**未计算" in card["body"]["elements"][0]["content"]
     assert "待人工处理" in card["header"]["title"]["content"]
+
+
+def test_platform_reasons_are_separate_lines_above_button():
+    card = build_sync_card(
+        original_name="测试",
+        record_url="https://example.com/record",
+        target_url="https://example.com/result",
+        status="success",
+        history_status="completed",
+        forecast_status="completed",
+        details={
+            "forecast": {
+                "status": "partial",
+                "completed": 1,
+                "total": 3,
+                "reasons": ["甲平台：去年同期为0", "乙平台：缺少公司销量"],
+            }
+        },
+    )
+    note = card["body"]["elements"][-2]
+    assert "甲平台：去年同期为0\n乙平台：缺少公司销量" in note["content"]
+    assert "**" not in note["content"]
+    assert card["body"]["elements"][-1]["tag"] == "column_set"
