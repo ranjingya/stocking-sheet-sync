@@ -299,6 +299,10 @@ def plan_market_layout(
                     }
                 )
             period = next(iter(periods)) if len(periods) == 1 else None
+            selected = config.get("selected_platforms")
+            inactive = bool(selected and pid not in selected)
+            if inactive:
+                metrics = [m for p, m in mapped if p == pid]
             for metric in metrics:
                 source = mapped.get((pid, metric))
                 title = (
@@ -329,6 +333,8 @@ def plan_market_layout(
                         issues.append(
                             {"reason": "history_period_required", "platform": pid, "metric": metric}
                         )
+                if inactive and source:
+                    title = source["header"]
                 fields.append(
                     {
                         "platform": pid,

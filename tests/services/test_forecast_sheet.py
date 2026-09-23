@@ -321,3 +321,29 @@ def test_forecast_partial_respects_platform_conflicts_and_global_blockers(failur
     else:
         assert update["summary"]["needs_review"]
         assert not update["operations"]
+
+
+def test_selected_forecast_overwrites_only_requested_platform_prediction():
+    _, _, report, _, prepared = setup_sheet()
+    cfg = {**config(), "selected_platforms": {"vip"}, "overwrite": True}
+    for group in report["groups"]:
+        group["platforms"] = [p for p in group["platforms"] if p["platform"] == "vip"]
+    plan = build_forecast_values(prepared, report, cfg, rules(), history=False, forecast=True)
+    assert len(plan["entries"]) == 2
+    for e in plan["entries"]:
+        prepared["cells"][e["target_cell"]] = {"value": 999}
+    plan = build_forecast_values(prepared, report, cfg, rules(), history=False, forecast=True)
+    assert plan["summary"]["needs_review"] == 0
+    assert {e["platform"] for e in plan["entries"]} == {"vip:forecast"}
+    assert verify_sales_update(prepared, filled(prepared, plan), plan)["verified"]
+
+
+def test_platform_selection_only_adds_selected_platform_columns():
+    before, _, _, _, _ = setup_sheet()
+    cfg = {**config(), "selected_platforms": {"vip"}}
+    update = build_update(before, cfg, rules(), forecast=True)
+    added = [f for f in update["report"]["target_fields"] if not f["source_column"]]
+    assert {f["platform"] for f in added} == {"vip"}
+    assert len(added) == 4
+    prepared = project_layout(before, update, cfg, rules())
+    assert verify_update(before, prepared, update, cfg, rules())["verified"]

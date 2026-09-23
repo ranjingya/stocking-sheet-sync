@@ -169,6 +169,11 @@ def inspect_forecast(
             continue
         for platform in sales_config["platforms"]:
             pid = platform["id"]
+            if (
+                sales_config.get("selected_platforms")
+                and pid not in sales_config["selected_platforms"]
+            ):
+                continue
             item = {"platform": pid, "status": "needs_review", "issues": [], "sources": {}}
             group["platforms"].append(item)
             data = {}

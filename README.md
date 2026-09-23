@@ -51,7 +51,7 @@ uv run stocking-sheet-sync rerun --record-id rec_xxx --request-id batch_xxx
 uv run stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --history --forecast
 ```
 
-手动操作使用 `rerun`（重新搬运、按配置填充并通知）和 `fill`（指定链接原地填写、不通知）。`fill` 至少选择 `--history` 或 `--forecast`，可同时指定；支持 `--as-of` 和 `--sheet-id`。已有不同内容保留并报告，只有市场部字段会被填写。`serve`用于启动Webhook服务。各命令使用 `--help` 查看参数。
+手动操作使用 `rerun`（重新搬运、按配置填充并通知）和 `fill`（指定链接原地填写、不通知）。`fill` 至少选择 `--history` 或 `--forecast`，可同时指定；支持 `--as-of`、`--sheet-id` 和可重复指定的 `--platform`。默认已有不同内容保留并报告，`--overwrite`允许覆盖所选历史或预测已有值，公式及人工需求保留，只有市场部字段会被填写。`serve`用于启动Webhook服务。各命令使用 `--help` 查看参数。
 
 ## 文档
 

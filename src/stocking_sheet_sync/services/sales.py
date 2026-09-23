@@ -31,6 +31,8 @@ def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date
     match_catalog(layout, catalog)
     sources, entries = [], []
     for platform in config["platforms"]:
+        if config.get("selected_platforms") and platform["id"] not in config["selected_platforms"]:
+            continue
         try:
             source = reader.sales(platform, skus, as_of)
         except (RuntimeError, ValueError) as error:

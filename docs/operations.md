@@ -74,7 +74,13 @@ docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill 
 docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --history --forecast
 ```
 
-直接修改指定表格，不复制、不通知；只操作市场部字段，保留已有不同内容和公式。命令参数决定填充项目，不受自动流程的新老品开关影响；新品预测仍未支持。默认采用上海当天日期，可用 `--as-of YYYY-MM-DD` 指定基准日。通过链接的 `sheet` 参数或 `--sheet-id` 选择工作表，否则自动识别唯一的下单工作表。
+直接修改指定表格，不复制、不通知；只操作市场部字段，保留已有不同内容和公式。`--platform` 支持平台ID或完整中文名称，可重复指定；省略为全部平台。平台ID为 `jd_self`、`jd_pop`、`pdd`、`vip`、`tmall_supermarket`。`--overwrite` 允许覆盖所选历史/预测单元格已有值，原公式、人工需求和其他平台数据保持不变；来源不足时仍跳过，不以0覆盖。
+
+```bash
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill --url "表格链接" --history --forecast --platform pdd --platform vip --overwrite
+```
+
+命令参数决定填充项目，不受自动流程的新老品开关影响；新品预测仍未支持。默认采用上海当天日期，可用 `--as-of YYYY-MM-DD` 指定基准日。通过链接的 `sheet` 参数或 `--sheet-id` 选择工作表，否则自动识别唯一的下单工作表。
 
 与后台任务共用运行锁，忙碌时退出码为3；完成为0，部分完成或待核对为2，执行异常为1。成功回读后清理临时文件，未完成报告按容量上限保留。历史日期的ADS快照不可用时对应平台保持待核对，不替换统计日期。
 

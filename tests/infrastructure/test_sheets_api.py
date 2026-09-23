@@ -183,3 +183,17 @@ def test_dimension_snapshot_compares_style_definitions_instead_of_export_ids():
     assert dimension_snapshot(left) == dimension_snapshot(right)
     right.font = Font(name="宋体", size=16)
     assert dimension_snapshot(left) != dimension_snapshot(right)
+
+
+@pytest.mark.parametrize("allowed,revision", [(True, 1), (False, 1), (True, 2)])
+def test_overwrite_requires_explicit_cell_and_matching_revision(monkeypatch, allowed, revision):
+    _, calls = transport_client(monkeypatch, nonempty=True, current=revision)
+    args = dict(expected_revision=1, overwrite_cells={"N4"} if allowed else {"N5"})
+    operations = [{"range": "test!N4:N5", "values": [[20], [7]]}]
+    if allowed and revision == 1:
+        write_sales_ranges("token", "test", operations, **args)
+        assert calls[-1][0] == "POST"
+    else:
+        with pytest.raises(ValueError):
+            write_sales_ranges("token", "test", operations, **args)
+        assert len(calls) == 1

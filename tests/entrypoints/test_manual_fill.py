@@ -91,3 +91,18 @@ def test_fill_failure_keeps_report_without_delivery_or_notification(setup, monke
     assert fill.run(["--url", "https://kocotree.feishu.cn/sheets/token", "--history"]) == 2
     assert Path(calls[0].report_path).exists()
     assert client.copy_count == 0 and client.sent_cards == []
+
+
+def test_invalid_platform_is_rejected_before_processing(setup):
+    _, _, calls = setup
+    with pytest.raises(SystemExit) as error:
+        fill.run(
+            [
+                "--url",
+                "https://kocotree.feishu.cn/sheets/token",
+                "--history",
+                "--platform",
+                "invalid",
+            ]
+        )
+    assert error.value.code == 2 and calls == []

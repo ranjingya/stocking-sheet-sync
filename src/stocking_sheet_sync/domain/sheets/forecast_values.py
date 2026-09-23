@@ -150,7 +150,11 @@ def build_forecast_values(
     metrics = [*INPUT_METRICS] if history else []
     if forecast:
         metrics.append("forecast")
-    expected_platforms = {p["id"] for p in config["platforms"]}
+    expected_platforms = {
+        p["id"]
+        for p in config["platforms"]
+        if not config.get("selected_platforms") or p["id"] in config["selected_platforms"]
+    }
     for group in report["groups"]:
         actual = [p["platform"] for p in group["platforms"]]
         if len(actual) != len(expected_platforms) or set(actual) != expected_platforms:
@@ -198,7 +202,9 @@ def build_forecast_values(
                 cell = snapshot["cells"][address]
                 existing = cell.get("value")
                 equal = type(existing) in (int, float) and existing == value
-                if cell.get("formula") or (existing not in (None, "") and not equal):
+                if cell.get("formula") or (
+                    existing not in (None, "") and not equal and not config.get("overwrite")
+                ):
                     problems.append("target_conflict")
                 status = "needs_review" if problems else "unchanged" if equal else "write"
                 key = f"{pid}:{metric}"

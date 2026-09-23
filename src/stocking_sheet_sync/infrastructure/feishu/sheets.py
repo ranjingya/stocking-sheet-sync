@@ -276,6 +276,7 @@ def write_sales_ranges(
     operations: list[dict],
     *,
     expected_revision: int,
+    overwrite_cells: set[str] | None = None,
     client: FeishuClient | None = None,
 ) -> dict:
     """
@@ -286,6 +287,7 @@ def write_sales_ranges(
         sheet_id：目标工作表 ID。
         operations：原生 valueRanges 数组，包含整数或单平台 SUM 合计公式。
         expected_revision：读取并核对过的工作簿版本。
+        overwrite_cells：允许覆盖已有非公式值的单元格集合；默认不覆盖。
         client：可选数据应用客户端；传入时由调用方关闭。
 
     返回值：服务端批量写入结果；写请求仅发送一次，异常时必须回读确认。
@@ -344,13 +346,19 @@ def write_sales_ranges(
             raise ValueError("提交前表格版本发生变化，请重新预览")
         if [r["range"] for r in current["valueRanges"]] != [o["range"] for o in operations]:
             raise ValueError("写入前目标范围回读不完整")
-        if any(
-            v not in (None, "")
-            for r in current["valueRanges"]
-            for row in r.get("values", [])
-            for v in row
-        ):
-            raise ValueError("写入前目标单元格已有内容，请重新核对")
+        for block in current["valueRanges"]:
+            area = block["range"].split("!", 1)[1]
+            col, first = re.match(r"([A-Z]+)([0-9]+)", area).groups()
+            for offset, row in enumerate(block.get("values", [])):
+                for value in row:
+                    address = f"{col}{int(first) + offset}"
+                    if value not in (None, "") and (
+                        address not in (overwrite_cells or set())
+                        or isinstance(value, (dict, list))
+                        or isinstance(value, str)
+                        and value.startswith("=")
+                    ):
+                        raise ValueError("写入前目标单元格已有内容，请重新核对")
         LOG.debug("开始服务端销量写入：ranges=%d revision=%d", len(operations), expected_revision)
         return client._request(
             "POST",

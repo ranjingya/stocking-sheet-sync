@@ -31,6 +31,7 @@ def build_sales_update(
     expected = {
         (p["id"], row["row"]): (row["sku"], f"{layout['columns'][p['id']]['sales']}{row['row']}")
         for p in config["platforms"]
+        if not config.get("selected_platforms") or p["id"] in config["selected_platforms"]
         for row in layout["rows"]
     }
     actual = [(e["platform"], e["row"]) for e in report["entries"]]
@@ -51,7 +52,9 @@ def build_sales_update(
             quantity = units(quantity)
         value = cell.get("value")
         equal = type(value) in (int, float) and value == quantity
-        if cell.get("formula") or (value not in (None, "") and not equal):
+        if cell.get("formula") or (
+            value not in (None, "") and not equal and not config.get("overwrite")
+        ):
             problems.add("target_conflict")
         status = "needs_review" if problems else "unchanged" if equal else "write"
         item = {**entry, "quantity": quantity, "status": status, "issues": sorted(problems)}
@@ -94,6 +97,8 @@ def build_sales_update(
     total_entries = []
     if partial or not counts["needs_review"]:
         for platform, columns in layout["columns"].items():
+            if config.get("selected_platforms") and platform not in config["selected_platforms"]:
+                continue
             for total in column_total_rows(
                 snapshot,
                 columns["demand"],
@@ -165,6 +170,7 @@ def build_sales_update(
             pid: cols["demand"]
             for pid, cols in layout["columns"].items()
             if pid not in result.get("blocked_platforms", {})
+            and (not config.get("selected_platforms") or pid in config["selected_platforms"])
         },
         [r["row"] for r in layout["rows"]],
     )

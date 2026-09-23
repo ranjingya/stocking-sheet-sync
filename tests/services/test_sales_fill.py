@@ -344,3 +344,18 @@ def test_ambiguous_total_rows_do_not_create_missing_platform_totals():
     before["cells"]["F7"] = {"formula": "=SUM(F4:F6)"}
     before["cells"]["H8"] = {"formula": "=SUM(H4:H6)"}
     assert column_total_rows(before, "L", "K", [4, 6]) == []
+
+
+def test_selected_history_overwrite_preserves_other_platforms_and_formulas():
+    before, _ = ready()
+    cfg = {**config(), "selected_platforms": {"vip"}, "overwrite": True}
+    before["cells"]["K4"] = {"value": 999}
+    report = inspect_sales(CompleteReader(), before, cfg, date(2026, 9, 12))
+    plan = build_sales_update(before, report, cfg, partial=True)
+    assert len(plan["entries"]) == 2
+    assert {e["platform"] for e in plan["entries"]} == {"vip"}
+    assert plan["summary"]["needs_review"] == 0
+    assert verify_sales_update(before, applied(before, plan), plan)["verified"]
+    before["cells"]["K4"] = {"formula": "=999", "value": 999}
+    report = inspect_sales(CompleteReader(), before, cfg, date(2026, 9, 12))
+    assert build_sales_update(before, report, cfg, partial=True)["summary"]["needs_review"]

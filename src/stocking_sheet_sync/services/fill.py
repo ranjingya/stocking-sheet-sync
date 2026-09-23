@@ -103,6 +103,8 @@ class HistoryFiller:
         try:
             LOG.info("历史填充开始：target=%s as_of=%s", copy.target_token, claim.as_of)
             config = load_sales_config(self.config_path)
+            config["selected_platforms"] = getattr(self, "selected_platforms", None)
+            config["overwrite"] = getattr(self, "overwrite", False)
             rules = load_layout_config(self.config_path, config)
             if before is None:
                 sid = self.find_sheet(copy.target_token, config)
@@ -155,7 +157,9 @@ class HistoryFiller:
             from stocking_sheet_sync.services.notification import summarize_platform_fill
 
             result = finish("completed")
-            result["notification_details"] = summarize_platform_fill(update, config, history=True)
+            result["notification_details"] = summarize_platform_fill(
+                update, self.notification_config(config), history=True
+            )
             save("result.json", result)
             return result
         except Exception as error:
@@ -225,6 +229,17 @@ class HistoryFiller:
                     update["operations"],
                     expected_revision=prepared["revision"],
                     client=self.client,
+                    **(
+                        {
+                            "overwrite_cells": {
+                                e["target_cell"]
+                                for e in update["entries"]
+                                if e["status"] == "write"
+                            }
+                        }
+                        if getattr(self, "overwrite", False)
+                        else {}
+                    ),
                 ),
             )
             after = read_sheet(
@@ -234,6 +249,14 @@ class HistoryFiller:
         save(f"{prefix}-verification.json", verify_sales_update(prepared, after, update))
         LOG.info("表格填充与回读核验完成")
         return update
+
+    def notification_config(self, config: dict) -> dict:
+        """按config中的平台选择范围返回结果统计配置。"""
+        selected = config.get("selected_platforms")
+        return {
+            **config,
+            "platforms": [p for p in config["platforms"] if not selected or p["id"] in selected],
+        }
 
     def find_sheet(self, token: str, config: dict) -> str:
         """
@@ -396,6 +419,8 @@ class ForecastFiller(HistoryFiller):
                 "开启" if self.history else "关闭",
             )
             config = load_sales_config(self.config_path)
+            config["selected_platforms"] = getattr(self, "selected_platforms", None)
+            config["overwrite"] = getattr(self, "overwrite", False)
             rules = load_layout_config(self.config_path, config)
             sid = self.find_sheet(copy.target_token, config)
             before = read_sheet(
@@ -475,7 +500,7 @@ class ForecastFiller(HistoryFiller):
             result["history_status"] = "completed" if self.history else "disabled"
             result["forecast_status"] = "completed"
             result["notification_details"] = summarize_platform_fill(
-                update, config, history=self.history, report=report
+                update, self.notification_config(config), history=self.history, report=report
             )
             save("result.json", result)
             return result

@@ -19,7 +19,7 @@ from stocking_sheet_sync.infrastructure.artifacts import (
 from stocking_sheet_sync.infrastructure.lease import RunLease, assert_run_lock
 from stocking_sheet_sync.logging import configure_logging
 from stocking_sheet_sync.services.fill import ForecastFiller, HistoryFiller
-from stocking_sheet_sync.settings import load_config
+from stocking_sheet_sync.settings import load_config, load_sales_config
 
 LOG = logging.getLogger(__name__)
 
@@ -38,6 +38,10 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--forecast", action="store_true", help="填充老款预估，新品预测暂不支持")
     parser.add_argument("--as-of", type=date.fromisoformat, help="基准日，默认上海当天日期")
     parser.add_argument("--sheet-id", help="指定工作表；默认使用链接中的sheet参数或自动识别")
+    parser.add_argument(
+        "--platform", action="append", help="平台ID或中文名称，可重复指定；默认全部"
+    )
+    parser.add_argument("--overwrite", action="store_true", help="覆盖所选数据已有值，保留公式")
     args = parser.parse_args(argv)
     if not args.history and not args.forecast:
         parser.error("至少指定 --history 或 --forecast，可以同时指定")
@@ -54,6 +58,12 @@ def run(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
         configure_logging(config.log_level)
+        platforms = load_sales_config(Path("config/config.toml"))["platforms"]
+        names = {name: p["id"] for p in platforms for name in (p["id"], p["name"])}
+        unknown = [name for name in args.platform or [] if name not in names]
+        if unknown:
+            parser.error("未知平台：" + "、".join(unknown) + "；可选：" + "、".join(names))
+        selected = {names[name] for name in args.platform} if args.platform else None
         with ExitStack() as resources:
             service = build_service(config, resources)
             lock = service.store.acquire_run_lock(config.lock_ttl_seconds)
@@ -99,6 +109,13 @@ def run(argv: list[str] | None = None) -> int:
                 )
                 if args.forecast
                 else HistoryFiller(service.data_client)
+            )
+            filler.selected_platforms = selected
+            filler.overwrite = args.overwrite
+            LOG.info(
+                "填写范围：平台=%s，覆盖已有值=%s",
+                "、".join(p["name"] for p in platforms if not selected or p["id"] in selected),
+                "是" if args.overwrite else "否",
             )
             if sid:
                 filler.find_sheet = lambda *a: sid
