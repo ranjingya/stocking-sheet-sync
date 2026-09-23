@@ -338,3 +338,48 @@ def test_arbitrary_142_day_window_sums_daily_values():
     result = reader.daily_window(source, ["001"], start, start + timedelta(days=142))
     assert result["kind"] == "daily" and not result["issues"]
     assert result["rows"][0]["quantity"] == 284
+
+
+def test_platform_log_uses_names_and_does_not_claim_written(caplog):
+    import logging
+
+    from stocking_sheet_sync.services.calculation import log_platform_result
+
+    with caplog.at_level(logging.INFO):
+        log_platform_result(
+            "款号",
+            "拼多多",
+            {
+                "platform": "pdd",
+                "status": "manual",
+                "inputs": {"current": {"a": 18}},
+                "issues": ["company_lifecycle_sales_unavailable"],
+            },
+        )
+        log_platform_result(
+            "款号",
+            "唯品会",
+            {
+                "platform": "vip",
+                "status": "ready",
+                "inputs": {"current": {"a": 22}},
+                "forecast": {"total": 2100},
+                "issues": [],
+            },
+        )
+        log_platform_result(
+            "款号",
+            "京东自营",
+            {
+                "platform": "jd_self",
+                "status": "needs_review",
+                "inputs": {"previous": {}, "historical_future": {}},
+                "issues": ["rolling_source_needs_review"],
+            },
+        )
+    assert "拼多多：历史数据可用（近30天18件）" in caplog.text
+    assert "表内全公司销量不可用" in caplog.text
+    assert "预估2100件，待写入" in caplog.text
+    assert "原因：近30天数据缺失或校验未通过" in caplog.text
+    assert "company_lifecycle_sales_unavailable" not in caplog.text
+    assert "needs_review" not in caplog.text

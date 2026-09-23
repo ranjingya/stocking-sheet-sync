@@ -232,6 +232,7 @@ class HistoryFiller:
             )
         save("after.json", after)
         save(f"{prefix}-verification.json", verify_sales_update(prepared, after, update))
+        LOG.info("表格填充与回读核验完成")
         return update
 
     def find_sheet(self, token: str, config: dict) -> str:
@@ -389,7 +390,11 @@ class ForecastFiller(HistoryFiller):
             return result
 
         try:
-            LOG.info("公式预估填充开始：target=%s history=%s", copy.target_token, self.history)
+            LOG.info(
+                "开始计算预估：基准日期=%s，历史填充=%s",
+                claim.as_of,
+                "开启" if self.history else "关闭",
+            )
             config = load_sales_config(self.config_path)
             rules = load_layout_config(self.config_path, config)
             sid = self.find_sheet(copy.target_token, config)

@@ -18,6 +18,53 @@ from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 LOG = logging.getLogger(__name__)
 
 
+def log_platform_result(style: str, platform_name: str, item: dict) -> None:
+    """
+    功能说明：用中文说明单平台数据检查结果，区分计算完成和实际写入。
+
+    参数：
+        style：当前款号。
+        platform_name：配置中的平台显示名称。
+        item：包含状态、输入、预测和问题的试算结果。
+    返回值：无，记录简短业务日志及DEBUG诊断信息。
+    """
+    inputs = item.get("inputs", {})
+    if item["status"] == "needs_review":
+        stages = {
+            "current": "近30天",
+            "previous": "去年同期近30天",
+            "historical_future": "去年后续周期",
+        }
+        missing = [label for key, label in stages.items() if key not in inputs]
+        reason = "、".join(missing) + "数据缺失或校验未通过" if missing else "计算数据异常，需核对"
+        text = f"历史与预测暂不可填；原因：{reason}"
+    else:
+        recent = sum(inputs.get("current", {}).values())
+        text = f"历史数据可用（近30天{recent}件）；"
+        if item["status"] == "ready":
+            text += f"预估{item['forecast']['total']}件，待写入"
+        elif "previous_sales_zero" in item.get("issues", []):
+            text += "预测未计算：去年同期近30天销量为0"
+        elif "company_lifecycle_sales_unavailable" in item.get("issues", []):
+            text += "预测未计算：触发全公司占比兜底，但表内全公司销量不可用"
+        else:
+            text += "预测未计算：需人工核对"
+    LOG.log(
+        logging.INFO if item["status"] == "ready" else logging.WARNING,
+        "%s｜%s：%s",
+        style,
+        platform_name,
+        text,
+    )
+    LOG.debug(
+        "平台试算明细：style=%s platform=%s status=%s issues=%s",
+        style,
+        item["platform"],
+        item["status"],
+        item.get("issues", []),
+    )
+
+
 def quantities(source: dict, skus: list[str], *, absent_is_zero: bool) -> dict[str, int]:
     """将 source 的完整有效结果映射到 skus；absent_is_zero 控制明细无出库补零。"""
     if source["issues"]:
@@ -183,14 +230,7 @@ def inspect_forecast(
                             item["status"] = "ready"
                         except ValueError as error:
                             item["issues"].append(str(error))
-            LOG.log(
-                logging.INFO if item["status"] == "ready" else logging.WARNING,
-                "平台试算结束：style=%s platform=%s status=%s issues=%s",
-                style,
-                pid,
-                item["status"],
-                item["issues"],
-            )
+            log_platform_result(style, platform.get("name", pid), item)
         statuses = {p["status"] for p in group["platforms"]}
         group["status"] = (
             "needs_review"
