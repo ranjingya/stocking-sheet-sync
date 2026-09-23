@@ -41,3 +41,25 @@ def cleanup_temp_files(root: Path, max_files: int, max_bytes: int) -> None:
         except OSError:
             LOG.warning("临时文件删除失败：path=%s", path, exc_info=True)
     LOG.debug("临时文件清理结束：files=%d bytes=%d", count, size)
+
+
+def cleanup_completed_report(root: Path, report: Path) -> None:
+    """
+    功能说明：删除已验证并交付批次的临时目录，限定为报告根目录的直接子目录。
+
+    参数：
+        root：配置的填充临时根目录。
+        report：本次批次的临时目录，不能是根目录、外部目录或符号链接。
+    返回值：无；目录不存在时忽略，删除异常由调用方记录。
+    """
+    import shutil
+
+    if root.is_symlink() or report.is_symlink():
+        raise ValueError("临时目录不能是符号链接")
+    base, target = root.resolve(), report.resolve()
+    if target.parent != base:
+        raise ValueError("仅允许清理本次填充临时目录")
+    if not target.exists():
+        return
+    shutil.rmtree(target)
+    LOG.debug("本次临时目录已清理：path=%s", target)

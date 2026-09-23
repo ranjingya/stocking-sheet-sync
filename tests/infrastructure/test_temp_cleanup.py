@@ -23,3 +23,35 @@ def test_cleanup_does_not_follow_symlinks(tmp_path):
     (root / "linked").symlink_to(outside, target_is_directory=True)
     cleanup_temp_files(root, 1, 1)
     assert (outside / "keep").read_text() == "data"
+
+
+def test_completed_report_only_removes_its_own_directory(tmp_path):
+    from stocking_sheet_sync.infrastructure.artifacts import cleanup_completed_report
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    (batch / "snapshot.xlsx").write_text("data")
+    outside = tmp_path / "keep"
+    outside.write_text("keep")
+    (batch / "link").symlink_to(outside)
+    cleanup_completed_report(tmp_path, batch)
+    assert not batch.exists()
+    assert outside.read_text() == "keep"
+    cleanup_completed_report(tmp_path, batch)
+
+
+def test_completed_report_rejects_root_external_and_symlink(tmp_path):
+    import pytest
+
+    from stocking_sheet_sync.infrastructure.artifacts import cleanup_completed_report
+
+    root = tmp_path / "reports"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = root / "link"
+    link.symlink_to(outside, target_is_directory=True)
+    for path in (root, outside, link):
+        with pytest.raises(ValueError):
+            cleanup_completed_report(root, path)
+    assert outside.exists()

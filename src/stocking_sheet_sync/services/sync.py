@@ -226,9 +226,29 @@ class SyncService:
             return summary
         finally:
             try:
-                from stocking_sheet_sync.infrastructure.artifacts import cleanup_temp_files
+                from stocking_sheet_sync.infrastructure.artifacts import (
+                    cleanup_completed_report,
+                    cleanup_temp_files,
+                )
 
                 assert_run_lock()
+                if (
+                    summary.result in {"copied", "unchanged"}
+                    and not summary.failed
+                    and not summary.fill_degraded
+                    and summary.target_url
+                    and summary.fill_report_path
+                    and summary.history_status
+                    in {"completed", "disabled", "skipped", "unsupported"}
+                    and summary.forecast_status
+                    in {"completed", "disabled", "skipped", "unsupported"}
+                ):
+                    try:
+                        cleanup_completed_report(
+                            Path(self.config.fill_report_dir), Path(summary.fill_report_path)
+                        )
+                    except (OSError, ValueError):
+                        self.logger.warning("本次临时目录清理失败，保留交付结果", exc_info=True)
                 cleanup_temp_files(
                     Path(self.config.fill_report_dir),
                     self.config.temp_max_files,

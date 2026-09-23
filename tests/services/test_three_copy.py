@@ -393,3 +393,43 @@ def test_platform_notification_summary_survives_task_recovery(tmp_path):
     assert again.notification_details == details
     assert "部分完成" in client.sent_cards[-1]["header"]["title"]["content"]
     assert "4/5平台" in client.sent_cards[-1]["body"]["elements"][0]["content"]
+
+
+@pytest.mark.parametrize("outcome", ["success", "degraded", "delivery_failed"])
+def test_report_cleanup_requires_verified_fill_and_completed_delivery(tmp_path, outcome):
+    from pathlib import Path
+
+    service, client, redis, clock, ops, files, fills = setup(tmp_path)
+    root = tmp_path / "reports"
+    service.config = replace(service.config, fill_report_dir=str(root))
+    report_dirs = []
+
+    def fill(state, claim):
+        report = Path(claim.report_path)
+        report.mkdir(parents=True)
+        (report / "before.xlsx").write_text("snapshot")
+        report_dirs.append(report)
+        return {
+            "status": "needs_review" if outcome == "degraded" else "completed",
+            "reason": "数据不足" if outcome == "degraded" else "",
+        }
+
+    service.history_filler = fill
+    if outcome == "delivery_failed":
+        original_copy = client.copy_spreadsheet
+
+        def copy(source, name, *, folder_token=None):
+            if folder_token == "delivery":
+                raise RuntimeError("交付失败")
+            return original_copy(source, name, folder_token=folder_token)
+
+        client.copy_spreadsheet = copy
+    result = service.run_record("rec_test")
+    assert len(report_dirs) == 1
+    assert report_dirs[0].exists() == (outcome != "success")
+    if outcome == "success":
+        assert result.target_url and not result.fill_degraded
+    elif outcome == "degraded":
+        assert result.fill_degraded
+    else:
+        assert result.failed == 1
