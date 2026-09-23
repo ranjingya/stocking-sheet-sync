@@ -395,7 +395,7 @@ def test_platform_notification_summary_survives_task_recovery(tmp_path):
     assert "4/5平台" in client.sent_cards[-1]["body"]["elements"][0]["content"]
 
 
-@pytest.mark.parametrize("outcome", ["success", "degraded", "delivery_failed"])
+@pytest.mark.parametrize("outcome", ["success", "partial", "degraded", "delivery_failed"])
 def test_report_cleanup_requires_verified_fill_and_completed_delivery(tmp_path, outcome):
     from pathlib import Path
 
@@ -412,6 +412,9 @@ def test_report_cleanup_requires_verified_fill_and_completed_delivery(tmp_path, 
         return {
             "status": "needs_review" if outcome == "degraded" else "completed",
             "reason": "数据不足" if outcome == "degraded" else "",
+            "notification_details": {"blocked_platforms": ["jd_self"]}
+            if outcome == "partial"
+            else {},
         }
 
     service.history_filler = fill
@@ -427,7 +430,7 @@ def test_report_cleanup_requires_verified_fill_and_completed_delivery(tmp_path, 
     result = service.run_record("rec_test")
     assert len(report_dirs) == 1
     assert report_dirs[0].exists() == (outcome != "success")
-    if outcome == "success":
+    if outcome in {"success", "partial"}:
         assert result.target_url and not result.fill_degraded
     elif outcome == "degraded":
         assert result.fill_degraded

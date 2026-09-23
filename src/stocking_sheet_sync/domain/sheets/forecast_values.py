@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections import Counter, defaultdict
 from copy import deepcopy
 
 from stocking_sheet_sync.domain.products import (
     column_name,
-    column_number,
     inspect_sheet,
     match_catalog,
     units,
 )
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
+from stocking_sheet_sync.domain.sheets.platforms import compact_ranges
 from stocking_sheet_sync.domain.sheets.totals import column_total_rows
 
 LOG = logging.getLogger(__name__)
@@ -122,6 +121,7 @@ def build_forecast_values(
     *,
     history: bool,
     forecast: bool,
+    partial: bool = False,
 ) -> dict:
     """
     功能说明：为已补齐结构的老款表生成历史与公式预估数量请求，并保护已有内容。
@@ -133,7 +133,8 @@ def build_forecast_values(
         rules：表头规则，包含公式预估字段。
         history：是否写入当前30天、去年同期30天和去年后续周期。
         forecast：是否写入公式计算所得的预估数量，人工需求始终保留。
-    返回值：与通用销量回读核验器兼容的请求；任何目标或数据异常均返回空操作。
+        partial：是否跳过异常平台并填写其余平台。
+    返回值：与通用销量回读核验器兼容的请求；共享结构异常阻断全部写入，partial控制平台隔离。
     """
     if not history and not forecast:
         raise ValueError("至少启用一项填充")
@@ -260,7 +261,7 @@ def build_forecast_values(
         + sum(e["status"] == "needs_review" for e in total_entries)
     )
     LOG.debug("公式预估填充请求生成：entries=%d issues=%d", len(entries), problems)
-    return {
+    result = {
         "as_of": report["as_of"],
         "entries": entries,
         "skipped_forecasts": skipped,
@@ -278,32 +279,13 @@ def build_forecast_values(
         "status": "needs_review" if problems else "changes_proposed" if operations else "unchanged",
     }
 
+    if partial:
+        from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
 
-def compact_ranges(operations: list[dict]) -> list[dict]:
-    """把 operations 中连续同列单格请求合并为最多100行的块，返回批量范围。"""
-    cells = []
-    for operation in operations:
-        sid, area = operation["range"].split("!", 1)
-        match = re.fullmatch(r"([A-Z]+)([0-9]+):\1\2", area)
-        if not match:
-            raise ValueError("合并请求只接受单格范围")
-        col, row = match.groups()
-        cells.append((sid, col, int(row), operation["values"][0]))
-    cells.sort(key=lambda cell: (cell[0], column_number(cell[1]), cell[2]))
-    blocks = []
-    for sid, col, row, value in cells:
-        if (
-            blocks
-            and blocks[-1]["sid"] == sid
-            and blocks[-1]["col"] == col
-            and blocks[-1]["last"] + 1 == row
-            and len(blocks[-1]["values"]) < 100
-        ):
-            blocks[-1]["last"] = row
-            blocks[-1]["values"].append(value)
-        else:
-            blocks.append({"sid": sid, "col": col, "first": row, "last": row, "values": [value]})
-    return [
-        {"range": f"{b['sid']}!{b['col']}{b['first']}:{b['col']}{b['last']}", "values": b["values"]}
-        for b in blocks
-    ]
+        blocked = {}
+        for group in report["groups"]:
+            for platform in group["platforms"]:
+                if platform["status"] == "needs_review":
+                    blocked.setdefault(platform["platform"], []).extend(platform["issues"])
+        result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
+    return result

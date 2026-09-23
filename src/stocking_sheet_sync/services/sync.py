@@ -236,6 +236,7 @@ class SyncService:
                     summary.result in {"copied", "unchanged"}
                     and not summary.failed
                     and not summary.fill_degraded
+                    and not summary.notification_details.get("blocked_platforms")
                     and summary.target_url
                     and summary.fill_report_path
                     and summary.history_status

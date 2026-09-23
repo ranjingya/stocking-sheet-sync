@@ -131,12 +131,23 @@ def test_history_only_does_not_require_available_forecast():
     assert blocked["status"] == "needs_review" and not blocked["operations"]
 
 
-@pytest.mark.parametrize("manual_platform", [False, True])
+@pytest.mark.parametrize("manual_platform", [False, True, "missing"])
 def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     tmp_path, monkeypatch, manual_platform
 ):
     before, reader, report, layout, prepared = setup_sheet()
-    if manual_platform:
+    if manual_platform == "missing":
+        original_window = reader.daily_window.side_effect
+
+        def missing_window(source, skus, start, stop):
+            result = original_window(source, skus, start, stop)
+            if start.year == 2026:
+                result["issues"] = ["rolling_source_needs_review"]
+            return result
+
+        reader.daily_window.side_effect = missing_window
+        report = inspect_forecast(reader, ["KQ25001"], date(2026, 9, 12), *all_config())
+    elif manual_platform:
         original_window = reader.sales_window.side_effect
 
         def window(source, skus, start, stop):
@@ -152,7 +163,9 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     dated = dated_forecast_rules(rules(), report)
     layout = build_update(before, config(), dated, forecast=True)
     prepared = project_layout(before, layout, config(), dated)
-    update = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
+    update = build_forecast_values(
+        prepared, report, config(), rules(), history=True, forecast=True, partial=True
+    )
     after = filled(prepared, update)
     filler = ForecastFiller(
         object(),
@@ -178,6 +191,13 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     )
     assert result["notification_details"]["forecast"]["completed"] == (4 if manual_platform else 5)
     assert result["notification_details"]["forecast"]["total"] == 5
+    if manual_platform == "missing":
+        assert result["notification_details"]["history"]["completed"] == 4
+        assert result["notification_details"]["blocked_platforms"] == ["jd_self"]
+        assert len(update["entries"]) == 32
+        assert all(not e["platform"].startswith("jd_self:") for e in update["entries"])
+        for e in update["skipped_entries"]:
+            assert after["cells"][e["target_cell"]] == prepared["cells"][e["target_cell"]]
     reader.styles.assert_not_called()
     reader.catalog.assert_called_once()
     assert reader.daily_window.call_count == 3 and reader.sales_window.call_count == 12
@@ -275,3 +295,29 @@ def test_future_header_supports_multiple_style_windows_and_exact_end_day():
     report["groups"].append(other)
     dated = dated_forecast_rules(rules(), report)
     assert dated["forecast"]["future_headers"]["vip"] == "唯品25.3.4-25.8.31、25.3.4-26.1.31"
+
+
+@pytest.mark.parametrize("failure", ["target", "all_sources", "identity"])
+def test_forecast_partial_respects_platform_conflicts_and_global_blockers(failure):
+    _, _, report, _, prepared = setup_sheet()
+    if failure == "all_sources":
+        for platform in report["groups"][0]["platforms"]:
+            platform.update(status="needs_review", issues=["rolling_source_needs_review"])
+    elif failure == "identity":
+        report["groups"][0]["catalog"] = []
+    else:
+        full = build_forecast_values(
+            prepared, report, config(), rules(), history=True, forecast=True
+        )
+        cell = full["entries"][0]["target_cell"]
+        prepared["cells"][cell] = {"value": 99999}
+    update = build_forecast_values(
+        prepared, report, config(), rules(), history=True, forecast=True, partial=True
+    )
+    if failure == "target":
+        assert update["status"] == "partial"
+        assert len(update["entries"]) == 32
+        assert verify_sales_update(prepared, filled(prepared, update), update)["verified"]
+    else:
+        assert update["summary"]["needs_review"]
+        assert not update["operations"]

@@ -282,7 +282,6 @@ def test_numeric_total_is_not_overwritten_and_partial_subtotals_are_not_copied()
     assert plan["total_entries"] == []
 
 
-
 def test_sheet_format_change_blocks_fill():
     before, report = ready()
     before["layout"]["sheet_format"] = {"baseColWidth": 8}
@@ -290,4 +289,29 @@ def test_sheet_format_change_blocks_fill():
     after = applied(before, update)
     after["layout"]["sheet_format"] = {"baseColWidth": 9}
     with pytest.raises(ValueError, match="sheet_format"):
+        verify_sales_update(before, after, update)
+
+
+@pytest.mark.parametrize("failure", ["source", "target", "total"])
+def test_partial_history_preserves_failed_platform_and_verifies_others(failure):
+    before, report = ready()
+    if failure == "source":
+        report["entries"][0]["issues"] = ["incomplete_daily_coverage"]
+    elif failure == "target":
+        before["cells"]["E4"] = {"value": 99}
+    else:
+        before["cells"]["F7"] = {"formula": "=SUM(F4:F6)", "value": 90}
+        before["cells"]["E7"] = {"value": 99}
+    update = build_sales_update(before, report, config(), partial=True)
+    assert update["status"] == "partial"
+    assert update["summary"]["needs_review"] == 0
+    assert len(update["entries"]) == 8
+    assert len(update["blocked_platforms"]) == 1
+    assert all(not e["target_cell"].startswith("E") for e in update["entries"])
+    assert all(not e["target_cell"].startswith("E") for e in update["total_entries"])
+    after = applied(before, update)
+    assert verify_sales_update(before, after, update)["verified"]
+    assert after["cells"]["E4"] == before["cells"]["E4"]
+    after["cells"]["E4"] = {"value": 123}
+    with pytest.raises(ValueError):
         verify_sales_update(before, after, update)

@@ -109,6 +109,7 @@ class HistoryFiller:
                 before = read_sheet(
                     copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
                 )
+            sid = before["sheet_id"]
             save("before.json", before)
             category = plan_market_layout(before, config, rules, recent_only=True)["category"]
             if (category == "new" and not self.new_history) or (
@@ -124,27 +125,20 @@ class HistoryFiller:
             reader = self.reader_factory()
             report = inspect_sales(reader, before, config, date.fromisoformat(claim.as_of))
             write_report(output / "inspection", report, before)
-            allowed = {"sales_column_unresolved", "target_not_empty"}
-            problems = {issue for e in report["entries"] for issue in e["issues"]} - allowed
-            if problems:
-                # 来源覆盖或连接问题允许重试同一窗口；商品歧义需要人工处理。
-                catalog_ok = report["summary"]["catalog_matched"] == report["summary"]["sku_rows"]
-                status = (
-                    "retryable"
-                    if catalog_ok and any(s["issues"] for s in report["sources"])
-                    else "needs_review"
+            if report["summary"]["catalog_matched"] != report["summary"]["sku_rows"]:
+                return finish("needs_review", "表内商品未匹配或身份不明确")
+            projected = project_layout(before, layout_update, config, rules)
+            preflight = build_sales_update(
+                projected, remap_report(report, projected, config), config, partial=True
+            )
+            save("preflight.json", preflight)
+            if preflight["summary"]["needs_review"]:
+                return finish(
+                    "retryable" if any(s["issues"] for s in report["sources"]) else "needs_review",
+                    "所有平台历史数据均不可用或目标存在冲突",
                 )
-                return finish(status, "历史检查未通过：" + ", ".join(sorted(problems)))
-            for entry in report["entries"]:
-                existing = before["cells"].get(entry["target_cell"], {})
-                value = existing.get("value")
-                if existing.get("formula") or (
-                    value not in (None, "")
-                    and (type(value) not in (int, float) or value != entry["observed_quantity"])
-                ):
-                    return finish("needs_review", f"销量单元格已有不同内容：{entry['target_cell']}")
             writing = True
-            self.apply_plan(
+            update = self.apply_plan(
                 copy,
                 sid,
                 before,
@@ -152,13 +146,18 @@ class HistoryFiller:
                 config,
                 rules,
                 lambda snapshot: build_sales_update(
-                    snapshot, remap_report(report, snapshot, config), config
+                    snapshot, remap_report(report, snapshot, config), config, partial=True
                 ),
                 output,
                 save,
                 "sales",
             )
-            return finish("completed")
+            from stocking_sheet_sync.services.notification import summarize_platform_fill
+
+            result = finish("completed")
+            result["notification_details"] = summarize_platform_fill(update, config, history=True)
+            save("result.json", result)
+            return result
         except Exception as error:
             LOG.log(
                 logging.DEBUG if isinstance(error, ValueError) else logging.ERROR,
@@ -192,7 +191,7 @@ class HistoryFiller:
             output：本批次临时证据目录。
             save：保存JSON证据的函数。
             prefix：历史或预测数量证据的文件名前缀。
-        返回值：无；写入或校验异常向上抛出，交由批次降级处理。
+        返回值：已写入并核验的数量计划；写入或校验异常向上抛出。
         """
         prepared = before
         if layout["operations"]:
@@ -233,6 +232,7 @@ class HistoryFiller:
             )
         save("after.json", after)
         save(f"{prefix}-verification.json", verify_sales_update(prepared, after, update))
+        return update
 
     def find_sheet(self, token: str, config: dict) -> str:
         """
@@ -438,13 +438,13 @@ class ForecastFiller(HistoryFiller):
             save("layout-request.json", layout)
             projected = project_layout(before, layout, config, rules)
             preflight = build_forecast_values(
-                projected, report, config, rules, history=self.history, forecast=True
+                projected, report, config, rules, history=self.history, forecast=True, partial=True
             )
             save("preflight.json", preflight)
             if preflight["summary"]["needs_review"]:
                 return finish("needs_review", "计算数据不足或目标已有不同内容，详见 preflight.json")
             writing = True
-            self.apply_plan(
+            update = self.apply_plan(
                 copy,
                 sid,
                 before,
@@ -452,18 +452,26 @@ class ForecastFiller(HistoryFiller):
                 config,
                 rules,
                 lambda snapshot: build_forecast_values(
-                    snapshot, report, config, rules, history=self.history, forecast=True
+                    snapshot,
+                    report,
+                    config,
+                    rules,
+                    history=self.history,
+                    forecast=True,
+                    partial=True,
                 ),
                 output,
                 save,
                 "values",
             )
-            from stocking_sheet_sync.services.notification import summarize_forecast
+            from stocking_sheet_sync.services.notification import summarize_platform_fill
 
             result = finish("completed")
             result["history_status"] = "completed" if self.history else "disabled"
             result["forecast_status"] = "completed"
-            result["notification_details"] = summarize_forecast(report, config)
+            result["notification_details"] = summarize_platform_fill(
+                update, config, history=self.history, report=report
+            )
             save("result.json", result)
             return result
         except Exception as error:

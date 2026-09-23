@@ -30,15 +30,27 @@ class Reader:
         }
 
 
-def setup_fill(tmp_path, monkeypatch, issues=()):
+def setup_fill(tmp_path, monkeypatch, issues=(), failed_platform=None):
     before = incoming()
     layout_update = build_update(before, config(), rules())
     prepared = completed(before, layout_update)
     after = deepcopy(prepared)
-    for cols in inspect_sheet(after, config())["columns"].values():
+    for pid, cols in inspect_sheet(after, config())["columns"].items():
+        if pid == failed_platform:
+            continue
         for row in (4, 6):
             after["cells"][f"{cols['sales']}{row}"] = {"value": 10}
     reader = Reader(before, issues)
+    if failed_platform:
+        original_sales = reader.sales
+
+        def sales(source, skus, as_of):
+            result = original_sales(source, skus, as_of)
+            if source["id"] == failed_platform:
+                result["issues"] = ["rolling_source_needs_review"]
+            return result
+
+        reader.sales = sales
     filler = HistoryFiller(
         object(), config_path=Path("config/config.example.toml"), reader_factory=lambda: reader
     )
@@ -86,7 +98,7 @@ def test_missing_history_blocks_layout_and_sales_before_any_mutation(tmp_path, m
     )
     result = filler(copy, claim)
     assert result["status"] == "retryable"
-    assert "incomplete_daily_coverage" in result["reason"]
+    assert "所有平台历史数据均不可用" in result["reason"]
     assert writes == []
 
 
@@ -150,8 +162,10 @@ def test_select_sheet_by_headers_requires_unique_candidate(count, missing_market
                 "valueRanges": [
                     {
                         "range": kwargs["params"]["ranges"],
-                        "values": [["商品编码", "款式编码", "商品名称", "颜色规格"]
-                                   + ([] if missing_market else ["市场部"])],
+                        "values": [
+                            ["商品编码", "款式编码", "商品名称", "颜色规格"]
+                            + ([] if missing_market else ["市场部"])
+                        ],
                     }
                 ]
             }
@@ -275,3 +289,17 @@ def test_new_forecast_enabled_preserves_history_and_reports_unsupported(tmp_path
     assert result["status"] == "completed"
     assert result["forecast_status"] == "unsupported"
     assert writes == ["layout", "sales"]
+
+
+def test_history_service_writes_healthy_platforms_and_reports_partial(tmp_path, monkeypatch):
+    filler, copy, claim, reader, writes = setup_fill(
+        tmp_path, monkeypatch, failed_platform="jd_self"
+    )
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert writes == ["layout", "sales"]
+    details = result["notification_details"]
+    assert details["blocked_platforms"] == ["jd_self"]
+    assert details["history"]["status"] == "partial"
+    assert details["history"]["completed"] == 4
+    assert "快照不可用" in details["history"]["reasons"][0]

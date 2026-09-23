@@ -9,7 +9,9 @@ from stocking_sheet_sync.domain.sheets.totals import column_total_rows
 LOG = logging.getLogger(__name__)
 
 
-def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
+def build_sales_update(
+    snapshot: dict, report: dict, config: dict, *, partial: bool = False
+) -> dict:
     """
     功能说明：核对完整销量候选清单，为空白销量单元格及对应平台合计生成请求。
 
@@ -17,6 +19,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
         snapshot：本次读取的完整表格值、公式与样式快照。
         report：基于同一快照和指定日期生成的数仓检查结果。
         config：商品字段、平台来源及表头别名配置。
+        partial：是否允许跳过异常平台并填写其余平台。
 
     返回值：写入请求、逐项状态、平台合计和统计；存在任何异常时操作清单为空。
     """
@@ -89,7 +92,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
                     }
                 )
     total_entries = []
-    if not counts["needs_review"]:
+    if partial or not counts["needs_review"]:
         for platform, columns in layout["columns"].items():
             for total in column_total_rows(
                 snapshot,
@@ -138,7 +141,7 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
         "platform_totals": dict(totals) if not counts["needs_review"] else None,
     }
     LOG.debug("销量填充请求生成：operations=%d summary=%s", len(operations), summary)
-    return {
+    result = {
         "as_of": report["as_of"],
         "entries": entries,
         "total_entries": total_entries,
@@ -150,3 +153,9 @@ def build_sales_update(snapshot: dict, report: dict, config: dict) -> dict:
         if operations
         else "unchanged",
     }
+
+    if partial:
+        from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
+
+        return isolate_platforms(result, snapshot["sheet_id"])
+    return result

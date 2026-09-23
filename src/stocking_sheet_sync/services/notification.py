@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from typing import Any, Literal
 
 
-def summarize_forecast(report: dict, config: dict) -> dict:
+def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) -> dict:
     """
     功能说明：汇总核验完成的各平台预测结果，保存完整平台数和人工判断原因。
 
     参数：
         report：已完成写入核验的预测报告。
         config：包含平台ID和名称的配置。
+        blocked：本次未写入的平台及简短原因。
     返回值：可持久化的通知摘要，不依赖本地报告文件。
     """
     reasons = []
@@ -23,6 +25,9 @@ def summarize_forecast(report: dict, config: dict) -> dict:
     }
     platforms = config["platforms"]
     for platform in platforms:
+        if platform["id"] in (blocked or {}):
+            reasons.append(blocked[platform["id"]])
+            continue
         items = [
             (group["style"], item)
             for group in report["groups"]
@@ -55,6 +60,50 @@ def summarize_forecast(report: dict, config: dict) -> dict:
             "reasons": list(dict.fromkeys(reasons)),
         }
     }
+
+
+def summarize_platform_fill(
+    update: dict, config: dict, *, history: bool, report: dict | None = None
+) -> dict:
+    """
+    功能说明：按实际已核验的平台生成历史和预测通知摘要。
+
+    参数：
+        update：完成写入回读的计划，含跳过平台及原因。
+        config：平台名称配置。
+        history：是否启用历史填充。
+        report：预测报告；仅填历史时为空。
+    返回值：可保存到批次的通知摘要。
+    """
+    blocked = {}
+    for platform in config["platforms"]:
+        issues = update.get("blocked_platforms", {}).get(platform["id"])
+        if issues is None:
+            continue
+        codes = " ".join(issues)
+        if "target_conflict" in codes:
+            reason = "目标单元格已有不同内容"
+        elif "rolling" in codes or "snapshot" in codes:
+            reason = "近30天销量快照不可用"
+        elif "read_failed" in codes:
+            reason = "销量来源读取失败"
+        else:
+            reason = "历史销量数据缺失或未通过校验"
+        blocked[platform["id"]] = f"{platform['name']}：{reason}，该平台未填充"
+    details = summarize_forecast(report, config, blocked) if report is not None else {}
+    if blocked:
+        details["blocked_platforms"] = list(blocked)
+        logging.getLogger(__name__).warning("部分平台未填充：%s", "；".join(blocked.values()))
+    if history:
+        total = len(config["platforms"])
+        done = total - len(blocked)
+        details["history"] = {
+            "status": "completed" if done == total else "partial" if done else "manual",
+            "completed": done,
+            "total": total,
+            "reasons": list(blocked.values()),
+        }
+    return details
 
 
 def build_sync_card(
