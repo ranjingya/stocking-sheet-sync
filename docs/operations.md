@@ -52,29 +52,33 @@ PYTHON
 ## 手动重搬
 
 ```bash
-docker compose exec stocking-sheet-sync uv run stocking-sheet-sync rerun --record-id rec_xxx
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync rerun --record-id rec_xxx
 ```
 
 命令输出 `request_id`。同一次操作遇到中断或失败，用同一标识恢复：
 
 ```bash
-docker compose exec stocking-sheet-sync uv run stocking-sheet-sync rerun --record-id rec_xxx --request-id batch_xxx
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync rerun --record-id rec_xxx --request-id batch_xxx
 ```
 
 每次省略标识都会创建新批次。源表内容更新但token不变时，也使用手动重搬。
 
-## 诊断入口
+## 指定表格原地填充
 
 ```bash
-uv run stocking-sheet-sync inspect --help
-uv run stocking-sheet-sync forecast --help
-uv run stocking-sheet-sync layout --help
-uv run stocking-sheet-sync layout-apply --help
-uv run stocking-sheet-sync sales-fill --help
-uv run stocking-sheet-sync notify --help
+# 只填历史
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --history
+# 只填预测
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --forecast
+# 同时填写
+docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --history --forecast
 ```
 
-只读诊断可以指定快照或历史日期；自动服务的基准日固定为批次原始备份创建日。写入诊断命令要求显式执行参数和版本号，防止覆盖已变化的表格。
+直接修改指定表格，不复制、不通知；只操作市场部字段，保留已有不同内容和公式。命令参数决定填充项目，不受自动流程的新老品开关影响；新品预测仍未支持。默认采用上海当天日期，可用 `--as-of YYYY-MM-DD` 指定基准日。通过链接的 `sheet` 参数或 `--sheet-id` 选择工作表，否则自动识别唯一的下单工作表。
+
+与后台任务共用运行锁，忙碌时退出码为3；完成为0，部分完成或待核对为2，执行异常为1。成功回读后清理临时文件，未完成报告按容量上限保留。历史日期的ADS快照不可用时对应平台保持待核对，不替换统计日期。
+
+CLI包含 `serve`、`rerun`、`fill` 三个入口；`serve`用于容器启动服务，日常手动操作使用后两者。通过 `命令 --help` 查看参数。
 
 ## 常见结果
 

@@ -47,11 +47,11 @@ uv run stocking-sheet-sync rerun --record-id rec_xxx
 # 使用相同请求标识恢复该批次
 uv run stocking-sheet-sync rerun --record-id rec_xxx --request-id batch_xxx
 
-# 只读试算指定老款，结果写入本地目录
-uv run stocking-sheet-sync forecast --style KQ25073 --as-of 2026-09-04 --output artifacts/trial
+# 指定链接原地填历史和预测，不通知
+uv run stocking-sheet-sync fill --url "https://kocotree.feishu.cn/sheets/表格token" --history --forecast
 ```
 
-`inspect`、`forecast`、`layout` 用于诊断；`layout-apply`、`sales-fill` 用于指定版本的表格操作；`notify` 用于显式手动通知。各命令使用 `--help` 查看参数，运行配置路径参数统一为 `--config`，业务规则固定读取该路径同目录的 `rules.toml`。
+手动操作使用 `rerun`（重新搬运、按配置填充并通知）和 `fill`（指定链接原地填写、不通知）。`fill` 至少选择 `--history` 或 `--forecast`，可同时指定；支持 `--as-of` 和 `--sheet-id`。已有不同内容保留并报告，只有市场部字段会被填写。`serve`用于启动Webhook服务。各命令使用 `--help` 查看参数。
 
 ## 文档
 

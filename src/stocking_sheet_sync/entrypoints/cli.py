@@ -8,12 +8,7 @@ import sys
 COMMANDS = {
     "serve": ("server", "启动Webhook和后台处理线程"),
     "rerun": ("rerun", "手动重新搬运并填充"),
-    "inspect": ("inspect", "只读检查商品和历史销量"),
-    "forecast": ("forecast", "只读试算老款公式预估"),
-    "layout": ("layout", "只读预览市场部结构"),
-    "layout-apply": ("layout_apply", "执行已核对的结构调整"),
-    "sales-fill": ("sales_fill", "预览或执行历史销量填充"),
-    "notify": ("notify", "手动发送结果通知"),
+    "fill": ("fill", "指定表格链接原地填历史或预测，不通知"),
 }
 
 
