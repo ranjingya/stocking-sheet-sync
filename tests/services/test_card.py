@@ -33,7 +33,7 @@ def test_build_failure_card_contains_reason() -> None:
     )
 
     assert card["header"]["template"] == "red"
-    assert "没有访问权限" in card["body"]["elements"][0]["content"]
+    assert "没有访问权限" in card["body"]["elements"][-1]["content"]
 
     assert "未生成" not in card["body"]["elements"][0]["content"]
 
@@ -65,9 +65,13 @@ def test_partial_forecast_and_reason_are_displayed_without_blank_lines():
     )
     assert card["header"]["template"] == "orange"
     text = card["body"]["elements"][0]["content"]
-    assert "历史数据：✅ 已填充" in text
+    assert "**历史数据：**✅ 已填充" in text
     assert "部分完成（1/2平台全部完成）" in text
-    assert "\n原因：乙平台：去年同期销量为0" in text
+    assert "原因" not in text
+    note = card["body"]["elements"][-1]
+    assert "**原因：**乙平台：去年同期销量为0" in note["content"]
+    assert note["text_size"] == "notation"
+    assert "**原始记录：**" in text
     assert "\n\n" not in text
 
 
@@ -104,8 +108,9 @@ def test_disabled_unsupported_and_degraded_states_have_reasons():
     )
     card = build_sync_card(**common, history_status="disabled", forecast_status="unsupported")
     text = card["body"]["elements"][0]["content"]
-    assert "历史数据：未开启" in text and "预测：暂不支持" in text
-    assert "开关关闭" in text and "新品预测暂不支持" in text
+    assert "**历史数据：**未开启" in text and "**预测：**暂不支持" in text
+    note = card["body"]["elements"][-1]["content"]
+    assert "开关关闭" in note and "新品预测暂不支持" in note
     card = build_sync_card(
         **common,
         history_status="completed",
@@ -115,7 +120,7 @@ def test_disabled_unsupported_and_degraded_states_have_reasons():
     )
     text = card["body"]["elements"][0]["content"]
     assert "已填充" not in text and "已计算" not in text
-    assert "已交付未填充原表" in text
+    assert "已交付未填充原表" in card["body"]["elements"][-1]["content"]
 
 
 def test_all_manual_forecast_does_not_report_completed():
@@ -143,5 +148,5 @@ def test_all_manual_forecast_does_not_report_completed():
         forecast_status="completed",
         details=details,
     )
-    assert "预测：未计算" in card["body"]["elements"][0]["content"]
+    assert "**预测：**未计算" in card["body"]["elements"][0]["content"]
     assert "待人工处理" in card["header"]["title"]["content"]

@@ -183,7 +183,7 @@ def build_sync_card(
             if not info.get("reasons") and not reason:
                 reasons.append(label + "执行结果待核验")
         reasons.extend(info.get("reasons", []))
-        texts.append(f"{label}：{text}")
+        texts.append(f"**{label}：**{text}")
     if reason:
         reasons.insert(0, reason)
     if degraded:
@@ -200,11 +200,9 @@ def build_sync_card(
         title, color = "处理完成", "green"
     else:
         title, color = "搬运完成", "green"
-    content = f"原始记录：[{name}]({record_url})\n" + " ｜ ".join(texts)
-    if reasons:
-        content += "\n原因：" + _escape_markdown(_clean_text("；".join(dict.fromkeys(reasons))))
+    content = f"**原始记录：**[{name}]({record_url})\n" + "\n".join(texts)
     title = "下单需求 · " + title
-    return {
+    card = {
         "schema": "2.0",
         "config": {"width_mode": "default", "summary": {"content": title}},
         "header": {"title": {"tag": "plain_text", "content": title}, "template": color},
@@ -233,6 +231,17 @@ def build_sync_card(
             ],
         },
     }
+
+    if reasons:
+        reason_text = _escape_markdown(_clean_text("；".join(dict.fromkeys(reasons))))
+        card["body"]["elements"].append(
+            {
+                "tag": "markdown",
+                "content": f"<font color='grey'>**原因：**{reason_text}</font>",
+                "text_size": "notation",
+            }
+        )
+    return card
 
 
 def _build_button(text: str, url: str, button_type: str) -> dict[str, Any]:
