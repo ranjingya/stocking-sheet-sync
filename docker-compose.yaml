@@ -4,6 +4,7 @@ services:
     container_name: stocking-sheet-sync
     restart: unless-stopped
     stop_grace_period: 330s
+    user: "1002:1002"
     labels:
       traefik.enable: "true"
       traefik.docker.network: traefik-network
