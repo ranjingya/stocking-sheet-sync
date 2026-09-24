@@ -6,13 +6,14 @@ import logging
 import re
 from collections import Counter, defaultdict
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from stocking_sheet_sync.domain.forecast import allocate_forecast
 from stocking_sheet_sync.domain.periods import forecast_window
-from stocking_sheet_sync.domain.products import match_catalog
+from stocking_sheet_sync.domain.products import match_catalog, normalize_text, units
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
+from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 
 LOG = logging.getLogger(__name__)
@@ -84,6 +85,67 @@ def quantities(source: dict, skus: list[str], *, absent_is_zero: bool) -> dict[s
     return result
 
 
+def sheet_history_quantities(
+    snapshot: dict,
+    rows: list[dict],
+    fields: dict,
+    group: dict,
+    platform: str,
+    metric: str,
+    layout_rules: dict,
+    header_row: int,
+) -> dict[str, int]:
+    """
+    功能说明：数仓窗口暂不可用时，核对同一日期窗口的表内完整历史数量。
+
+    参数：
+        snapshot：写入前的飞书工作表快照。
+        rows：已解析的商品行及其精确SKU。
+        fields：市场部现有平台历史列的映射。
+        group：当前款式、SKU及对应的预测日期窗口。
+        platform：平台标识。
+        metric：current、previous或historical_future历史窗口标识。
+        layout_rules：后续周期表头规则。
+        header_row：平台字段所在的表头行。
+    返回值：按SKU映射的非负整数件数；窗口或任一单元格不可靠时抛错。
+    """
+    column = fields.get((platform, metric))
+    if not column:
+        raise ValueError("表内缺少对应历史列")
+    window = group["window"]
+    future_column = fields.get((platform, "historical_future"))
+    if not future_column:
+        raise ValueError("表内缺少去年后续周期列，无法核对历史窗口")
+    start = date.fromisoformat(window["history_start"])
+    end = date.fromisoformat(window["history_end"]) - timedelta(days=1)
+    period = (
+        f"{start.year % 100:02d}.{start.month}.{start.day}-"
+        f"{end.year % 100:02d}.{end.month}.{end.day}"
+    )
+    prefix = layout_rules["platforms"][platform]["future_prefix"]
+    header = snapshot["cells"][f"{future_column}{header_row}"].get("value")
+    normalized_header = normalize_text(header)
+    normalized_prefix = normalize_text(prefix)
+    if not normalized_header.startswith(normalized_prefix) or normalize_text(
+        period
+    ) not in normalized_header[len(normalized_prefix) :].split("、"):
+        raise ValueError(f"表内后续周期表头与预估日不符：{header}")
+    matched = [row for row in rows if row["style"] == group["style"]]
+    if len(matched) != len(group["skus"]) or {r["sku"] for r in matched} != set(group["skus"]):
+        raise ValueError("表内商品行与数仓SKU不一致")
+    result = {}
+    for row in matched:
+        address = f"{column}{row['row']}"
+        cell = snapshot["cells"][address]
+        if cell.get("formula") or cell.get("value") in (None, ""):
+            raise ValueError(f"表内历史数量缺失或是公式：{address}")
+        try:
+            result[row["sku"]] = units(cell["value"])
+        except ValueError as error:
+            raise ValueError(f"表内历史数量无效：{address}，{error}") from error
+    return result
+
+
 def inspect_forecast(
     reader: ForecastReader,
     styles: list[str],
@@ -129,6 +191,25 @@ def inspect_forecast(
         match_catalog({"rows": requested}, catalog)
         LOG.debug("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
     company_source = read_company_sales(snapshot, requested or [], rules)
+    existing_fields = {}
+    if (
+        snapshot is not None
+        and requested is not None
+        and {"sheet_id", "row_count", "column_count", "merges"} <= snapshot.keys()
+    ):
+        layout = plan_market_layout(
+            snapshot, sales_config, layout_rules, recent_only=True, forecast=True
+        )
+        existing_fields = {
+            (
+                field["platform"],
+                {"sales": "current", "previous": "previous", "future": "historical_future"}[
+                    field["metric"]
+                ],
+            ): field["source_column"]
+            for field in layout["target_fields"]
+            if field["metric"] in {"sales", "previous", "future"} and field["source_column"]
+        }
     sku_styles = defaultdict(set)
     for record in catalog:
         sku_styles[record["sku"]].add(record["style"])
@@ -199,7 +280,30 @@ def inspect_forecast(
                         source, skus, absent_is_zero=not daily and platform["kind"] == "detail"
                     )
                 except (ValueError, RuntimeError) as error:
-                    item["issues"].append(f"{key}: {error}")
+                    if snapshot is not None and requested is not None and existing_fields:
+                        try:
+                            data[key] = sheet_history_quantities(
+                                snapshot,
+                                requested,
+                                existing_fields,
+                                group,
+                                pid,
+                                key,
+                                layout_rules,
+                                sales_config["matching"]["header_rows"],
+                            )
+                            item.setdefault("input_origins", {})[key] = "sheet"
+                            LOG.info(
+                                "历史窗口使用表内已有数量：style=%s platform=%s window=%s skus=%d",
+                                style,
+                                pid,
+                                key,
+                                len(data[key]),
+                            )
+                        except ValueError as sheet_error:
+                            item["issues"].append(f"{key}: {error}；{sheet_error}")
+                    else:
+                        item["issues"].append(f"{key}: {error}")
             item["inputs"] = data
             if not item["issues"]:
                 fallback = rules["fallback"]

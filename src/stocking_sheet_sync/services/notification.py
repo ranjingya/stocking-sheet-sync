@@ -76,13 +76,30 @@ def summarize_platform_fill(
     返回值：可保存到批次的通知摘要。
     """
     blocked = {}
+    skipped_entries = update.get("skipped_entries", [])
     for platform in config["platforms"]:
         issues = update.get("blocked_platforms", {}).get(platform["id"])
         if issues is None:
             continue
         codes = " ".join(issues)
-        if "target_conflict" in codes:
-            reason = "目标单元格已有不同内容"
+        mismatches = [
+            entry
+            for entry in skipped_entries
+            if entry["platform"].startswith(platform["id"] + ":")
+            and entry.get("metric") in {"sales", "previous", "future"}
+            and "target_conflict" in entry.get("issues", [])
+            and entry.get("quantity") is not None
+        ]
+        if mismatches:
+            first = mismatches[0]
+            reason = (
+                f"历史数据不一致（{first['target_cell']}：表内{first['existing_quantity']}，"
+                f"数仓{first['quantity']}）"
+            )
+            if len(mismatches) > 1:
+                reason += f"，共{len(mismatches)}处"
+        elif "target_conflict" in codes:
+            reason = "目标历史单元格已有不同内容"
         elif "rolling" in codes or "snapshot" in codes:
             reason = "近30天销量快照不可用"
         elif "read_failed" in codes:
@@ -90,7 +107,17 @@ def summarize_platform_fill(
         else:
             reason = "历史销量数据缺失或未通过校验"
         blocked[platform["id"]] = f"{platform['name']}：{reason}，该平台未填充"
-    details = summarize_forecast(report, config, blocked) if report is not None else {}
+    forecast_blocked = dict(blocked)
+    for item in update.get("skipped_forecasts", []):
+        if (
+            "forecast_target_conflict" in item.get("reason", [])
+            and item["platform"] not in forecast_blocked
+        ):
+            forecast_blocked[item["platform"]] = (
+                f"{next(p['name'] for p in config['platforms'] if p['id'] == item['platform'])}："
+                f"{item['target_cell']}已有不同预测，保留原值"
+            )
+    details = summarize_forecast(report, config, forecast_blocked) if report is not None else {}
     if blocked:
         details["blocked_platforms"] = list(blocked)
         logging.getLogger(__name__).warning("部分平台未填充：%s", "；".join(blocked.values()))

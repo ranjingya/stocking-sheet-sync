@@ -202,8 +202,28 @@ def build_forecast_values(
                 cell = snapshot["cells"][address]
                 existing = cell.get("value")
                 equal = type(existing) in (int, float) and existing == value
-                if cell.get("formula") or (
-                    existing not in (None, "") and not equal and not config.get("overwrite")
+                if (
+                    metric == "forecast"
+                    and value is not None
+                    and not config.get("overwrite")
+                    and (cell.get("formula") or (existing not in (None, "") and not equal))
+                ):
+                    skipped.append(
+                        {
+                            "style": row["style"],
+                            "sku": row["sku"],
+                            "platform": pid,
+                            "target_cell": address,
+                            "reason": ["forecast_target_conflict"],
+                            "status": "preserved",
+                            "existing_quantity": existing,
+                            "calculated_quantity": value,
+                        }
+                    )
+                    continue
+                if value is not None and (
+                    cell.get("formula")
+                    or (existing not in (None, "") and not equal and not config.get("overwrite"))
                 ):
                     problems.append("target_conflict")
                 status = "needs_review" if problems else "unchanged" if equal else "write"
@@ -216,6 +236,7 @@ def build_forecast_values(
                     "row": row["row"],
                     "target_cell": address,
                     "quantity": value,
+                    "existing_quantity": existing,
                     "status": status,
                     "issues": problems,
                 }

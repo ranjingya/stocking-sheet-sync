@@ -20,6 +20,7 @@ from stocking_sheet_sync.domain.sheets.layout import (
 from stocking_sheet_sync.domain.sheets.validation import verify_sales_update, verify_update
 from stocking_sheet_sync.services.calculation import inspect_forecast
 from stocking_sheet_sync.services.fill import ForecastFiller
+from stocking_sheet_sync.services.notification import summarize_platform_fill
 from tests.services.test_forecast_inspect import config as all_config
 from tests.services.test_forecast_inspect import fake_reader
 from tests.services.test_layout_apply import config, incoming, rules
@@ -99,7 +100,7 @@ def test_report_extra_skus_do_not_block_target_rows():
     assert {entry["sku"] for entry in update["entries"]} == {"0004", "0006"}
 
 
-def test_existing_quantity_or_formula_blocks_without_replacing():
+def test_existing_different_forecast_is_preserved_while_history_can_fill():
     _, _, report, layout, prepared = setup_sheet()
     col = next(
         f["target_column"] for f in layout["report"]["target_fields"] if f["metric"] == "forecast"
@@ -110,8 +111,99 @@ def test_existing_quantity_or_formula_blocks_without_replacing():
         update = build_forecast_values(
             target, report, config(), rules(), history=True, forecast=True
         )
-        assert update["status"] == "needs_review" and not update["operations"]
+        assert update["status"] == "changes_proposed" and update["operations"]
+        assert any(e["target_cell"] == col + "4" for e in update["skipped_forecasts"])
+        assert all(e["target_cell"] != col + "4" for e in update["entries"])
+        details = summarize_platform_fill(update, config(), history=True, report=report)
+        assert details["history"]["status"] == "completed"
+        assert details["forecast"]["status"] == "partial"
+        assert any(col + "4" in reason for reason in details["forecast"]["reasons"])
         assert target["cells"][col + "4"] == content
+
+
+def test_missing_warehouse_window_uses_complete_matching_sheet_history():
+    before, reader, report, _, _ = setup_sheet()
+    dated = dated_forecast_rules(rules(), report)
+    layout = build_update(before, config(), dated, forecast=True)
+    prepared = project_layout(before, layout, config(), dated)
+    history = build_forecast_values(prepared, report, config(), dated, history=True, forecast=False)
+    prepared = filled(prepared, history)
+    original = reader.sales_window.side_effect
+
+    def source_with_missing_window(source, skus, start, stop):
+        result = original(source, skus, start, stop)
+        if source["id"] == "vip" and (stop - start).days == 30:
+            result["issues"] = ["snapshot_or_skus_missing"]
+        return result
+
+    reader.sales_window.side_effect = source_with_missing_window
+    rows = inspect_sheet(prepared, config())["rows"]
+    recovered = inspect_forecast(
+        reader,
+        ["KQ25001"],
+        date(2026, 9, 12),
+        *all_config(),
+        requested_rows=rows,
+        snapshot=prepared,
+    )
+    vip = next(p for p in recovered["groups"][0]["platforms"] if p["platform"] == "vip")
+    assert vip["status"] == "ready"
+    assert vip["input_origins"] == {"current": "sheet", "previous": "sheet"}
+    assert vip["forecast"]["total"] == 800
+    update = build_forecast_values(
+        prepared, recovered, config(), dated, history=True, forecast=True, partial=True
+    )
+    assert "vip" not in update.get("blocked_platforms", {})
+    future_column = next(
+        f["target_column"]
+        for f in layout["report"]["target_fields"]
+        if f["platform"] == "vip" and f["metric"] == "future"
+    )
+    prepared["cells"][future_column + "3"]["value"] = "唯品25.9.4-26.1.31"
+    mismatched_period = inspect_forecast(
+        reader,
+        ["KQ25001"],
+        date(2026, 9, 12),
+        *all_config(),
+        requested_rows=rows,
+        snapshot=prepared,
+    )
+    vip = next(p for p in mismatched_period["groups"][0]["platforms"] if p["platform"] == "vip")
+    assert vip["status"] == "needs_review"
+    assert any("表头与预估日不符" in issue for issue in vip["issues"])
+
+
+def test_matching_history_is_reused_and_only_blank_history_is_filled():
+    _, _, report, _, prepared = setup_sheet()
+    original = build_forecast_values(
+        prepared, report, config(), rules(), history=True, forecast=False
+    )
+    prepared = filled(prepared, original)
+    blank = next(e["target_cell"] for e in original["entries"] if e["platform"] == "vip:previous")
+    prepared["cells"][blank] = {}
+    update = build_forecast_values(
+        prepared, report, config(), rules(), history=True, forecast=True, partial=True
+    )
+    assert "vip" not in update.get("blocked_platforms", {})
+    assert next(e for e in update["entries"] if e["target_cell"] == blank)["status"] == "write"
+    assert all(
+        e["status"] == "unchanged"
+        for e in update["entries"]
+        if e["metric"] != "forecast" and e["target_cell"] != blank
+    )
+
+
+def test_existing_history_mismatch_blocks_its_platform_with_cell_detail():
+    _, _, report, _, prepared = setup_sheet()
+    plan = build_forecast_values(prepared, report, config(), rules(), history=True, forecast=True)
+    target = next(e["target_cell"] for e in plan["entries"] if e["platform"] == "vip:sales")
+    prepared["cells"][target] = {"value": 99}
+    update = build_forecast_values(
+        prepared, report, config(), rules(), history=True, forecast=True, partial=True
+    )
+    assert "vip" in update["blocked_platforms"]
+    details = summarize_platform_fill(update, config(), history=True, report=report)
+    assert any(target in reason and "表内99" in reason for reason in details["history"]["reasons"])
 
 
 def test_history_only_does_not_require_available_forecast():
