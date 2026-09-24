@@ -69,7 +69,8 @@ headers = ["全公司去年生命周期销量", "全公司生命周期销量"]
 [platforms.jd_self]
 name = "京东自营"
 kind = "snapshot"
-table = "bwd_rpa_jd_inventory_product_detail"
+table = "jd_inventory_product_detail"
+connection = "mysql"
 sales_headers = ["自营近30天", "京东自营近30天", "京东自营近30天销量"]
 demand_headers = ["京东自营"]
 business_date_offset_days = 0
@@ -213,14 +214,6 @@ sales = "猫超近30天"
 demand = "天猫超市"
 history = "猫超{period}"
 history_pattern = "^(?:猫超|天猫超市)(?P<period>\\d.+)$"
-
-[platforms.jd_self.summary]
-table = "ads_rpa_jd_inventory_product_detail"
-sku = "spec_code"
-date = "stat_date"
-row_id = "__id"
-current = "sale_jdzy_qty_30d"
-previous = "ly_sale_jdzy_qty_30d"
 
 [platforms.pdd.summary]
 table = "ads_whs_outstock_pdd_base_sku_window"

@@ -337,6 +337,7 @@ def business_view(path: Path, section: str) -> dict:
                     "id": pid,
                     "kind": "daily",
                     "table": p["table"],
+                    "connection": p.get("connection", "warehouse"),
                     "fields": p["daily_fields"],
                     "filters": p["filters"],
                     "rolling_fields": p["rolling_fields"],
@@ -403,6 +404,40 @@ class WarehouseSettings:
         )
 
 
+@dataclass(frozen=True)
+class MySQLSettings(WarehouseSettings):
+    @classmethod
+    def load(cls, env_file: Path | None = None, env: Mapping[str, str] | None = None):
+        """
+        功能说明：读取源 MySQL 的只读连接参数，不依赖数仓连接配置。
+
+        参数：
+            env_file：凭证文件路径，默认当前目录的 .env。
+            env：可选环境变量映射，优先于文件内容。
+        返回值：源 MySQL 的连接设置，密码不参与对象展示。
+        """
+        if env_file is not None and not env_file.is_file():
+            raise ValueError("MySQL 凭证文件不存在")
+        selected_file = env_file if env_file is not None else Path(".env")
+        values = {
+            **(dotenv_values(selected_file) if selected_file.is_file() else {}),
+            **(os.environ if env is None else env),
+        }
+        required = ("MYSQL_HOST", "MYSQL_DB_NAME", "MYSQL_USER", "MYSQL_PASSWORD")
+        if any(not values.get(name) for name in required):
+            raise ValueError("源 MySQL 连接配置不完整，请填写 MYSQL_* 参数")
+        port = int(values.get("MYSQL_PORT") or "3306")
+        if not 1 <= port <= 65535:
+            raise ValueError("源 MySQL 端口无效")
+        return cls(
+            values["MYSQL_HOST"],
+            port,
+            values["MYSQL_DB_NAME"],
+            values["MYSQL_USER"],
+            values["MYSQL_PASSWORD"],
+        )
+
+
 def load_sales_config(path: Path) -> dict[str, Any]:
     """
     功能说明：加载可替换的平台、字段、筛选与表头匹配配置。
@@ -436,6 +471,8 @@ def load_sales_config(path: Path) -> dict[str, Any]:
     if not {"sku", "style", "name", "spec"} <= config["catalog"]["fields"].keys():
         raise ValueError("商品主数据字段配置不完整")
     for platform in platforms:
+        if platform.get("connection", "warehouse") not in {"warehouse", "mysql"}:
+            raise ValueError("平台数据库连接只支持 warehouse 或 mysql")
         if platform.get("summary"):
             for key in ("table", "sku", "date", "row_id", "current", "previous"):
                 identifier(platform["summary"][key])
@@ -581,6 +618,8 @@ def load_forecast_sources(path: Path) -> dict:
     if not {"sku", "style", "name", "spec", "labels"} <= config["catalog"]["fields"].keys():
         raise ValueError("预测商品主数据字段不完整")
     for source in config.get("daily", {}).values():
+        if source.get("connection", "warehouse") not in {"warehouse", "mysql"}:
+            raise ValueError("预测来源数据库连接只支持 warehouse 或 mysql")
         if (
             source["kind"] != "daily"
             or not {"sku", "date", "quantity", "row_id", "rolling_30"} <= source["fields"].keys()

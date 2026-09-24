@@ -13,8 +13,10 @@
 | `WAREHOUSE_HOST`、`WAREHOUSE_PORT`、`WAREHOUSE_DATABASE` | 数仓地址、端口和库名 |
 | `WAREHOUSE_USER`、`WAREHOUSE_PASSWORD` | 数仓只读凭证 |
 | `WAREHOUSE_CONNECT_TIMEOUT`、`WAREHOUSE_READ_TIMEOUT` | 数仓连接和读取超时 |
+| `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DB_NAME` | 京东自营源 MySQL 地址、端口和库名 |
+| `MYSQL_USER`、`MYSQL_PASSWORD` | 京东自营源 MySQL 只读凭证 |
 
-数仓凭证仅从当前项目 `.env` 与环境变量读取，环境变量优先。不借用其他项目的连接代码或配置。
+数据库凭证仅从当前项目 `.env` 与环境变量读取，环境变量优先。
 
 ## 四项填充开关
 
@@ -53,7 +55,7 @@
 | `matching` | SKU、款号、名称、规格的表头别名 |
 | `sheet` | 市场部结构、新老品年份、平台顺序、预估表头 |
 | `forecast` | 季节截止日、兜底阈值、公司销量列识别 |
-| `platforms.<平台>` | 数仓表、字段、筛选、去重键、表头别名与布局 |
+| `platforms.<平台>` | 数据表、连接来源、字段、筛选、去重键、表头别名与布局 |
 
 京东平台还包含 `daily_fields`、`rolling_fields` 和业务日期偏移。平台来源与表头在同一平台分区维护，商品主数据只配置一处。
 

@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import pymysql
 
 from stocking_sheet_sync.domain.products import units
-from stocking_sheet_sync.settings import WarehouseSettings, identifier
+from stocking_sheet_sync.settings import MySQLSettings, WarehouseSettings, identifier
 
 LOG = logging.getLogger(__name__)
 
@@ -21,8 +21,9 @@ def _filters(source: dict) -> tuple[str, list]:
 
 
 class SalesReader:
-    def __init__(self, settings: WarehouseSettings):
+    def __init__(self, settings: WarehouseSettings, mysql_settings: MySQLSettings | None = None):
         self.settings = settings
+        self.mysql_settings = mysql_settings
 
     def _read(self, sql: str, params: tuple) -> list[dict]:
         """
@@ -36,7 +37,26 @@ class SalesReader:
         """
         if not sql.lstrip().upper().startswith("SELECT "):
             raise ValueError("数仓读取器只接受 SELECT 查询")
-        config, connection = self.settings, None
+        return self._execute(self.settings, sql, params)
+
+    def _read_mysql(self, sql: str, params: tuple) -> list[dict]:
+        """使用源 MySQL 只读连接执行参数化查询，返回结果行。"""
+        if self.mysql_settings is None:
+            self.mysql_settings = MySQLSettings.load()
+        return self._execute(self.mysql_settings, sql, params)
+
+    def _source_read(self, source: dict, sql: str, params: tuple) -> list[dict]:
+        """根据来源配置读取数仓或源 MySQL，返回结果行。"""
+        if source.get("connection") == "mysql":
+            return self._read_mysql(sql, params)
+        return self._read(sql, params)
+
+    @staticmethod
+    def _execute(config: WarehouseSettings, sql: str, params: tuple) -> list[dict]:
+        """按指定连接执行 SELECT 查询，失败时隐藏连接细节。"""
+        if not sql.lstrip().upper().startswith("SELECT "):
+            raise ValueError("数据读取器只接受 SELECT 查询")
+        connection = None
         try:
             connection = pymysql.connect(
                 host=config.host,
@@ -56,9 +76,9 @@ class SalesReader:
                 return list(cursor.fetchall())
         except pymysql.MySQLError as error:
             code = error.args[0] if error.args and isinstance(error.args[0], int) else None
-            LOG.error("数仓读取失败：error_code=%s", code)
+            LOG.error("数据来源读取失败：error_code=%s", code)
             raise RuntimeError(
-                f"数仓读取失败，请检查连接、权限或字段配置（错误码 {code}）"
+                f"数据来源读取失败，请检查连接、权限或字段配置（错误码 {code}）"
             ) from None
         finally:
             if connection is not None:
@@ -188,8 +208,14 @@ class SalesReader:
         fields = {key: identifier(value) for key, value in source["fields"].items()}
         table = identifier(source["table"])
         condition, params = _filters(source)
-        latest = self._read(
-            f"SELECT MAX({fields['date']}) AS latest FROM {table} WHERE {condition}", tuple(params)
+        sku_scoped = source.get("connection") == "mysql" and source["kind"] == "snapshot"
+        if sku_scoped:
+            condition += f" AND {fields['sku']} IN ({','.join(['%s'] * len(skus))})"
+            params += skus
+        latest = self._source_read(
+            source,
+            f"SELECT MAX({fields['date']}) AS latest FROM {table} WHERE {condition}",
+            tuple(params),
         )
         result["latest_source_date"] = (
             str(latest[0]["latest"]) if latest and latest[0]["latest"] else None
@@ -198,7 +224,8 @@ class SalesReader:
         condition += f" AND {fields['date']} >= %s AND {fields['date']} < %s"
         params += [window_start.isoformat(), as_of.isoformat()]
         if source["kind"] == "detail":
-            days = self._read(
+            days = self._source_read(
+                source,
                 f"SELECT DATE({fields['date']}) AS day, COUNT(*) AS n FROM {table} "
                 f"WHERE {condition} GROUP BY DATE({fields['date']})",
                 tuple(params),
@@ -212,10 +239,12 @@ class SalesReader:
             result["missing_dates"] = missing
             if missing:
                 result["issues"].append("incomplete_daily_coverage")
-        condition += f" AND {fields['sku']} IN ({','.join(['%s'] * len(skus))})"
-        params += skus
+        if not sku_scoped:
+            condition += f" AND {fields['sku']} IN ({','.join(['%s'] * len(skus))})"
+            params += skus
         if source["kind"] == "snapshot":
-            rows = self._read(
+            rows = self._source_read(
+                source,
                 f"SELECT {fields['sku']} AS sku, {fields['row_id']} AS row_id, "
                 f"{fields['quantity']} AS quantity FROM {table} WHERE {condition}",
                 tuple(params),
@@ -250,7 +279,8 @@ class SalesReader:
                 f"THEN 1 ELSE 0 END AS conflicts "
                 f"FROM {table} WHERE {condition} GROUP BY {keys}"
             )
-            rows = self._read(
+            rows = self._source_read(
+                source,
                 "SELECT sku, SUM(quantity) AS quantity, SUM(n) AS n, COUNT(*) AS fact_count, "
                 "SUM(invalid_count) AS invalid_count, SUM(conflicts) AS conflicts "
                 f"FROM ({facts}) AS facts GROUP BY sku",
@@ -341,7 +371,8 @@ class ForecastReader(SalesReader):
             f"{identifier(value)} AS {identifier(key)}" for key, value in fields.items()
         )
         LOG.debug("开始读取日出库：platform=%s start=%s stop=%s", source["id"], start, stop)
-        raw = self._read(
+        raw = self._source_read(
+            source,
             f"SELECT {projection} FROM {identifier(source['table'])} WHERE {condition} "
             f"AND {identifier(fields['date'])} >= %s AND {identifier(fields['date'])} < %s "
             f"AND {identifier(fields['sku'])} IN ({','.join(['%s'] * len(skus))})",
@@ -420,7 +451,8 @@ class ForecastReader(SalesReader):
             end,
             field,
         )
-        raw = self._read(
+        raw = self._source_read(
+            source,
             f"SELECT {identifier(fields['sku'])} AS sku, "
             f"{identifier(fields['row_id'])} AS row_id, {identifier(field)} AS quantity "
             f"FROM {identifier(source['table'])} WHERE {condition} "

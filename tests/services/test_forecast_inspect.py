@@ -67,6 +67,14 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
         assert len(platform["sources"]) == 3
     assert reader.daily_window.call_count == 3
     assert reader.sales_window.call_count == 12
+    jd_calls = [call for call in reader.daily_window.call_args_list]
+    assert all(
+        call.args[0]["table"] == "jd_inventory_product_detail"
+        and call.args[0]["connection"] == "mysql"
+        and "summary" not in call.args[0]
+        for call in jd_calls
+    )
+    assert {call.args[2].year for call in jd_calls} == {2025, 2026}
     write_forecast_report(tmp_path, result)
     assert json.loads((tmp_path / "forecast.json").read_text())["summary"]["ready"] == 5
     with (tmp_path / "forecast.csv").open(encoding="utf-8-sig") as stream:
@@ -148,6 +156,7 @@ def daily_reader():
         for n in range(30)
     ]
     reader._read = Mock(return_value=rows)
+    reader._read_mysql = reader._read
     return reader, source, start, rows
 
 

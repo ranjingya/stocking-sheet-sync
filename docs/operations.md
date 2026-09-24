@@ -2,7 +2,7 @@
 
 ## Docker运行
 
-准备宿主机 `config/config.toml`、`config/rules.toml`、`.env`、`artifacts` 和 `logs` 目录；确认配置对应的数仓、Redis及飞书目录可访问。仓库Compose使用镜像标签，代码修改需要构建/发布对应镜像后才能在服务器生效。
+准备宿主机 `config/config.toml`、`config/rules.toml`、`.env`、`artifacts` 和 `logs` 目录；确认配置对应的数仓、京东自营源 MySQL、Redis 及飞书目录可访问。仓库Compose使用镜像标签，代码修改需要构建/发布对应镜像后才能在服务器生效。
 
 ```bash
 docker compose up -d
@@ -82,7 +82,7 @@ docker compose exec stocking-sheet-sync /app/.venv/bin/stocking-sheet-sync fill 
 
 命令参数决定填充项目，不受自动流程的新老品开关影响；新品预测仍未支持。默认采用上海当天日期，可用 `--as-of YYYY-MM-DD` 指定基准日。通过链接的 `sheet` 参数或 `--sheet-id` 选择工作表，否则自动识别唯一的下单工作表。
 
-与后台任务共用运行锁，忙碌时退出码为3；完成为0，部分完成或待核对为2，执行异常为1。成功回读后清理临时文件，未完成报告按容量上限保留。历史日期的ADS快照不可用时对应平台保持待核对，不替换统计日期。
+与后台任务共用运行锁，忙碌时退出码为3；完成为0，部分完成或待核对为2，执行异常为1。成功回读后清理临时文件，未完成报告按容量上限保留。来源缺少所需日期时对应平台保持待核对，不替换统计日期。
 
 CLI包含 `serve`、`rerun`、`fill` 三个入口；`serve`用于容器启动服务，日常手动操作使用后两者。通过 `命令 --help` 查看参数。
 
