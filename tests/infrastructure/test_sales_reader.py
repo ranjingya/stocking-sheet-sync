@@ -269,7 +269,9 @@ def test_summary_previous_uses_current_snapshot_date_and_ly_field(monkeypatch):
     def read(sql, params):
         calls.append((sql, params))
         return (
-            [{"latest": "2026-09-22"}]
+            [{"present": 1}]
+            if "SELECT 1 AS present" in sql
+            else [{"latest": "2026-09-22"}]
             if "MAX(" in sql
             else [{"sku": "001", "row_id": 1, "quantity": 0}]
         )
@@ -286,16 +288,93 @@ def test_summary_previous_uses_current_snapshot_date_and_ly_field(monkeypatch):
     assert result["rows"][1]["status"] == "missing_summary_sku"
 
 
-def test_summary_missing_date_never_falls_back_to_detail(monkeypatch):
+def test_summary_day_present_but_sku_missing_never_falls_back_to_detail(monkeypatch):
     client = reader()
     source = next(p for p in config()["platforms"] if p["id"] == "pdd")
     calls = []
 
     def read(sql, params):
         calls.append(sql)
-        return [{"latest": "2026-09-21"}] if "MAX(" in sql else []
+        return (
+            [{"present": 1}]
+            if "SELECT 1 AS present" in sql
+            else [{"latest": "2026-09-22"}]
+            if "MAX(" in sql
+            else []
+        )
 
     monkeypatch.setattr(client, "_read", read)
     result = client.sales(source, ["001"], date(2026, 9, 23))
     assert result["issues"] == ["snapshot_or_skus_missing"]
+    assert result["rows"][0]["status"] == "missing_summary_sku"
     assert all("ads_whs_outstock_pdd_base_sku_window" in sql for sql in calls)
+
+
+@pytest.mark.parametrize("platform_id", ["pdd", "vip"])
+@pytest.mark.parametrize("metric", ["current", "previous"])
+def test_summary_day_empty_uses_detail_for_matching_window(monkeypatch, platform_id, metric):
+    client = reader()
+    source = next(p for p in config()["platforms"] if p["id"] == platform_id)
+    source = {**source, "summary_metric": metric, "summary_as_of": date(2026, 9, 23)}
+    start = date(2026, 8, 24) if metric == "current" else date(2025, 8, 24)
+    stop = date(2026, 9, 23) if metric == "current" else date(2025, 9, 23)
+    calls = []
+
+    def read(sql, params):
+        calls.append((sql, params))
+        if "SELECT 1 AS present" in sql:
+            return []
+        if sql.startswith("SELECT MAX("):
+            return [{"latest": "2026-09-22"}]
+        if "GROUP BY DATE(" in sql:
+            return [{"day": str(start + timedelta(days=n)), "n": 1} for n in range(30)]
+        return [
+            {
+                "sku": "001",
+                "quantity": 17,
+                "n": 1,
+                "fact_count": 1,
+                "invalid_count": 0,
+                "conflicts": 0,
+            }
+        ]
+
+    monkeypatch.setattr(client, "_read", read)
+    result = client.sales_window(source, ["001"], start, stop)
+    assert result["issues"] == []
+    assert result["rows"][0]["quantity"] == 17
+    assert result["source_table"] == "dwd_whs_outstock_detail_f"
+    assert result["fallback"]["reason"] == "ads_snapshot_day_empty"
+    assert result["fallback"]["snapshot_date"] == "2026-09-22"
+    assert result["start"] == start.isoformat()
+    assert result["end"] == str(stop - timedelta(days=1))
+    assert len(calls) == 4
+    assert all("dwd_whs_outstock_detail_f" in sql for sql, _ in calls[1:])
+
+
+def test_summary_fallback_with_incomplete_detail_coverage_stays_unavailable(monkeypatch):
+    client = reader()
+    source = next(p for p in config()["platforms"] if p["id"] == "pdd")
+
+    def read(sql, params):
+        if "SELECT 1 AS present" in sql:
+            return []
+        if sql.startswith("SELECT MAX("):
+            return [{"latest": "2026-09-22"}]
+        if "GROUP BY DATE(" in sql:
+            return [{"day": "2026-09-22", "n": 1}]
+        return [
+            {
+                "sku": "001",
+                "quantity": 17,
+                "n": 1,
+                "fact_count": 1,
+                "invalid_count": 0,
+                "conflicts": 0,
+            }
+        ]
+
+    monkeypatch.setattr(client, "_read", read)
+    result = client.sales(source, ["001"], date(2026, 9, 23))
+    assert result["issues"] == ["incomplete_daily_coverage"]
+    assert result["fallback"]["reason"] == "ads_snapshot_day_empty"

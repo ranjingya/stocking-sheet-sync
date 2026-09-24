@@ -63,7 +63,12 @@ def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) 
 
 
 def summarize_platform_fill(
-    update: dict, config: dict, *, history: bool, report: dict | None = None
+    update: dict,
+    config: dict,
+    *,
+    history: bool,
+    report: dict | None = None,
+    history_report: dict | None = None,
 ) -> dict:
     """
     功能说明：按实际已核验的平台生成历史和预测通知摘要。
@@ -73,6 +78,7 @@ def summarize_platform_fill(
         config：平台名称配置。
         history：是否启用历史填充。
         report：预测报告；仅填历史时为空。
+        history_report：仅填历史时的销量来源报告。
     返回值：可保存到批次的通知摘要。
     """
     blocked = {}
@@ -118,6 +124,30 @@ def summarize_platform_fill(
                 f"{item['target_cell']}已有不同预测，保留原值"
             )
     details = summarize_forecast(report, config, forecast_blocked) if report is not None else {}
+    source_results = (
+        history_report["sources"]
+        if history_report is not None
+        else [
+            source
+            for group in report["groups"]
+            for item in group["platforms"]
+            for source in item["sources"].values()
+        ]
+        if report is not None
+        else []
+    )
+    fallback_platforms = {
+        source["platform"]
+        for source in source_results
+        if source.get("fallback", {}).get("reason") == "ads_snapshot_day_empty"
+        and not source.get("issues")
+        and source["platform"] not in blocked
+    }
+    fallback_reasons = [
+        f"{platform['name']}：ADS 表周期无数据，使用 DWD 明细表填充"
+        for platform in config["platforms"]
+        if platform["id"] in fallback_platforms
+    ]
     if blocked:
         details["blocked_platforms"] = list(blocked)
         logging.getLogger(__name__).warning("部分平台未填充：%s", "；".join(blocked.values()))
@@ -128,8 +158,10 @@ def summarize_platform_fill(
             "status": "completed" if done == total else "partial" if done else "manual",
             "completed": done,
             "total": total,
-            "reasons": list(blocked.values()),
+            "reasons": [*blocked.values(), *fallback_reasons],
         }
+    elif "forecast" in details:
+        details["forecast"]["reasons"].extend(fallback_reasons)
     return details
 
 

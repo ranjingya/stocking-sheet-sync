@@ -130,14 +130,14 @@ class SalesReader:
 
     def summary_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
         """
-        功能说明：读取基准日对应ADS快照中的今年或去年同期近30天字段。
+        功能说明：读取基准日对应ADS快照；整天无记录时使用明细统计同一窗口。
 
         参数：
             source：平台配置，含summary字段映射、summary_metric指标和summary_as_of基准日。
             skus：需求表SKU集合。
             start：指标包含的起始日期。
             stop：指标不包含的结束日期。
-        返回值：逐SKU数量及来源日期证据；缺失记录保持未知，不记零。
+        返回值：逐SKU数量及来源证据；ADS存在但缺SKU时保持未知，不记零。
         """
         if (stop - start).days != 30:
             raise ValueError("ADS汇总只支持30天窗口")
@@ -146,6 +146,35 @@ class SalesReader:
         if metric not in {"current", "previous"}:
             raise ValueError("ADS指标必须为current或previous")
         as_of = source["summary_as_of"]
+        snapshot_day = as_of - timedelta(days=1)
+        table = identifier(summary["table"])
+        date_field = identifier(summary["date"])
+        present = self._read(
+            f"SELECT 1 AS present FROM {table} WHERE {date_field} >= %s "
+            f"AND {date_field} < %s LIMIT 1",
+            (snapshot_day.isoformat(), as_of.isoformat()),
+        )
+        if not present:
+            detail = {
+                key: value
+                for key, value in source.items()
+                if key not in {"summary", "summary_metric", "summary_as_of"}
+            }
+            result = self.sales_window(detail, skus, start, stop)
+            result["fallback"] = {
+                "reason": "ads_snapshot_day_empty",
+                "source_table": summary["table"],
+                "snapshot_date": snapshot_day.isoformat(),
+            }
+            LOG.warning(
+                "ADS 整天无数据，改用出库明细：platform=%s snapshot=%s window=%s~%s issues=%s",
+                source["id"],
+                snapshot_day,
+                start,
+                stop - timedelta(days=1),
+                result["issues"],
+            )
+            return result
         selected = {
             "id": source["id"],
             "kind": "snapshot",

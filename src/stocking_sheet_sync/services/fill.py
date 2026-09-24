@@ -158,7 +158,7 @@ class HistoryFiller:
 
             result = finish("completed")
             result["notification_details"] = summarize_platform_fill(
-                update, self.notification_config(config), history=True
+                update, self.notification_config(config), history=True, history_report=report
             )
             save("result.json", result)
             return result

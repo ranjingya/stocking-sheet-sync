@@ -173,3 +173,61 @@ def test_platform_reasons_are_separate_lines_above_button():
     assert "甲平台：去年同期为0\n乙平台：缺少公司销量" in note["content"]
     assert "**" not in note["content"]
     assert card["body"]["elements"][-1]["tag"] == "column_set"
+
+
+def test_ads_detail_fallback_is_reported_under_the_platform():
+    from stocking_sheet_sync.services.notification import summarize_platform_fill
+
+    config = {"platforms": [{"id": "pdd", "name": "拼多多"}, {"id": "vip", "name": "唯品会"}]}
+    source = {
+        "platform": "pdd",
+        "issues": [],
+        "fallback": {"reason": "ads_snapshot_day_empty"},
+    }
+    details = summarize_platform_fill(
+        {}, config, history=True, history_report={"sources": [source]}
+    )
+    assert details["history"]["status"] == "completed"
+    assert details["history"]["reasons"] == ["拼多多：ADS 表周期无数据，使用 DWD 明细表填充"]
+    card = build_sync_card(
+        original_name="测试",
+        record_url="https://example.com/record",
+        target_url="https://example.com/result",
+        status="success",
+        history_status="completed",
+        forecast_status="disabled",
+        details=details,
+    )
+    assert (
+        "拼多多：ADS 表周期无数据，使用 DWD 明细表填充" in (card["body"]["elements"][-2]["content"])
+    )
+
+
+def test_forecast_only_notification_reports_valid_ads_detail_fallback():
+    from stocking_sheet_sync.services.notification import summarize_platform_fill
+
+    config = {"platforms": [{"id": "vip", "name": "唯品会"}]}
+    report = {
+        "groups": [
+            {
+                "style": "KQ25001",
+                "platforms": [
+                    {
+                        "platform": "vip",
+                        "status": "ready",
+                        "issues": [],
+                        "sources": {
+                            "current": {
+                                "platform": "vip",
+                                "issues": [],
+                                "fallback": {"reason": "ads_snapshot_day_empty"},
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    details = summarize_platform_fill({}, config, history=False, report=report)
+    assert details["forecast"]["status"] == "completed"
+    assert details["forecast"]["reasons"] == ["唯品会：ADS 表周期无数据，使用 DWD 明细表填充"]
