@@ -121,7 +121,7 @@ def test_existing_different_forecast_is_preserved_while_history_can_fill():
         assert target["cells"][col + "4"] == content
 
 
-def test_missing_warehouse_window_uses_complete_matching_sheet_history():
+def test_missing_recent_window_does_not_use_undated_sheet_history():
     before, reader, report, _, _ = setup_sheet()
     dated = dated_forecast_rules(rules(), report)
     layout = build_update(before, config(), dated, forecast=True)
@@ -147,13 +147,47 @@ def test_missing_warehouse_window_uses_complete_matching_sheet_history():
         snapshot=prepared,
     )
     vip = next(p for p in recovered["groups"][0]["platforms"] if p["platform"] == "vip")
-    assert vip["status"] == "ready"
-    assert vip["input_origins"] == {"current": "sheet", "previous": "sheet"}
-    assert vip["forecast"]["total"] == 800
+    assert vip["status"] == "needs_review"
+    assert "input_origins" not in vip
+    assert len([issue for issue in vip["issues"] if "缺少日期证据" in issue]) == 2
     update = build_forecast_values(
         prepared, recovered, config(), dated, history=True, forecast=True, partial=True
     )
-    assert "vip" not in update.get("blocked_platforms", {})
+    assert "vip" in update["blocked_platforms"]
+    assert all(not entry["platform"].startswith("vip:") for entry in update["entries"])
+    details = summarize_platform_fill(update, config(), history=True, report=recovered)
+    assert "表内历史值缺少日期证据" in details["history"]["reasons"][0]
+
+
+def test_missing_future_window_uses_only_matching_dated_sheet_history():
+    before, reader, report, _, _ = setup_sheet()
+    dated = dated_forecast_rules(rules(), report)
+    layout = build_update(before, config(), dated, forecast=True)
+    prepared = project_layout(before, layout, config(), dated)
+    history = build_forecast_values(prepared, report, config(), dated, history=True, forecast=False)
+    prepared = filled(prepared, history)
+    original = reader.sales_window.side_effect
+
+    def source_with_missing_future(source, skus, start, stop):
+        result = original(source, skus, start, stop)
+        if source["id"] == "vip" and (stop - start).days != 30:
+            result["issues"] = ["incomplete_daily_coverage"]
+        return result
+
+    reader.sales_window.side_effect = source_with_missing_future
+    rows = inspect_sheet(prepared, config())["rows"]
+    recovered = inspect_forecast(
+        reader,
+        ["KQ25001"],
+        date(2026, 9, 12),
+        *all_config(),
+        requested_rows=rows,
+        snapshot=prepared,
+    )
+    vip = next(p for p in recovered["groups"][0]["platforms"] if p["platform"] == "vip")
+    assert vip["status"] == "ready"
+    assert vip["input_origins"] == {"historical_future": "sheet"}
+    assert vip["forecast"]["total"] == 800
     future_column = next(
         f["target_column"]
         for f in layout["report"]["target_fields"]

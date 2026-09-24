@@ -96,7 +96,7 @@ def sheet_history_quantities(
     header_row: int,
 ) -> dict[str, int]:
     """
-    功能说明：数仓窗口暂不可用时，核对同一日期窗口的表内完整历史数量。
+    功能说明：去年后续周期来源不可用时，按日期表头核对表内完整历史数量。
 
     参数：
         snapshot：写入前的飞书工作表快照。
@@ -104,11 +104,13 @@ def sheet_history_quantities(
         fields：市场部现有平台历史列的映射。
         group：当前款式、SKU及对应的预测日期窗口。
         platform：平台标识。
-        metric：current、previous或historical_future历史窗口标识。
+        metric：历史窗口标识，仅historical_future具备可核对的日期表头。
         layout_rules：后续周期表头规则。
         header_row：平台字段所在的表头行。
     返回值：按SKU映射的非负整数件数；窗口或任一单元格不可靠时抛错。
     """
+    if metric != "historical_future":
+        raise ValueError("表内近30天历史值缺少日期证据，不能替代不可用的数据来源")
     column = fields.get((platform, metric))
     if not column:
         raise ValueError("表内缺少对应历史列")

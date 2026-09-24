@@ -106,6 +106,8 @@ def summarize_platform_fill(
                 reason += f"，共{len(mismatches)}处"
         elif "target_conflict" in codes:
             reason = "目标历史单元格已有不同内容"
+        elif "缺少日期证据" in codes:
+            reason = "近30天来源不可用，表内历史值缺少日期证据"
         elif "rolling" in codes or "snapshot" in codes:
             reason = "近30天销量快照不可用"
         elif "read_failed" in codes:
