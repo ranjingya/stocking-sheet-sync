@@ -128,16 +128,38 @@ class HistoryFiller:
             report = inspect_sales(reader, before, config, date.fromisoformat(claim.as_of))
             write_report(output / "inspection", report, before)
             if report["summary"]["catalog_matched"] != report["summary"]["sku_rows"]:
-                return finish("needs_review", "表内商品未匹配或身份不明确")
+                from stocking_sheet_sync.services.reasons import target_reason
+
+                return finish(
+                    "needs_review",
+                    target_reason(
+                        [
+                            {
+                                "row": row["row"],
+                                "sku": row.get("sku"),
+                                "reason": "product_identity_unresolved",
+                                "details": row["issues"],
+                            }
+                            for row in report["layout"]["rows"]
+                            if row["issues"]
+                        ]
+                    )
+                    or "表内商品身份未确认",
+                )
             projected = project_layout(before, layout_update, config, rules)
             preflight = build_sales_update(
                 projected, remap_report(report, projected, config), config, partial=True
             )
             save("preflight.json", preflight)
             if preflight["summary"]["needs_review"]:
+                from stocking_sheet_sync.services.notification import summarize_platform_fill
+
+                details = summarize_platform_fill(
+                    preflight, self.notification_config(config), history=True, history_report=report
+                )
                 return finish(
                     "retryable" if any(s["issues"] for s in report["sources"]) else "needs_review",
-                    "所有平台历史数据均不可用或目标存在冲突",
+                    "\n".join(details["history"]["reasons"]) or "历史填充计划未通过校验",
                 )
             writing = True
             update = self.apply_plan(
@@ -462,7 +484,9 @@ class ForecastFiller(HistoryFiller):
             checked = check_forecast_target(before, report, config)
             save("target-check.json", checked)
             if checked["issues"]:
-                return finish("needs_review", "表内商品未匹配或身份不明确，详见 target-check.json")
+                from stocking_sheet_sync.services.reasons import target_reason
+
+                return finish("needs_review", target_reason(checked["issues"]))
             rules = dated_forecast_rules(rules, report)
             layout = build_update(before, config, rules, forecast=True)
             save("layout-request.json", layout)
@@ -472,7 +496,23 @@ class ForecastFiller(HistoryFiller):
             )
             save("preflight.json", preflight)
             if preflight["summary"]["needs_review"]:
-                return finish("needs_review", "计算数据不足或目标已有不同内容，详见 preflight.json")
+                from stocking_sheet_sync.services.notification import summarize_platform_fill
+                from stocking_sheet_sync.services.reasons import target_reason
+
+                details = summarize_platform_fill(
+                    preflight, self.notification_config(config), history=self.history, report=report
+                )
+                reasons = [
+                    reason
+                    for key in ("history", "forecast")
+                    for reason in details.get(key, {}).get("reasons", [])
+                ]
+                return finish(
+                    "needs_review",
+                    target_reason(preflight.get("target_issues", []))
+                    or "\n".join(dict.fromkeys(reasons))
+                    or "填充计划未通过校验",
+                )
             writing = True
             update = self.apply_plan(
                 copy,

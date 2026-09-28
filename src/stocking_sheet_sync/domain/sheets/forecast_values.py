@@ -170,7 +170,7 @@ def build_forecast_values(
             for metric in metrics:
                 col = fields[(pid, metric)]
                 address = f"{col}{row['row']}"
-                if metric == "forecast" and platform["status"] == "manual":
+                if metric == "forecast" and platform["status"] != "ready":
                     skipped.append(
                         {
                             "style": row["style"],
@@ -312,7 +312,9 @@ def build_forecast_values(
         blocked = {}
         for group in report["groups"]:
             for platform in group["platforms"]:
-                if platform["status"] == "needs_review":
+                if history and any(
+                    key not in platform.get("inputs", {}) for key in INPUT_METRICS.values()
+                ):
                     blocked.setdefault(platform["platform"], []).extend(platform["issues"])
         result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
     supplement_demand_totals(

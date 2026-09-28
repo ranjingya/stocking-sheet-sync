@@ -369,7 +369,11 @@ def test_platform_log_uses_names_and_does_not_claim_written(caplog):
             {
                 "platform": "pdd",
                 "status": "manual",
-                "inputs": {"current": {"a": 18}},
+                "inputs": {
+                    "current": {"a": 18},
+                    "previous": {"a": 30},
+                    "historical_future": {"a": 100},
+                },
                 "issues": ["company_lifecycle_sales_unavailable"],
             },
         )
@@ -379,7 +383,11 @@ def test_platform_log_uses_names_and_does_not_claim_written(caplog):
             {
                 "platform": "vip",
                 "status": "ready",
-                "inputs": {"current": {"a": 22}},
+                "inputs": {
+                    "current": {"a": 22},
+                    "previous": {"a": 30},
+                    "historical_future": {"a": 100},
+                },
                 "forecast": {"total": 2100},
                 "issues": [],
             },
@@ -395,8 +403,8 @@ def test_platform_log_uses_names_and_does_not_claim_written(caplog):
             },
         )
     assert "拼多多：历史数据可用（近30天18件）" in caplog.text
-    assert "表内全公司销量不可用" in caplog.text
+    assert "缺少可用的全公司生命周期销量" in caplog.text
     assert "预估2100件，待写入" in caplog.text
-    assert "原因：近30天数据缺失或校验未通过" in caplog.text
+    assert "原因：近30天销量快照不可用" in caplog.text
     assert "company_lifecycle_sales_unavailable" not in caplog.text
     assert "needs_review" not in caplog.text

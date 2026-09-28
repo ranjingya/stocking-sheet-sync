@@ -98,7 +98,7 @@ def test_missing_history_blocks_layout_and_sales_before_any_mutation(tmp_path, m
     )
     result = filler(copy, claim)
     assert result["status"] == "retryable"
-    assert "所有平台历史数据均不可用" in result["reason"]
+    assert "唯品会：近30天：每日数据不完整" in result["reason"]
     assert writes == []
 
 

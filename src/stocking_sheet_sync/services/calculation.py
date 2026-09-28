@@ -15,6 +15,7 @@ from stocking_sheet_sync.domain.products import match_catalog, normalize_text, u
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
+from stocking_sheet_sync.services.reasons import WINDOW_NAMES, platform_reason
 
 LOG = logging.getLogger(__name__)
 
@@ -30,26 +31,16 @@ def log_platform_result(style: str, platform_name: str, item: dict) -> None:
     返回值：无，记录简短业务日志及DEBUG诊断信息。
     """
     inputs = item.get("inputs", {})
-    if item["status"] == "needs_review":
-        stages = {
-            "current": "近30天",
-            "previous": "去年同期近30天",
-            "historical_future": "去年后续周期",
-        }
-        missing = [label for key, label in stages.items() if key not in inputs]
-        reason = "、".join(missing) + "数据缺失或校验未通过" if missing else "计算数据异常，需核对"
-        text = f"历史与预测暂不可填；原因：{reason}"
+    missing = [label for key, label in WINDOW_NAMES.items() if key not in inputs]
+    if missing:
+        text = f"历史数据暂不可填；预测未计算；原因：{platform_reason(item)}"
     else:
         recent = sum(inputs.get("current", {}).values())
         text = f"历史数据可用（近30天{recent}件）；"
         if item["status"] == "ready":
             text += f"预估{item['forecast']['total']}件，待写入"
-        elif "previous_sales_base_low" in item.get("issues", []):
-            text += "预测未计算：去年同期30天基数过低"
-        elif "company_lifecycle_sales_unavailable" in item.get("issues", []):
-            text += "预测未计算：触发全公司占比兜底，但表内全公司销量不可用"
         else:
-            text += "预测未计算：需人工核对"
+            text += f"预测未计算：{platform_reason(item)}"
     LOG.log(
         logging.INFO if item["status"] == "ready" else logging.WARNING,
         "%s｜%s：%s",

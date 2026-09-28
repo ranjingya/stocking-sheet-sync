@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Any, Literal
 
+from stocking_sheet_sync.services.reasons import describe_issues, platform_reason
+
 
 def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) -> dict:
     """
@@ -19,11 +21,6 @@ def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) 
     reasons = []
     complete = 0
     any_ready = False
-    reasons_map = {
-        "previous_sales_base_low": "去年同期30天基数过低",
-        "previous_sales_zero": "去年同期销量为0",
-        "company_lifecycle_sales_unavailable": "缺少可用的全公司生命周期销量",
-    }
     platforms = config["platforms"]
     for platform in platforms:
         if platform["id"] in (blocked or {}):
@@ -44,10 +41,7 @@ def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) 
                 label = platform.get("name", platform["id"])
                 if len(report["groups"]) > 1:
                     label += f"（{style}）"
-                reason = (
-                    "、".join(reasons_map.get(x, "数据需人工核对") for x in item.get("issues", []))
-                    or "数据需人工核对"
-                )
+                reason = platform_reason(item)
                 reasons.append(f"{label}：{reason}，本次未计算预测")
     return {
         "forecast": {
@@ -106,7 +100,13 @@ def summarize_platform_fill(
             if len(mismatches) > 1:
                 reason += f"，共{len(mismatches)}处"
         elif "target_conflict" in codes:
-            reason = "目标历史单元格已有不同内容"
+            cells = [
+                e["target_cell"]
+                for e in skipped_entries
+                if e["platform"].startswith(platform["id"] + ":")
+                and "target_conflict" in e.get("issues", [])
+            ]
+            reason = "历史单元格已有公式或不同内容" + (f"（{'、'.join(cells)}）" if cells else "")
         elif "缺少日期证据" in codes:
             reason = "近30天来源不可用，表内历史值缺少日期证据"
         elif "rolling" in codes or "snapshot" in codes:
@@ -114,7 +114,35 @@ def summarize_platform_fill(
         elif "read_failed" in codes:
             reason = "销量来源读取失败"
         else:
-            reason = "历史销量数据缺失或未通过校验"
+            reason = describe_issues(issues)
+        if not mismatches and "target_conflict" not in codes and report is not None:
+            items = [
+                item
+                for group in report["groups"]
+                for item in group["platforms"]
+                if item["platform"] == platform["id"]
+                and any(
+                    key not in item.get("inputs", {})
+                    for key in ("current", "previous", "historical_future")
+                )
+            ]
+            if items:
+                reason = "；".join(
+                    dict.fromkeys(platform_reason(item, history_only=True) for item in items)
+                )
+        if not mismatches and "target_conflict" not in codes and history_report is not None:
+            sources = [
+                source
+                for source in history_report["sources"]
+                if source.get("platform") == platform["id"] and source.get("issues")
+            ]
+            if sources:
+                reason = "；".join(
+                    platform_reason(
+                        {"inputs": {}, "sources": {"current": source}, "issues": source["issues"]}
+                    )
+                    for source in sources
+                )
         blocked[platform["id"]] = f"{platform['name']}：{reason}，该平台未填充"
     forecast_blocked = dict(blocked)
     for item in update.get("skipped_forecasts", []):
@@ -125,6 +153,22 @@ def summarize_platform_fill(
             forecast_blocked[item["platform"]] = (
                 f"{next(p['name'] for p in config['platforms'] if p['id'] == item['platform'])}："
                 f"{item['target_cell']}已有不同预测，保留原值"
+            )
+    for pid, issues in update.get("blocked_forecasts", {}).items():
+        if pid not in forecast_blocked:
+            name = next(p["name"] for p in config["platforms"] if p["id"] == pid)
+            cells = [
+                entry["target_cell"]
+                for entry in update.get("skipped_total_entries", [])
+                if entry["platform"] == pid + ":forecast"
+            ]
+            reason = (
+                "预测合计单元格已有不同内容"
+                if cells and "target_conflict" in issues
+                else describe_issues(issues)
+            )
+            forecast_blocked[pid] = f"{name}：{reason}" + (
+                f"（{'、'.join(cells)}）" if cells else ""
             )
     details = summarize_forecast(report, config, forecast_blocked) if report is not None else {}
     source_results = (
@@ -295,8 +339,9 @@ def build_sync_card(
     }
 
     if reasons:
+        lines = [line for item in reasons for line in item.splitlines() if line.strip()]
         reason_text = "\n".join(
-            _escape_markdown(_clean_text(item)) for item in dict.fromkeys(reasons)
+            _escape_markdown(_clean_text(line)) for line in dict.fromkeys(lines)
         )
         card["body"]["elements"].insert(
             1,

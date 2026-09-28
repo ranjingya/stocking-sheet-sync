@@ -8,7 +8,7 @@ from stocking_sheet_sync.domain.products import column_number
 
 def isolate_platforms(update: dict, sheet_id: str, *, blocked: dict | None = None) -> dict:
     """
-    功能说明：跳过有数据或目标冲突的平台，生成其余平台的数量和合计写入。
+    功能说明：按平台阻断历史问题，预测问题仅阻断预测，生成可执行的数量和合计写入。
 
     参数：
         update：包含全部候选数量、合计和全局问题的计划。
@@ -19,17 +19,24 @@ def isolate_platforms(update: dict, sheet_id: str, *, blocked: dict | None = Non
     if update.get("target_issues"):
         return update
     failures = {pid: list(reasons) for pid, reasons in (blocked or {}).items()}
+    forecast_failures = {}
     all_entries = update["entries"]
     all_totals = update.get("total_entries", [])
     for entry in [*all_entries, *all_totals]:
         if entry["status"] == "needs_review":
             pid = entry["platform"].split(":")[0]
-            failures.setdefault(pid, []).extend(entry.get("issues") or ["target_conflict"])
-    if not failures:
+            stage_failures = (
+                forecast_failures if entry["platform"].endswith(":forecast") else failures
+            )
+            stage_failures.setdefault(pid, []).extend(entry.get("issues") or ["target_conflict"])
+    if not failures and not forecast_failures:
         return update
 
     def active(entry):
-        return entry["platform"].split(":")[0] not in failures
+        pid = entry["platform"].split(":")[0]
+        return pid not in failures and not (
+            entry["platform"].endswith(":forecast") and pid in forecast_failures
+        )
 
     entries = [entry for entry in all_entries if active(entry)]
     totals = [entry for entry in all_totals if active(entry)]
@@ -59,10 +66,13 @@ def isolate_platforms(update: dict, sheet_id: str, *, blocked: dict | None = Non
         "skipped_entries": [entry for entry in all_entries if not active(entry)],
         "skipped_total_entries": [entry for entry in all_totals if not active(entry)],
         "blocked_platforms": {pid: sorted(set(reasons)) for pid, reasons in failures.items()},
+        "blocked_forecasts": {
+            pid: sorted(set(reasons)) for pid, reasons in forecast_failures.items()
+        },
         "operations": compact_ranges(operations),
         "summary": {
             **update["summary"],
-            "needs_review": 0 if entries else len(failures),
+            "needs_review": 0 if entries else len(failures) + len(forecast_failures),
             "write": counts["write"],
             "unchanged": counts["unchanged"],
             "platform_totals": dict(quantities),

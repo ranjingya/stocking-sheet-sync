@@ -254,7 +254,8 @@ def test_history_only_does_not_require_available_forecast():
     blocked = build_forecast_values(
         prepared, report, config(), rules(), history=False, forecast=True
     )
-    assert blocked["status"] == "needs_review" and not blocked["operations"]
+    assert blocked["status"] == "unchanged" and not blocked["operations"]
+    assert len(blocked["skipped_forecasts"]) == 10
 
 
 @pytest.mark.parametrize("manual_platform", [False, True, "missing"])
@@ -428,7 +429,9 @@ def test_forecast_partial_respects_platform_conflicts_and_global_blockers(failur
     _, _, report, _, prepared = setup_sheet()
     if failure == "all_sources":
         for platform in report["groups"][0]["platforms"]:
-            platform.update(status="needs_review", issues=["rolling_source_needs_review"])
+            platform.update(
+                status="needs_review", issues=["rolling_source_needs_review"], inputs={}
+            )
     elif failure == "identity":
         report["groups"][0]["catalog"] = []
     else:
@@ -473,3 +476,52 @@ def test_platform_selection_only_adds_selected_platform_columns():
     assert len(added) == 4
     prepared = project_layout(before, update, cfg, rules())
     assert verify_update(before, prepared, update, cfg, rules())["verified"]
+
+
+@pytest.mark.parametrize("history,forecast", [(True, True), (True, False), (False, True)])
+def test_forecast_allocation_failure_does_not_block_valid_history(history, forecast):
+    _, _, report, _, prepared = setup_sheet()
+    vip = next(p for p in report["groups"][0]["platforms"] if p["platform"] == "vip")
+    vip.update(status="needs_review", issues=["占比参考销量为零，无法分配需求"])
+    vip.pop("forecast")
+    vip["inputs"]["current"] = dict.fromkeys(vip["inputs"]["current"], 0)
+    update = build_forecast_values(
+        prepared, report, config(), rules(), history=history, forecast=forecast, partial=True
+    )
+    assert update["summary"]["needs_review"] == 0
+    assert "vip" not in update.get("blocked_platforms", {})
+    entries = [e for e in update["entries"] if e["platform"].startswith("vip:")]
+    assert len(entries) == (6 if history else 0)
+    assert all(e["metric"] != "forecast" for e in entries)
+    assert verify_sales_update(prepared, filled(prepared, update), update)["verified"]
+    details = summarize_platform_fill(update, config(), history=history, report=report)
+    if history:
+        assert details["history"]["status"] == "completed"
+        assert details["history"]["reasons"] == []
+    assert details["forecast"]["status"] == "partial"
+    assert "近30天销量合计为0，无法计算SKU占比" in details["forecast"]["reasons"][0]
+
+
+def test_forecast_total_conflict_only_blocks_forecast_values():
+    from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
+
+    update = {
+        "entries": [
+            {"platform": "vip:sales", "target_cell": "A4", "status": "write", "quantity": 0},
+            {"platform": "vip:forecast", "target_cell": "B4", "status": "write", "quantity": 20},
+        ],
+        "total_entries": [
+            {"platform": "vip:forecast", "target_cell": "B5", "status": "needs_review"}
+        ],
+        "summary": {},
+    }
+    result = isolate_platforms(update, "sheet")
+    assert [e["platform"] for e in result["entries"]] == ["vip:sales"]
+    assert result["blocked_platforms"] == {}
+    assert result["blocked_forecasts"] == {"vip": ["target_conflict"]}
+    assert result["operations"] == [{"range": "sheet!A4:A4", "values": [[0]]}]
+    _, _, report, _, _ = setup_sheet()
+    details = summarize_platform_fill(result, config(), history=True, report=report)
+    assert details["history"]["status"] == "completed"
+    assert details["forecast"]["status"] == "partial"
+    assert "预测合计单元格已有不同内容（B5）" in details["forecast"]["reasons"][0]

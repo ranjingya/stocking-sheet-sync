@@ -116,12 +116,10 @@ def test_low_previous_sales_reason_contains_only_base_warning():
             }
         ]
     }
-    summary = summarize_forecast(
-        report, {"platforms": [{"id": "jd_self", "name": "京东自营"}]}
-    )["forecast"]
-    assert summary["reasons"] == [
-        "京东自营：去年同期30天基数过低，本次未计算预测"
+    summary = summarize_forecast(report, {"platforms": [{"id": "jd_self", "name": "京东自营"}]})[
+        "forecast"
     ]
+    assert summary["reasons"] == ["京东自营：去年同期30天基数过低，本次未计算预测"]
 
 
 def test_disabled_unsupported_and_degraded_states_have_reasons():
@@ -256,3 +254,32 @@ def test_forecast_only_notification_reports_valid_ads_detail_fallback():
     details = summarize_platform_fill({}, config, history=False, report=report)
     assert details["forecast"]["status"] == "completed"
     assert details["forecast"]["reasons"] == ["唯品会：ADS 表周期无数据，使用 DWD 明细表填充"]
+
+
+def test_source_reason_identifies_window_date_and_sku():
+    from stocking_sheet_sync.services.reasons import platform_reason
+
+    reason = platform_reason(
+        {
+            "inputs": {"previous": {}, "historical_future": {}},
+            "issues": ["current: 来源校验未通过：rolling_source_needs_review"],
+            "sources": {
+                "current": {
+                    "snapshot_date": "2026-09-27",
+                    "issues": ["rolling_source_needs_review"],
+                    "rows": [{"sku": "test-sku", "issues": ["missing_rolling_snapshot"]}],
+                }
+            },
+        }
+    )
+    assert reason == "近30天（2026-09-27）：SKU test-sku：销量快照缺失"
+
+
+def test_failure_keeps_platform_reasons_on_separate_lines():
+    card = build_sync_card(
+        original_name="测试表",
+        record_url="https://example.com/record",
+        status="failure",
+        reason="甲平台：快照缺失\n乙平台：来源读取失败",
+    )
+    assert "甲平台：快照缺失\n乙平台：来源读取失败" in card["body"]["elements"][-2]["content"]
