@@ -65,7 +65,7 @@ def test_partial_forecast_and_reason_are_displayed_without_blank_lines():
     )
     assert card["header"]["template"] == "orange"
     text = card["body"]["elements"][0]["content"]
-    assert "**历史数据：**✅ 已填充" in text
+    assert "**历史数据：** ✅ 已填充" in text
     assert "部分完成（1/2平台全部完成）" in text
     assert "原因" not in text
     note = card["body"]["elements"][-2]
@@ -120,7 +120,7 @@ def test_low_previous_sales_reason_contains_only_base_warning():
         report, {"platforms": [{"id": "jd_self", "name": "京东自营"}]}
     )["forecast"]
     assert summary["reasons"] == [
-        "京东自营：去年同期30天基数过低，本次未计算预测（已有值不覆盖）"
+        "京东自营：去年同期30天基数过低，本次未计算预测"
     ]
 
 
@@ -133,7 +133,7 @@ def test_disabled_unsupported_and_degraded_states_have_reasons():
     )
     card = build_sync_card(**common, history_status="disabled", forecast_status="unsupported")
     text = card["body"]["elements"][0]["content"]
-    assert "**历史数据：**未开启" in text and "**预测：**暂不支持" in text
+    assert "**历史数据：** 未开启" in text and "**预测：** 暂不支持" in text
     note = card["body"]["elements"][-2]["content"]
     assert "开关关闭" in note and "新品预测暂不支持" in note
     card = build_sync_card(
@@ -173,7 +173,7 @@ def test_all_manual_forecast_does_not_report_completed():
         forecast_status="completed",
         details=details,
     )
-    assert "**预测：**未计算" in card["body"]["elements"][0]["content"]
+    assert "**预测：** 未计算" in card["body"]["elements"][0]["content"]
     assert "待人工处理" in card["header"]["title"]["content"]
 
 
