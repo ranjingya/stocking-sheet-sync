@@ -99,6 +99,31 @@ def test_multi_style_platform_is_complete_only_when_all_styles_are_ready():
     assert "全公司生命周期销量" in result["reasons"][0]
 
 
+def test_low_previous_sales_reason_contains_only_base_warning():
+    from stocking_sheet_sync.services.notification import summarize_forecast
+
+    report = {
+        "groups": [
+            {
+                "style": "KQ25106",
+                "platforms": [
+                    {
+                        "platform": "jd_self",
+                        "status": "manual",
+                        "issues": ["previous_sales_base_low"],
+                    }
+                ],
+            }
+        ]
+    }
+    summary = summarize_forecast(
+        report, {"platforms": [{"id": "jd_self", "name": "京东自营"}]}
+    )["forecast"]
+    assert summary["reasons"] == [
+        "京东自营：去年同期30天基数过低，本次未计算预测（已有值不覆盖）"
+    ]
+
+
 def test_disabled_unsupported_and_degraded_states_have_reasons():
     common = dict(
         original_name="测试",

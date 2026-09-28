@@ -46,6 +46,7 @@ forecast_aliases = ["{platform}公式预估"]
 
 [forecast]
 rounding_unit = 10
+previous_sales_below = 20
 
 [forecast.seasons]
 summer_labels = ["夏款"]

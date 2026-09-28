@@ -44,8 +44,8 @@ def log_platform_result(style: str, platform_name: str, item: dict) -> None:
         text = f"历史数据可用（近30天{recent}件）；"
         if item["status"] == "ready":
             text += f"预估{item['forecast']['total']}件，待写入"
-        elif "previous_sales_zero" in item.get("issues", []):
-            text += "预测未计算：去年同期近30天销量为0"
+        elif "previous_sales_base_low" in item.get("issues", []):
+            text += "预测未计算：去年同期30天基数过低"
         elif "company_lifecycle_sales_unavailable" in item.get("issues", []):
             text += "预测未计算：触发全公司占比兜底，但表内全公司销量不可用"
         else:
@@ -309,9 +309,10 @@ def inspect_forecast(
             item["inputs"] = data
             if not item["issues"]:
                 fallback = rules["fallback"]
-                if sum(data["previous"].values()) == 0:
+                previous_total = sum(data["previous"].values())
+                if previous_total < rules["previous_sales_below"]:
                     item["status"] = "manual"
-                    item["issues"].append("previous_sales_zero")
+                    item["issues"].append("previous_sales_base_low")
                 else:
                     use_company = (
                         len(skus) < fallback["sku_count_below"]
@@ -333,7 +334,7 @@ def inspect_forecast(
                         try:
                             item["forecast"] = allocate_forecast(
                                 data["current"],
-                                sum(data["previous"].values()),
+                                previous_total,
                                 sum(data["historical_future"].values()),
                                 company,
                                 rules,

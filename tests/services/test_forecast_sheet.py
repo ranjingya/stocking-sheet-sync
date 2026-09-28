@@ -352,11 +352,11 @@ def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path,
 
 
 @pytest.mark.parametrize("existing", [None, 23])
-def test_manual_zero_forecast_skips_preserves_and_allows_other_writes(existing):
+def test_low_base_forecast_skips_preserves_and_allows_other_writes(existing):
     _, _, report, layout, prepared = setup_sheet()
     platform = report["groups"][0]["platforms"][0]
     platform.pop("forecast")
-    platform.update(status="manual", issues=["previous_sales_zero"])
+    platform.update(status="manual", issues=["previous_sales_base_low"])
     col = next(
         f["target_column"]
         for f in layout["report"]["target_fields"]

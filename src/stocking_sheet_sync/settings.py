@@ -496,6 +496,9 @@ def load_forecast_config(path: Path = Path("config/config.toml")) -> dict:
     unit = rules.setdefault("rounding_unit", 10)
     if type(unit) is not int or unit <= 0:
         raise ValueError("预测取整单位必须为正整数")
+    previous_sales_below = rules.setdefault("previous_sales_below", 20)
+    if type(previous_sales_below) is not int or previous_sales_below <= 0:
+        raise ValueError("去年同期30天低基数阈值必须为正整数")
     seasons = rules["seasons"]
     labels = []
     for name in ("summer", "winter", "all_year"):

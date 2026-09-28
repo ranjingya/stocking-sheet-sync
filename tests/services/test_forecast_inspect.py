@@ -310,25 +310,33 @@ def test_fixed_snapshot_invalid_is_not_zero(records, reason):
     assert result["rows"][0]["quantity"] is None
 
 
-def test_zero_previous_requires_manual_forecast():
+@pytest.mark.parametrize("previous_total", [0, 1, 19, 20])
+def test_low_previous_sales_skips_only_affected_platform(previous_total):
     reader = fake_reader()
     original = reader.sales_window.side_effect
 
     def window(source, skus, start, stop):
         result = original(source, skus, start, stop)
-        if start.year == 2025 and (stop - start).days == 30:
-            for row in result["rows"]:
-                row["quantity"] = 0
+        if source["id"] == "pdd" and start.year == 2025 and (stop - start).days == 30:
+            for index, row in enumerate(result["rows"]):
+                row["quantity"] = previous_total if index == 0 else 0
         return result
 
     reader.sales_window.side_effect = window
     result = inspect_forecast(reader, ["KQ25001"], date(2026, 9, 12), *config())
-    assert result["summary"]["manual"] == 4
-    assert all(
-        p["status"] == "manual" and "forecast" not in p
-        for p in result["groups"][0]["platforms"]
-        if p["platform"] != "jd_self"
-    )
+    platforms = {p["platform"]: p for p in result["groups"][0]["platforms"]}
+    pdd = platforms["pdd"]
+    assert sum(pdd["inputs"]["previous"].values()) == previous_total
+    if previous_total < 20:
+        assert result["summary"]["manual"] == 1
+        assert pdd["status"] == "manual"
+        assert pdd["issues"] == ["previous_sales_base_low"]
+        assert "forecast" not in pdd
+    else:
+        assert result["summary"].get("manual", 0) == 0
+        assert pdd["status"] == "ready"
+        assert "forecast" in pdd
+    assert all(p["status"] == "ready" for name, p in platforms.items() if name != "pdd")
 
 
 def test_arbitrary_142_day_window_sums_daily_values():

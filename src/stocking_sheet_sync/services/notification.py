@@ -20,6 +20,7 @@ def summarize_forecast(report: dict, config: dict, blocked: dict | None = None) 
     complete = 0
     any_ready = False
     reasons_map = {
+        "previous_sales_base_low": "去年同期30天基数过低",
         "previous_sales_zero": "去年同期销量为0",
         "company_lifecycle_sales_unavailable": "缺少可用的全公司生命周期销量",
     }
