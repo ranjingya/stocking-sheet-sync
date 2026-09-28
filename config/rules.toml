@@ -231,3 +231,32 @@ date = "stat_date"
 row_id = "__id"
 current = "sales_out_qty_30d"
 previous = "ly_sales_out_qty_30d"
+
+# 全公司去年后续周期：公司分组销售出库 + 京东自营终端出库。
+[company_sales]
+jd_platform = "jd_self"
+header_prefix = "全公司出库 "
+
+[company_sales.shops]
+app_token = "MBLabV2ulaRnVisLfNRcIGejn3d"
+table_id = "tbl7I6lTzSz4B0wN"
+id_field = "聚水潭店铺编码"
+group_field = "销售出库分组-全公司"
+included_group = "公司"
+excluded_group = "不计入"
+
+[company_sales.detail]
+table = "dwd_whs_outstock_detail_f"
+unique_fields = ["data_source", "company", "outstock_order_id", "outstock_order_detail_id", "spec_code"]
+
+[company_sales.detail.fields]
+sku = "spec_code"
+shop = "shop_id"
+date = "outstock_time"
+quantity = "outstock_num"
+
+[company_sales.detail.filters]
+company = ["公司"]
+outstock_type = ["销售出库"]
+outstock_status = ["已出库"]
+document_status = ["已出库"]

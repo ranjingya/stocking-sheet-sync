@@ -93,6 +93,7 @@ def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date
         "as_of": as_of.isoformat(),
         "spreadsheet_token": snapshot.get("spreadsheet_token"),
         "layout": layout,
+        "catalog": catalog,
         "sources": sources,
         "entries": entries,
         "summary": {

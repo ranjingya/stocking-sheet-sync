@@ -150,6 +150,7 @@ def inspect_forecast(
     *,
     requested_rows: list[dict] | None = None,
     snapshot: dict | None = None,
+    company_window=None,
 ) -> dict:
     """
     功能说明：逐款逐平台组装真实历史数据，生成只读预测及待核对证据。
@@ -164,6 +165,7 @@ def inspect_forecast(
         layout_rules：款号年份分类规则，新品与未知款不参与自动预测。
         requested_rows：可选需求表商品行，仅按其中SKU查询主数据、标签及销量。
         snapshot：可选原始表格快照，用于读取全公司生命周期销量。
+        company_window：可选公司出库查询函数，用于补齐表内缺失的公司销量。
     返回值：款式主数据、日期、来源查询证据、各平台结果及汇总；不写飞书或Redis。
     """
     styles = sorted(set(styles))
@@ -184,6 +186,18 @@ def inspect_forecast(
         match_catalog({"rows": requested}, catalog)
         LOG.debug("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
     company_source = read_company_sales(snapshot, requested or [], rules)
+    if company_window is not None and snapshot is not None and requested:
+        from stocking_sheet_sync.services.company import resolve_company_sales
+
+        company_source = resolve_company_sales(
+            snapshot,
+            requested,
+            catalog,
+            as_of,
+            rules,
+            company_window,
+            overwrite=sales_config.get("overwrite", False),
+        )
     existing_fields = {}
     if (
         snapshot is not None
@@ -313,7 +327,7 @@ def inspect_forecast(
                     if use_company:
                         company_rows = [r for r in company_source["rows"] if r["sku"] in skus]
                         if (
-                            company_source["status"] == "available"
+                            company_source["status"] in {"available", "partial"}
                             and len(company_rows) == len(skus)
                             and all(r["quantity"] is not None for r in company_rows)
                         ):

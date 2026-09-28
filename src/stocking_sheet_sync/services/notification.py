@@ -209,6 +209,11 @@ def summarize_platform_fill(
         }
     elif "forecast" in details:
         details["forecast"]["reasons"].extend(fallback_reasons)
+    company = (report or history_report or {}).get("company_source", {})
+    if company.get("reasons"):
+        stage = "history" if history else "forecast"
+        details.setdefault(stage, {}).setdefault("reasons", []).extend(company["reasons"])
+        details["company"] = {"status": "partial", "reasons": company["reasons"]}
     return details
 
 
@@ -290,6 +295,8 @@ def build_sync_card(
                 reasons.append(label + "执行结果待核验")
         reasons.extend(info.get("reasons", []))
         texts.append(f"**{label}：** {text}")
+    if details.get("company", {}).get("status") == "partial":
+        states.append("partial")
     if reason:
         reasons.insert(0, reason)
     if degraded:

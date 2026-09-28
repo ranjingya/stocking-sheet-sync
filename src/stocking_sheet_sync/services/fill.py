@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from stocking_sheet_sync.domain.models import CopyState, FillState
 from stocking_sheet_sync.domain.products import column_name, inspect_sheet, normalize_text
+from stocking_sheet_sync.domain.sheets.company import append_company_values
 from stocking_sheet_sync.domain.sheets.forecast_values import (
     build_forecast_values,
     check_forecast_target,
@@ -26,8 +27,9 @@ from stocking_sheet_sync.infrastructure.feishu.sheets import (
     read_sheet,
     write_sales_ranges,
 )
-from stocking_sheet_sync.infrastructure.warehouse import ForecastReader, SalesReader
+from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 from stocking_sheet_sync.services.calculation import inspect_forecast, write_forecast_report
+from stocking_sheet_sync.services.company import company_loader, resolve_company_sales
 from stocking_sheet_sync.services.sales import inspect_sales, write_report
 from stocking_sheet_sync.settings import (
     WarehouseSettings,
@@ -65,7 +67,7 @@ class HistoryFiller:
         self.legacy_history = legacy_history
         self.client = client
         self.config_path = config_path
-        self.reader_factory = reader_factory or (lambda: SalesReader(WarehouseSettings.load()))
+        self.reader_factory = reader_factory or (lambda: ForecastReader(WarehouseSettings.load()))
 
     def __call__(self, copy: CopyState, claim: FillState, *, before=None, sid=None) -> dict:
         """
@@ -122,8 +124,6 @@ class HistoryFiller:
                 result["history_status"] = "disabled"
                 save("result.json", result)
                 return result
-            layout_update = build_update(before, config, rules)
-            save("layout-request.json", layout_update)
             reader = self.reader_factory()
             report = inspect_sales(reader, before, config, date.fromisoformat(claim.as_of))
             write_report(output / "inspection", report, before)
@@ -146,9 +146,28 @@ class HistoryFiller:
                     )
                     or "表内商品身份未确认",
                 )
+            company = None
+            if category == "legacy":
+                company = resolve_company_sales(
+                    before,
+                    report["layout"]["rows"],
+                    report["catalog"],
+                    date.fromisoformat(claim.as_of),
+                    load_forecast_config(self.config_path),
+                    self.company_window(reader, load_forecast_sources(self.config_path)),
+                    overwrite=config.get("overwrite", False),
+                )
+                report["company_source"] = company
+                rules["company_source"] = company
+                save("company.json", company)
+            layout_update = build_update(before, config, rules)
+            save("layout-request.json", layout_update)
             projected = project_layout(before, layout_update, config, rules)
             preflight = build_sales_update(
                 projected, remap_report(report, projected, config), config, partial=True
+            )
+            preflight = append_company_values(
+                projected, preflight, rules.get("company_source"), config
             )
             save("preflight.json", preflight)
             if preflight["summary"]["needs_review"]:
@@ -169,8 +188,13 @@ class HistoryFiller:
                 layout_update,
                 config,
                 rules,
-                lambda snapshot: build_sales_update(
-                    snapshot, remap_report(report, snapshot, config), config, partial=True
+                lambda snapshot: append_company_values(
+                    snapshot,
+                    build_sales_update(
+                        snapshot, remap_report(report, snapshot, config), config, partial=True
+                    ),
+                    company,
+                    config,
                 ),
                 output,
                 save,
@@ -271,6 +295,10 @@ class HistoryFiller:
         save(f"{prefix}-verification.json", verify_sales_update(prepared, after, update))
         LOG.info("表格填充与回读核验完成")
         return update
+
+    def company_window(self, reader, sources):
+        """使用reader及sources组装全公司只读查询，按执行批次缓存店铺分组。"""
+        return company_loader(reader, self.client, self.config_path, sources)
 
     def notification_config(self, config: dict) -> dict:
         """按config中的平台选择范围返回结果统计配置。"""
@@ -469,16 +497,19 @@ class ForecastFiller(HistoryFiller):
                 save("result.json", result)
                 return result
             product = inspect_sheet(before, config)
+            reader = self.reader_factory()
+            sources = load_forecast_sources(self.config_path)
             report = inspect_forecast(
-                self.reader_factory(),
+                reader,
                 sorted({r["style"] for r in product["rows"]}),
                 date.fromisoformat(claim.as_of),
                 config,
-                load_forecast_sources(self.config_path),
+                sources,
                 load_forecast_config(self.config_path),
                 rules,
                 requested_rows=product["rows"],
                 snapshot=before,
+                company_window=self.company_window(reader, sources),
             )
             write_forecast_report(output / "inspection", report)
             checked = check_forecast_target(before, report, config)
@@ -488,11 +519,15 @@ class ForecastFiller(HistoryFiller):
 
                 return finish("needs_review", target_reason(checked["issues"]))
             rules = dated_forecast_rules(rules, report)
+            rules["company_source"] = report["company_source"]
             layout = build_update(before, config, rules, forecast=True)
             save("layout-request.json", layout)
             projected = project_layout(before, layout, config, rules)
             preflight = build_forecast_values(
                 projected, report, config, rules, history=self.history, forecast=True, partial=True
+            )
+            preflight = append_company_values(
+                projected, preflight, rules.get("company_source"), config
             )
             save("preflight.json", preflight)
             if preflight["summary"]["needs_review"]:
@@ -521,14 +556,19 @@ class ForecastFiller(HistoryFiller):
                 layout,
                 config,
                 rules,
-                lambda snapshot: build_forecast_values(
+                lambda snapshot: append_company_values(
                     snapshot,
-                    report,
+                    build_forecast_values(
+                        snapshot,
+                        report,
+                        config,
+                        rules,
+                        history=self.history,
+                        forecast=True,
+                        partial=True,
+                    ),
+                    report["company_source"],
                     config,
-                    rules,
-                    history=self.history,
-                    forecast=True,
-                    partial=True,
                 ),
                 output,
                 save,

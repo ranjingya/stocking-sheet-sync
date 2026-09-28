@@ -188,6 +188,10 @@ def test_legacy_pipeline_only_fills_recent_sales(tmp_path, monkeypatch):
     from tests.services.test_layout_apply import legacy_sheet
 
     before = legacy_sheet()
+    monkeypatch.setattr(
+        "stocking_sheet_sync.services.fill.resolve_company_sales",
+        lambda *a, **k: {"status": "available", "rows": []},
+    )
     after = deepcopy(before)
     layout = inspect_sheet(before, config())
     for col in layout["columns"].values():

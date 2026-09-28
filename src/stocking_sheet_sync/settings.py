@@ -296,17 +296,28 @@ def business_view(path: Path, section: str) -> dict:
 
     参数：
         path：运行配置路径或规则文件路径；规则固定读取同目录 rules.toml。
-        section：sales、layout、forecast 或 sources。
+        section：sales、layout、forecast、sources 或 company。
     返回值：对应业务模块的独立配置字典。
     """
     rules_path = path.parent / "rules.toml"
     with rules_path.open("rb") as stream:
         data = tomllib.load(stream)
+    if section == "company":
+        return data["company_sales"]
     if section == "forecast":
-        return data["forecast"]
+        result = data["forecast"]
+        if "company_sheet" in result:
+            result["company_sheet"]["generated_prefix"] = data.get("company_sales", {}).get(
+                "header_prefix", "全公司出库 "
+            )
+        return result
     platforms = data["platforms"]
     if section == "layout":
-        return {**data["sheet"], "platforms": {pid: p["layout"] for pid, p in platforms.items()}}
+        result = {**data["sheet"], "platforms": {pid: p["layout"] for pid, p in platforms.items()}}
+        result["forecast"]["company_prefix"] = data.get("company_sales", {}).get(
+            "header_prefix", "全公司出库 "
+        )
+        return result
     if section == "sales":
         return {
             "catalog": data["catalog"],

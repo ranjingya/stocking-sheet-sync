@@ -86,7 +86,10 @@ def _recognize(label: str, config: dict, rules: dict) -> list[dict]:
             if match:
                 matches.append({"platform": pid, "metric": metric, "period": match["period"]})
     forecast = rules.get("forecast", {})
-    if normalized == normalize_text(forecast.get("company_header", "")) and normalized:
+    if normalized and (
+        normalized == normalize_text(forecast.get("company_header", ""))
+        or normalized.startswith(normalize_text(forecast.get("company_prefix", "全公司出库 ")))
+    ):
         matches.append({"platform": "company", "metric": "sales", "period": None})
     for platform in config["platforms"]:
         for metric in ("previous", "future", "forecast"):
@@ -256,13 +259,15 @@ def plan_market_layout(
         if forecast and category != "legacy":
             issues.append({"reason": "forecast_requires_legacy_styles"})
         company = mapped.get(("company", "sales"))
-        if company:
+        if company or rules.get("company_source", {}).get("automatic"):
             fields.append(
                 {
                     "platform": "company",
                     "platform_name": "全公司",
                     "metric": "sales",
-                    "header": rules["forecast"]["company_header"],
+                    "header": rules["company_source"]["header"]
+                    if rules.get("company_source", {}).get("automatic")
+                    else company["header"],
                     "period_label": None,
                     "source_column": company["column"] if company else None,
                     "target_column": column_name(start) if start else None,

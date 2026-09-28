@@ -300,6 +300,7 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
         history=True,
         reader_factory=lambda: reader,
     )
+    monkeypatch.setattr(filler, "company_window", lambda *a: None)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     reads = iter([before, prepared, after])
     monkeypatch.setattr(
@@ -342,6 +343,7 @@ def test_filler_blocks_unmatched_requested_sku_before_structural_write(tmp_path,
         history=True,
         reader_factory=lambda: reader,
     )
+    monkeypatch.setattr(filler, "company_window", lambda *a: None)
     monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
     monkeypatch.setattr("stocking_sheet_sync.services.fill.read_sheet", lambda *a, **kw: before)
     monkeypatch.setattr(

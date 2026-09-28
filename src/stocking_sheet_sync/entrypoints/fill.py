@@ -130,7 +130,7 @@ def run(argv: list[str] | None = None) -> int:
             details = result.get("notification_details", {})
             partial = bool(details.get("blocked_platforms")) or any(
                 details.get(key, {}).get("status") in {"partial", "manual"}
-                for key in ("history", "forecast")
+                for key in ("history", "forecast", "company")
             )
             partial |= args.forecast and result.get("forecast_status") in {"unsupported", "skipped"}
             code = 0 if result["status"] == "completed" and not partial else 2
@@ -142,7 +142,7 @@ def run(argv: list[str] | None = None) -> int:
                 or "；".join(
                     dict.fromkeys(
                         reason
-                        for key in ("history", "forecast")
+                        for key in ("history", "forecast", "company")
                         for reason in details.get(key, {}).get("reasons", [])
                     )
                 )

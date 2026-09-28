@@ -15,6 +15,7 @@ src/stocking_sheet_sync/
 │   ├── copies.py                # 三份复制及交付来源决策
 │   ├── fill.py                  # 新老品分流、历史与预测共用写入执行器
 │   ├── sales.py                 # 当前历史销量检查
+│   ├── company.py               # 表内公司销量优先、按季节补充去年后续周期
 │   ├── calculation.py           # 三段历史查询、预测输入与结果
 │   └── notification.py          # 通知卡片内容
 ├── domain/
@@ -25,6 +26,7 @@ src/stocking_sheet_sync/
 │   └── sheets/                  # 表格解析、结构计划、数值计划和校验
 └── infrastructure/
     ├── feishu/                  # 认证请求、多维表、云空间、电子表格
+    ├── company.py               # 店铺公司分组读取、DWD与MySQL公司出库合并
     ├── warehouse.py             # 商品、出库明细与京东固定/任意周期查询
     ├── queue.py                 # Redis Streams队列和任务结果
     ├── lease.py                 # 持锁续期和失锁保护
