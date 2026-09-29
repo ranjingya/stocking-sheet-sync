@@ -282,4 +282,7 @@ def test_failure_keeps_platform_reasons_on_separate_lines():
         status="failure",
         reason="甲平台：快照缺失\n乙平台：来源读取失败",
     )
-    assert "甲平台：快照缺失\n乙平台：来源读取失败" in card["body"]["elements"][-2]["content"]
+    assert (
+        "甲平台：来源数据缺失或不完整，相关数据未填充\n乙平台：数据读取失败"
+        in card["body"]["elements"][-2]["content"]
+    )

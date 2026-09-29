@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any, Literal
 
+from stocking_sheet_sync.services.notification_reasons import compact_reasons
 from stocking_sheet_sync.services.reasons import describe_issues, platform_reason
 
 
@@ -386,7 +387,7 @@ def build_sync_card(
     }
 
     if reasons:
-        lines = [line for item in reasons for line in item.splitlines() if line.strip()]
+        lines = compact_reasons(reasons)
         reason_text = "\n".join(
             _escape_markdown(_clean_text(line)) for line in dict.fromkeys(lines)
         )
