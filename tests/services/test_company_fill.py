@@ -79,6 +79,11 @@ def test_company_fill_pipeline_inserts_first_preserves_formulas_and_isolates_fai
         cls = ForecastFiller
     custom_rules["company_source"] = company
     layout = build_update(before, config(), custom_rules, forecast=not history_only)
+    if failure:
+        assert not company["automatic"]
+        assert all(row["quantity"] is None for row in company["rows"])
+        assert all(field["platform"] != "company" for field in layout["report"]["target_fields"])
+        return
     prepared = project_layout(before, layout, config(), custom_rules)
     # 内存投影不执行电子表格引擎，模拟插列后公式引用自动右移。
     prepared["cells"]["E7"]["formula"] = "=SUM(H4:H6)"
@@ -162,7 +167,7 @@ def test_partial_existing_generated_values_conflict_does_not_sneak_into_forecast
         loader,
         overwrite=overwrite,
     )
-    assert [r["quantity"] for r in result["rows"]] == ([10, 30] if overwrite else [None, 30])
+    assert [r["quantity"] for r in result["rows"]] == ([10, 30] if overwrite else [None, None])
     assert result["status"] == ("available" if overwrite else "partial")
 
 
@@ -292,16 +297,13 @@ def test_company_can_fill_when_all_platforms_are_blocked():
 
 
 @pytest.mark.parametrize("quantity", [None, 0, 10])
-def test_company_column_requires_at_least_one_available_quantity(quantity):
-    """全缺失时不新增公司列；有效零值与部分可用数量均允许新增。"""
+def test_company_column_requires_complete_style(quantity):
+    """整款完整时新增公司列，有效零值也属于完整数据。"""
     before, reader, _, _, _ = setup_sheet()
     rows = inspect_sheet(before, config())["rows"]
 
     def load(skus, start, stop):
-        return [
-            {"sku": sku, "quantity": quantity if i == 0 else None, "issues": []}
-            for i, sku in enumerate(skus)
-        ]
+        return [{"sku": sku, "quantity": quantity, "issues": []} for i, sku in enumerate(skus)]
 
     company = resolve_company_sales(
         before, rows, reader.styles.return_value, date(2026, 9, 12), configs()[2], load
@@ -313,4 +315,48 @@ def test_company_column_requires_at_least_one_available_quantity(quantity):
     assert any(field["platform"] == "company" for field in fields) == (quantity is not None)
     assert company["automatic"] == (quantity is not None)
     if quantity is None:
-        assert "全公司：没有可填数量，不新增出库列" in company["reasons"]
+        assert "全公司：所有款数据均不完整，不新增出库列" in company["reasons"]
+
+
+@pytest.mark.parametrize("second_complete", [False, True])
+def test_company_incomplete_style_is_blank_without_blocking_other_style(second_complete):
+    """任一SKU缺失则整款留空，仅有完整款时新增列。"""
+    before, reader, _, _, _ = setup_sheet()
+    rows = inspect_sheet(before, config())["rows"]
+    catalog = deepcopy(reader.styles.return_value)
+    extra = []
+    for index, row in enumerate(rows):
+        item = {**row, "style": "OTHER_STYLE", "sku": "extra_" + row["sku"], "row": 20 + index}
+        extra.append(item)
+    catalog.extend({**item, "labels": catalog[0].get("labels")} for item in extra)
+    first_sku = rows[0]["sku"]
+
+    def load(skus, start, stop):
+        return [
+            {
+                "sku": sku,
+                "quantity": None
+                if sku == first_sku or (sku.startswith("extra_") and not second_complete)
+                else 0,
+                "issues": [],
+            }
+            for sku in skus
+        ]
+
+    company = resolve_company_sales(
+        before, rows + extra, catalog, date(2026, 9, 12), configs()[2], load
+    )
+    assert all(
+        item["quantity"] is None for item in company["rows"] if item["style"] != "OTHER_STYLE"
+    )
+    assert [item["quantity"] for item in company["rows"] if item["style"] == "OTHER_STYLE"] == [
+        0 if second_complete else None
+    ] * len(extra)
+    assert company["automatic"] == second_complete
+    custom = rules()
+    custom["company_source"] = company
+    layout = build_update(before, config(), custom, forecast=True)
+    assert (
+        any(field["platform"] == "company" for field in layout["report"]["target_fields"])
+        == second_complete
+    )

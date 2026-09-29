@@ -107,6 +107,7 @@ def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *,
                 {
                     "sku": row["sku"],
                     "row": row["row"],
+                    "style": row["style"],
                     "quantity": None,
                     "issues": [errors.get(row["style"], "无法确定周期")],
                 }
@@ -155,6 +156,14 @@ def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *,
                     item["quantity"] = None
                     item["issues"].append("表内全公司出库与查询结果不同，未覆盖")
             result["rows"].append(item)
+    # 全公司出库按款完整填写，任一需求SKU缺失时整款不参与写入和占比分配。
+    incomplete_styles = {r["style"] for r in result["rows"] if r["quantity"] is None}
+    for item in result["rows"]:
+        if item["style"] in incomplete_styles:
+            item["quantity"] = None
+            reason = f"{item['style']}：全公司出库数据不完整，整款未填充"
+            if reason not in item["issues"]:
+                item["issues"].append(reason)
     bad = [r for r in result["rows"] if r["quantity"] is None]
     if changing_period and bad:
         result.update(automatic=False, rows=[], status="unavailable")
@@ -165,7 +174,7 @@ def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *,
         result["reasons"].append("全公司：" + reason)
     if not old and not any(r["quantity"] is not None for r in result["rows"]):
         result.update(automatic=False, status="unavailable")
-        result["reasons"].append("全公司：没有可填数量，不新增出库列")
+        result["reasons"].append("全公司：所有款数据均不完整，不新增出库列")
     LOG.log(
         logging.WARNING if bad else logging.INFO,
         "全公司出库查询结束：可用%d/%d个SKU%s",
