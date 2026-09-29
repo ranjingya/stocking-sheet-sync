@@ -163,6 +163,9 @@ def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *,
     result["status"] = "partial" if bad else "available"
     for reason in dict.fromkeys(issue for r in bad for issue in r.get("issues", [])):
         result["reasons"].append("全公司：" + reason)
+    if not old and not any(r["quantity"] is not None for r in result["rows"]):
+        result.update(automatic=False, status="unavailable")
+        result["reasons"].append("全公司：没有可填数量，不新增出库列")
     LOG.log(
         logging.WARNING if bad else logging.INFO,
         "全公司出库查询结束：可用%d/%d个SKU%s",

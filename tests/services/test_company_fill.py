@@ -244,7 +244,7 @@ def test_company_source_error_does_not_raise_and_provides_reason():
         configs()[2],
         load,
     )
-    assert result["automatic"] and result["status"] == "partial"
+    assert not result["automatic"] and result["status"] == "unavailable"
     assert all(r["quantity"] is None for r in result["rows"])
     assert "店铺读取无权限" in result["reasons"][0]
 
@@ -289,3 +289,28 @@ def test_company_can_fill_when_all_platforms_are_blocked():
     assert len(update["blocked_platforms"]) == 5
     assert {e["platform"] for e in update["entries"]} == {"company:sales"}
     assert verify_sales_update(prepared, filled(prepared, update), update)["verified"]
+
+
+@pytest.mark.parametrize("quantity", [None, 0, 10])
+def test_company_column_requires_at_least_one_available_quantity(quantity):
+    """全缺失时不新增公司列；有效零值与部分可用数量均允许新增。"""
+    before, reader, _, _, _ = setup_sheet()
+    rows = inspect_sheet(before, config())["rows"]
+
+    def load(skus, start, stop):
+        return [
+            {"sku": sku, "quantity": quantity if i == 0 else None, "issues": []}
+            for i, sku in enumerate(skus)
+        ]
+
+    company = resolve_company_sales(
+        before, rows, reader.styles.return_value, date(2026, 9, 12), configs()[2], load
+    )
+    custom = rules()
+    custom["company_source"] = company
+    layout = build_update(before, config(), custom, forecast=True)
+    fields = layout["report"]["target_fields"]
+    assert any(field["platform"] == "company" for field in fields) == (quantity is not None)
+    assert company["automatic"] == (quantity is not None)
+    if quantity is None:
+        assert "全公司：没有可填数量，不新增出库列" in company["reasons"]
