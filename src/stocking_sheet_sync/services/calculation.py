@@ -199,6 +199,7 @@ def inspect_forecast(
             overwrite=sales_config.get("overwrite", False),
         )
     existing_fields = {}
+    existing_columns = {}
     if (
         snapshot is not None
         and requested is not None
@@ -207,6 +208,11 @@ def inspect_forecast(
         layout = plan_market_layout(
             snapshot, sales_config, layout_rules, recent_only=True, forecast=True
         )
+        existing_columns = {
+            (f["platform"], f["metric"]): f["source_column"]
+            for f in layout["target_fields"]
+            if f["source_column"]
+        }
         existing_fields = {
             (
                 field["platform"],
@@ -264,6 +270,20 @@ def inspect_forecast(
                 continue
             item = {"platform": pid, "status": "needs_review", "issues": [], "sources": {}}
             group["platforms"].append(item)
+            if sales_config.get("incremental") and snapshot is not None and requested:
+                from stocking_sheet_sync.domain.sheets.incremental import fill_state
+
+                item["fill_state"] = fill_state(
+                    snapshot,
+                    [r for r in requested if r["style"] == style],
+                    {metric: col for (p, metric), col in existing_columns.items() if p == pid},
+                    forecast=True,
+                    overwrite=sales_config.get("overwrite", False),
+                )
+                LOG.info("%s｜%s：%s", style, platform.get("name", pid), item["fill_state"])
+                if item["fill_state"] == "已完整跳过":
+                    item.update(status="ready", preserved=True, inputs={})
+                    continue
             data = {}
             for key, start, stop in (
                 ("current", window["current_start"], window["current_end"]),
@@ -311,6 +331,27 @@ def inspect_forecast(
                             item["issues"].append(f"{key}: {error}；{sheet_error}")
                     else:
                         item["issues"].append(f"{key}: {error}")
+            if sales_config.get("incremental") and not sales_config.get("overwrite") and snapshot:
+                future_col = existing_columns.get((pid, "future"))
+                if future_col:
+                    header = (
+                        snapshot["cells"]
+                        .get(f"{future_col}{sales_config['matching']['header_rows']}", {})
+                        .get("value", "")
+                    )
+                    start, end = window["history_start"], window["history_end"] - timedelta(days=1)
+                    period = f"{start:%y}.{start.month}.{start.day}-{end:%y}.{end.month}.{end.day}"
+                    has_old = any(
+                        snapshot["cells"].get(f"{future_col}{r['row']}", {}).get("value")
+                        not in (None, "")
+                        for r in requested or []
+                    )
+                    if (
+                        has_old
+                        and re.search(r"\d{2}\.\d+\.\d+-", str(header))
+                        and period not in str(header)
+                    ):
+                        item["history_conflicts"] = [f"后续周期表头与基准日不一致：{header}"]
             item["inputs"] = data
             if not item["issues"]:
                 fallback = rules["fallback"]

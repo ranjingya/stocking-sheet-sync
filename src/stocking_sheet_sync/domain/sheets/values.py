@@ -40,6 +40,8 @@ def build_sales_update(
     entries, pending = [], defaultdict(list)
     totals = defaultdict(int)
     for entry in report["entries"]:
+        if config.get("incremental") and entry.get("preserved"):
+            continue
         sku, target = expected[(entry["platform"], entry["row"])]
         if entry["sku"] != sku or entry["target_cell"] != target:
             raise ValueError("销量候选的商品编码或目标单元格不一致")
@@ -162,7 +164,12 @@ def build_sales_update(
     if partial:
         from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
 
-        result = isolate_platforms(result, snapshot["sheet_id"])
+        if config.get("incremental"):
+            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
+
+            result = isolate_scopes(result, snapshot)
+        else:
+            result = isolate_platforms(result, snapshot["sheet_id"])
     supplement_demand_totals(
         result,
         snapshot,

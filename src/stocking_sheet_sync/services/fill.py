@@ -107,6 +107,7 @@ class HistoryFiller:
             config = load_sales_config(self.config_path)
             config["selected_platforms"] = getattr(self, "selected_platforms", None)
             config["overwrite"] = getattr(self, "overwrite", False)
+            config["incremental"] = getattr(self, "incremental", False)
             rules = load_layout_config(self.config_path, config)
             if before is None:
                 sid = self.find_sheet(copy.target_token, config)
@@ -471,6 +472,7 @@ class ForecastFiller(HistoryFiller):
             config = load_sales_config(self.config_path)
             config["selected_platforms"] = getattr(self, "selected_platforms", None)
             config["overwrite"] = getattr(self, "overwrite", False)
+            config["incremental"] = getattr(self, "incremental", False)
             rules = load_layout_config(self.config_path, config)
             sid = self.find_sheet(copy.target_token, config)
             before = read_sheet(
@@ -519,6 +521,15 @@ class ForecastFiller(HistoryFiller):
 
                 return finish("needs_review", target_reason(checked["issues"]))
             rules = dated_forecast_rules(rules, report)
+            if config.get("incremental") and not config.get("overwrite"):
+                existing = plan_market_layout(
+                    before, config, rules, recent_only=True, forecast=True
+                )
+                for field in existing["existing_fields"]:
+                    if field.get("metric") == "future" and field["filled_product_cells"]:
+                        rules["forecast"].setdefault("future_headers", {})[field["platform"]] = (
+                            field["header"]
+                        )
             rules["company_source"] = report["company_source"]
             layout = build_update(before, config, rules, forecast=True)
             save("layout-request.json", layout)

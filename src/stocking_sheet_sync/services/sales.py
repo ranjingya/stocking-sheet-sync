@@ -33,18 +33,60 @@ def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date
     for platform in config["platforms"]:
         if config.get("selected_platforms") and platform["id"] not in config["selected_platforms"]:
             continue
-        try:
-            source = reader.sales(platform, skus, as_of)
-        except (RuntimeError, ValueError) as error:
-            LOG.error("平台读取失败：platform=%s reason=%s", platform["id"], error)
-            source = {
-                "platform": platform["id"],
-                "source_table": platform["table"],
-                "rows": [],
-                "issues": ["source_read_failed"],
-                "error": str(error),
-            }
-        sources.append(source)
+        preserved = set()
+        if config.get("incremental"):
+            from stocking_sheet_sync.domain.sheets.incremental import fill_state
+
+            source_rows = []
+            for style in sorted({row["style"] for row in layout["rows"]}):
+                scoped = [row for row in layout["rows"] if row["style"] == style]
+                state = fill_state(
+                    snapshot,
+                    scoped,
+                    layout["columns"][platform["id"]],
+                    forecast=False,
+                    overwrite=config.get("overwrite", False),
+                )
+                LOG.info("%s｜%s：%s", style, platform["name"], state)
+                if state == "已完整跳过":
+                    preserved.add(style)
+                    continue
+                try:
+                    part = reader.sales(platform, sorted({r["sku"] for r in scoped}), as_of)
+                except (RuntimeError, ValueError) as error:
+                    part = {
+                        "platform": platform["id"],
+                        "rows": [],
+                        "issues": ["source_read_failed"],
+                        "error": str(error),
+                    }
+                sources.append({**part, "style": style})
+                if part["issues"]:
+                    source_rows.extend(
+                        {
+                            "sku": r["sku"],
+                            "quantity": None,
+                            "status": "needs_review",
+                            "issues": part["issues"],
+                        }
+                        for r in scoped
+                    )
+                else:
+                    source_rows.extend(part["rows"])
+            source = {"rows": source_rows, "issues": []}
+        else:
+            try:
+                source = reader.sales(platform, skus, as_of)
+            except (RuntimeError, ValueError) as error:
+                LOG.error("平台读取失败：platform=%s reason=%s", platform["id"], error)
+                source = {
+                    "platform": platform["id"],
+                    "source_table": platform["table"],
+                    "rows": [],
+                    "issues": ["source_read_failed"],
+                    "error": str(error),
+                }
+            sources.append(source)
         by_sku = defaultdict(list)
         for item in source["rows"]:
             by_sku[item["sku"]].append(item)
@@ -72,6 +114,7 @@ def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date
             if cell.get("formula") or existing not in (None, ""):
                 problems.append("target_not_empty")
             entry = {
+                "preserved": row["style"] in preserved,
                 "platform": platform["id"],
                 "platform_name": platform["name"],
                 "row": row["row"],

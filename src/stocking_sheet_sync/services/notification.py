@@ -209,6 +209,46 @@ def summarize_platform_fill(
         }
     elif "forecast" in details:
         details["forecast"]["reasons"].extend(fallback_reasons)
+    scoped = update.get("blocked_scopes", [])
+    if scoped:
+        names = {p["id"]: p["name"] for p in config["platforms"]}
+        scope_reasons = []
+        for item in scoped:
+            conflicts = [issue for issue in item["issues"] if issue.startswith("历史数据不一致")]
+            explanation = (
+                conflicts[0] + (f"，共{len(conflicts)}处" if len(conflicts) > 1 else "")
+                if conflicts
+                else describe_issues(item["issues"])
+            )
+            scope_reasons.append(
+                f"{names[item['platform']]}（{item['style']}）：{explanation}，该款该平台跳过"
+            )
+        failed = {item["platform"] for item in scoped}
+        for key in ("history", "forecast"):
+            if key not in details:
+                continue
+            info = details[key]
+            if key == "history":
+                done = len(config["platforms"]) - len(failed)
+            else:
+                ready = {
+                    p["id"]
+                    for p in config["platforms"]
+                    if p["id"] not in failed
+                    and p["id"] not in forecast_blocked
+                    and all(
+                        item["status"] == "ready"
+                        for group in report["groups"]
+                        for item in group["platforms"]
+                        if item["platform"] == p["id"]
+                    )
+                }
+                done = len(ready)
+            info.update(completed=done, status="partial" if update["entries"] else "manual")
+            info["reasons"].extend(scope_reasons)
+        details["blocked_scopes"] = scoped
+        for reason in scope_reasons:
+            logging.getLogger(__name__).warning(reason)
     company = (report or history_report or {}).get("company_source", {})
     if company.get("reasons"):
         stage = "history" if history else "forecast"

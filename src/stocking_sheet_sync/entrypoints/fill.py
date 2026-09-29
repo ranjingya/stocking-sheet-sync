@@ -110,6 +110,7 @@ def run(argv: list[str] | None = None) -> int:
                 if args.forecast
                 else HistoryFiller(service.data_client)
             )
+            filler.incremental = True
             filler.selected_platforms = selected
             filler.overwrite = args.overwrite
             LOG.info(

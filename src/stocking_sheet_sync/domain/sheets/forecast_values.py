@@ -165,11 +165,20 @@ def build_forecast_values(
             continue
         for platform in group["platforms"]:
             pid = platform["platform"]
-            if pid not in expected_platforms:
+            if pid not in expected_platforms or platform.get("preserved"):
                 continue
             for metric in metrics:
                 col = fields[(pid, metric)]
                 address = f"{col}{row['row']}"
+                if (
+                    metric == "forecast"
+                    and config.get("incremental")
+                    and not config.get("overwrite")
+                ):
+                    from stocking_sheet_sync.domain.sheets.incremental import filled
+
+                    if filled(snapshot["cells"][address]):
+                        continue
                 if metric == "forecast" and platform["status"] != "ready":
                     skipped.append(
                         {
@@ -316,7 +325,40 @@ def build_forecast_values(
                     key not in platform.get("inputs", {}) for key in INPUT_METRICS.values()
                 ):
                     blocked.setdefault(platform["platform"], []).extend(platform["issues"])
-        result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
+        if config.get("incremental"):
+            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
+
+            scope_blocked = {}
+            for group in report["groups"]:
+                for platform in group["platforms"]:
+                    if platform.get("preserved"):
+                        continue
+                    pid = platform["platform"]
+                    reasons = list(platform.get("history_conflicts", []))
+                    for metric, key in INPUT_METRICS.items():
+                        if key not in platform.get("inputs", {}):
+                            reasons.extend(platform.get("issues") or ["历史来源缺失"])
+                            continue
+                        for row in checked["rows"]:
+                            if row["style"] != group["style"]:
+                                continue
+                            address = f"{fields[(pid, metric)]}{row['row']}"
+                            cell = snapshot["cells"][address]
+                            value = cell.get("value")
+                            quantity = platform["inputs"][key].get(row["sku"])
+                            if cell.get("formula") or (
+                                value not in (None, "")
+                                and value != quantity
+                                and not config.get("overwrite")
+                            ):
+                                reasons.append(
+                                    f"历史数据不一致（{address}：表内{value}，来源{quantity}）"
+                                )
+                    if reasons:
+                        scope_blocked[(group["style"], pid)] = reasons
+            result = isolate_scopes(result, snapshot, blocked=scope_blocked)
+        else:
+            result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
     supplement_demand_totals(
         result,
         snapshot,
