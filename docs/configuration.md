@@ -55,7 +55,7 @@
 | `matching` | SKU、款号、名称、规格的表头别名 |
 | `sheet` | 市场部结构、新老品年份、平台顺序、预估表头 |
 | `forecast` | 季节截止日、兜底阈值、公司销量列识别 |
-| `company_sales` | 全公司出库的店铺分组、DWD字段和京东来源 |
+| `company_sales` | 全公司近30天出库的ADS表字段和京东来源 |
 | `platforms.<平台>` | 数据表、连接来源、字段、筛选、去重键、表头别名与布局 |
 
 京东平台还包含 `daily_fields`、`rolling_fields` 和业务日期偏移。平台来源与表头在同一平台分区维护，商品主数据只配置一处。
@@ -101,4 +101,4 @@ volumes:
 
 宿主机映射的配置目录需要同时包含 `config.toml` 和随项目提供的 `rules.toml`。无需额外配置目录环境变量。宿主机 `.env` 通过Compose的 `env_file` 注入，修改后需重新创建容器。
 
-全公司自动出库使用 `rules.toml` 中的 `company_sales`：配置店铺分组表、编码与分组字段、DWD明细来源，以及复用的京东平台标识。运行该功能的数据应用需要能读取店铺分组多维表；宿主机映射的规则文件需要包含此配置。
+全公司自动出库使用 `rules.toml` 中的 `company_sales`：配置 `summary.table`、`summary.fields` 下的SKU/日期/数量字段，以及复用的 `jd_platform` 京东平台标识。宿主机映射的规则文件需要包含此配置。

@@ -1,141 +1,84 @@
+"""全公司ADS与京东近30天汇总的来源校验。"""
+
 from datetime import date
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
-from stocking_sheet_sync.infrastructure.company import CompanyReader, field_texts
+from stocking_sheet_sync.infrastructure.company import CompanyReader
 from stocking_sheet_sync.settings import business_view, load_forecast_sources
 
 
 def provider():
-    cfg = business_view(Path("config/config.toml"), "company")
-    reader, client = Mock(), Mock()
-    client._request.side_effect = [
-        {
-            "items": [
-                {
-                    "field_name": "销售出库分组-全公司",
-                    "field_id": "lookup",
-                    "type": 19,
-                    "property": {
-                        "filter_info": {"target_table": "maintenance"},
-                        "target_field": "group",
-                    },
-                }
-            ]
-        },
-        {
-            "items": [
-                {
-                    "field_name": "分类",
-                    "field_id": "group",
-                    "type": 3,
-                    "property": {
-                        "options": [
-                            {"id": "opt-company", "name": "公司"},
-                            {"id": "opt-excluded", "name": "不计入"},
-                        ]
-                    },
-                }
-            ]
-        },
-        {
-            "items": [
-                {
-                    "fields": {
-                        "聚水潭店铺编码": [{"text": "1"}],
-                        "销售出库分组-全公司": {"type": 3, "value": ["opt-company"]},
-                    }
-                }
-            ],
-            "has_more": True,
-            "page_token": "next",
-        },
-        {
-            "items": [
-                {
-                    "fields": {
-                        "聚水潭店铺编码": [{"text": "2"}],
-                        "销售出库分组-全公司": {"value": ["不计入"]},
-                    }
-                }
-            ],
-            "has_more": False,
-        },
-    ]
-    return CompanyReader(
-        reader, client, cfg, load_forecast_sources(Path("config/config.toml"))["daily"]["jd_self"]
-    )
-
-
-def test_shop_paging_projection_and_per_run_cache():
-    p = provider()
-    assert p.shop_groups() == {"1": "公司", "2": "不计入"}
-    assert p.shop_groups() == {"1": "公司", "2": "不计入"}
-    assert p.client._request.call_count == 4
-    assert p.client._request.call_args.kwargs["params"]["page_token"] == "next"
-    assert field_texts({"value": [{"text": "公司"}]}) == ["公司"]
-
-
-def test_shop_paging_missing_cursor_is_not_complete():
-    p = provider()
-    p.group_options = lambda: {}
-    p.client._request.side_effect = [{"items": [], "has_more": True}]
-    with pytest.raises(RuntimeError, match="分页不完整"):
-        p.shop_groups()
-
-
-@pytest.mark.parametrize(
-    "kind", ["complete", "unknown_shop", "invalid", "jd_gap", "date_gap", "conflict"]
-)
-def test_company_combination_preserves_zero_excludes_pull_goods_and_isolates_sku(kind):
-    p = provider()
-    p.reader._read.side_effect = [
-        [] if kind == "date_gap" else [{"day": "2025-09-28"}],
-        [
-            {
-                "sku": "A",
-                "shop": "unknown" if kind == "unknown_shop" else "1",
-                "quantity": 12,
-                "invalid_count": int(kind == "invalid"),
-                "conflicts": int(kind == "conflict"),
-            },
-            {"sku": "A", "shop": "2", "quantity": 9999, "invalid_count": 0, "conflicts": 0},
-        ],
-    ]
-    p.reader.daily_window.return_value = {
-        "issues": ["daily_source_needs_review"] if kind == "jd_gap" else [],
+    path = Path("config/config.example.toml")
+    reader = Mock()
+    reader._read.return_value = [{"sku": "A", "quantity": 12}, {"sku": "B", "quantity": 0}]
+    reader.daily_window.return_value = {
         "rows": [
-            {
-                "sku": "A",
-                "quantity": None if kind == "jd_gap" else 3,
-                "status": "needs_review" if kind == "jd_gap" else "matched",
-            },
+            {"sku": "A", "quantity": 3, "status": "matched"},
             {"sku": "B", "quantity": 0, "status": "matched"},
-        ],
+        ]
     }
-    rows = p.window(["A", "B"], date(2025, 9, 28), date(2025, 9, 29))
-    assert rows[0]["quantity"] == (
-        15 if kind == "complete" else 3 if kind == "unknown_shop" else None
+    return CompanyReader(
+        reader, business_view(path, "company"), load_forecast_sources(path)["daily"]["jd_self"]
     )
-    assert rows[1]["quantity"] == (None if kind == "date_gap" else 0)
-    sql, params = p.reader._read.call_args.args
-    assert "outstock_order_detail_id" in sql and "COUNT(DISTINCT `shop_id`)" in sql
-    assert "`dept`" not in sql and "`shop_id` IN" not in sql
-    assert "公司" in params and "销售出库" in params and params[-2:] == ("A", "B")
 
 
-def test_duplicate_shop_classification_is_unknown():
+def test_company_combines_same_day_rolling_totals_and_keeps_zero():
     p = provider()
-    p.group_options = lambda: {}
-    p.client._request.side_effect = [
-        {
-            "items": [
-                {"fields": {"聚水潭店铺编码": "1", "销售出库分组-全公司": "公司"}},
-                {"fields": {"聚水潭店铺编码": "1", "销售出库分组-全公司": "不计入"}},
-            ],
-            "has_more": False,
-        }
-    ]
-    assert p.shop_groups() == {"1": ""}
+    rows = p.window(["A", "B"], date(2026, 9, 6), date(2026, 10, 6))
+    assert [row["quantity"] for row in rows] == [15, 0]
+    sql, params = p.reader._read.call_args.args
+    assert "ads_whs_outstock_gs_base_sku_window" in sql
+    assert "`sales_out_qty_30d`" in sql and "`stat_date`" in sql and "`spec_code`" in sql
+    assert params == ("2026-10-05", "2026-10-06", "A", "B")
+    assert p.reader._read.call_count == 1
+    source, skus, start, stop = p.reader.daily_window.call_args.args
+    assert source["table"] == "jd_inventory_product_detail"
+    assert source["connection"] == "mysql"
+    assert source["rolling_fields"]["30"] == "outbound_30d"
+    assert source["business_date_offset_days"] == 0
+    assert skus == ["A", "B"] and (stop - start).days == 30
+    assert rows[0]["company"]["snapshot_date"] == "2026-10-05"
+
+
+@pytest.mark.parametrize("value", [None, -1, 1.5, "bad", float("nan")])
+def test_invalid_ads_quantity_does_not_block_other_sku(value):
+    p = provider()
+    p.reader._read.return_value[0]["quantity"] = value
+    rows = p.window(["A", "B"], date(2026, 9, 6), date(2026, 10, 6))
+    assert rows[0]["quantity"] is None
+    assert "公司ADS近30天数量无效" in rows[0]["issues"]
+    assert rows[1]["quantity"] == 0
+
+
+@pytest.mark.parametrize("kind", ["empty", "missing", "duplicate", "jd_missing", "jd_duplicate"])
+def test_missing_and_duplicate_snapshots_are_not_zero(kind):
+    p = provider()
+    if kind == "empty":
+        p.reader._read.return_value = []
+    elif kind == "missing":
+        p.reader._read.return_value = [{"sku": "B", "quantity": 0}]
+    elif kind == "duplicate":
+        p.reader._read.return_value.append({"sku": "A", "quantity": 12})
+    elif kind == "jd_missing":
+        p.reader.daily_window.return_value["rows"] = [
+            {"sku": "B", "quantity": 0, "status": "matched"}
+        ]
+    else:
+        p.reader.daily_window.return_value["rows"].append(
+            {"sku": "A", "quantity": 3, "status": "matched"}
+        )
+    rows = p.window(["A", "B"], date(2026, 9, 6), date(2026, 10, 6))
+    assert rows[0]["quantity"] is None
+    assert rows[1]["quantity"] == (None if kind == "empty" else 0)
+    assert p.reader._read.call_count == 1
+
+
+def test_company_rejects_special_period_without_reading_source():
+    p = provider()
+    with pytest.raises(ValueError, match="30天"):
+        p.window(["A"], date(2025, 9, 28), date(2026, 2, 1))
+    p.reader._read.assert_not_called()
+    p.reader.daily_window.assert_not_called()

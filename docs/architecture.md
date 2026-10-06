@@ -26,7 +26,7 @@ src/stocking_sheet_sync/
 │   └── sheets/                  # 表格解析、结构计划、数值计划和校验
 └── infrastructure/
     ├── feishu/                  # 认证请求、多维表、云空间、电子表格
-    ├── company.py               # 店铺公司分组读取、DWD与MySQL公司出库合并
+    ├── company.py               # ADS与MySQL全公司近30天出库合并
     ├── warehouse.py             # 商品、出库明细与京东固定/任意周期查询
     ├── queue.py                 # Redis Streams队列和任务结果
     ├── lease.py                 # 持锁续期和失锁保护
