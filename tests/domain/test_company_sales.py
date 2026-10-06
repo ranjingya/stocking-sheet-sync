@@ -15,7 +15,7 @@ def company_sheet(values=(10, 30)):
         "column_count": 3,
         "cells": {
             "C1": {"value": "26年销售总数"},
-            "C3": {"value": "25.9.1-26.1.31"},
+            "C3": {"value": "全公司近30天出库 26.8.13-26.9.11"},
             "C4": {"value": values[0]},
             "C5": {"value": values[1]},
         },
@@ -29,14 +29,17 @@ def requested():
     ]
 
 
-def test_company_lifecycle_values_read_by_sheet_row_preserve_source():
+def test_company_recent_values_read_by_sheet_row_preserve_source():
     snapshot = company_sheet()
     before = deepcopy(snapshot)
     result = read_company_sales(
-        snapshot, requested(), load_forecast_config(Path("config/config.example.toml"))
+        snapshot,
+        requested(),
+        load_forecast_config(Path("config/config.example.toml")),
+        as_of=date(2026, 9, 12),
     )
     assert result["status"] == "available"
-    assert result["period"] == "25.9.1-26.1.31"
+    assert result["period"] == "全公司近30天出库 26.8.13-26.9.11"
     assert [r["quantity"] for r in result["rows"]] == [10, 30]
     assert snapshot == before
 
@@ -44,7 +47,10 @@ def test_company_lifecycle_values_read_by_sheet_row_preserve_source():
 @pytest.mark.parametrize("values", [(None, 2), ("", 2), (True, 2), (-1, 2)])
 def test_company_invalid_cell_not_assumed_zero(values):
     result = read_company_sales(
-        company_sheet(values), requested(), load_forecast_config(Path("config/config.example.toml"))
+        company_sheet(values),
+        requested(),
+        load_forecast_config(Path("config/config.example.toml")),
+        as_of=date(2026, 9, 12),
     )
     assert result["rows"][0]["quantity"] is None
     assert result["rows"][0]["issue"]
@@ -52,7 +58,7 @@ def test_company_invalid_cell_not_assumed_zero(values):
 
 def test_multiple_company_columns_are_ambiguous():
     snapshot = company_sheet()
-    snapshot["cells"]["B1"] = {"value": "25年销售总数"}
+    snapshot["cells"]["B3"] = {"value": "全公司近30天出库 26.8.13-26.9.11"}
     assert (
         read_company_sales(
             snapshot, requested(), load_forecast_config(Path("config/config.example.toml"))
@@ -61,8 +67,25 @@ def test_multiple_company_columns_are_ambiguous():
     )
 
 
+@pytest.mark.parametrize(
+    "header", ["全公司近30天", "全公司出库 25.9.1-26.1.31", "全公司近30天出库 26.8.12-26.9.10"]
+)
+def test_undated_or_other_period_company_values_are_not_used(header):
+    """没有当前30天日期证据的数量不用于占比分配。"""
+    snapshot = company_sheet()
+    snapshot["cells"]["C3"] = {"value": header}
+    result = read_company_sales(
+        snapshot,
+        requested(),
+        load_forecast_config(Path("config/config.example.toml")),
+        as_of=date(2026, 9, 12),
+    )
+    assert result["status"] != "available"
+    assert result["rows"] == []
+
+
 @pytest.mark.parametrize("values,manual", [((10, 30), False), ((None, 30), True), ((0, 0), True)])
-def test_company_fallback_uses_sheet_lifecycle_or_leaves_manual(values, manual):
+def test_company_fallback_uses_sheet_recent_sales_or_leaves_manual(values, manual):
     reader = fake_reader()
     original = reader.sales_window.side_effect
 

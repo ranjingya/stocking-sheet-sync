@@ -88,7 +88,9 @@ def _recognize(label: str, config: dict, rules: dict) -> list[dict]:
     forecast = rules.get("forecast", {})
     if normalized and (
         normalized == normalize_text(forecast.get("company_header", ""))
-        or normalized.startswith(normalize_text(forecast.get("company_prefix", "全公司出库 ")))
+        or normalized.startswith(
+            normalize_text(forecast.get("company_prefix", "全公司近30天出库 "))
+        )
     ):
         matches.append({"platform": "company", "metric": "sales", "period": None})
     for platform in config["platforms"]:

@@ -15,7 +15,7 @@ src/stocking_sheet_sync/
 │   ├── copies.py                # 三份复制及交付来源决策
 │   ├── fill.py                  # 新老品分流、历史与预测共用写入执行器
 │   ├── sales.py                 # 当前历史销量检查
-│   ├── company.py               # 表内公司销量优先、按季节补充去年后续周期
+│   ├── company.py               # 核对表内日期、补充全公司近30天出库
 │   ├── calculation.py           # 三段历史查询、预测输入与结果
 │   └── notification.py          # 通知卡片内容
 ├── domain/

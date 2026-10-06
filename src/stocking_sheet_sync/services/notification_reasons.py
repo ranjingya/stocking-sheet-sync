@@ -14,10 +14,10 @@ def _brief(text: str) -> str:
         return "全公司出库数据不完整，整款未填充"
     if "京东出库缺失" in text:
         return "京东出库缺失"
-    if "京东自营后续周期出库缺失或不完整" in text:
-        return "京东自营后续周期数据不完整"
-    if "全公司生命周期销量" in text:
-        return "缺少全公司生命周期销量，未预测"
+    if "京东自营近30天出库缺失或不完整" in text:
+        return "京东自营近30天数据不完整"
+    if "全公司近30天销量" in text:
+        return "缺少全公司近30天销量，未预测"
     if "去年同期30天基数过低" in text:
         return "去年同期30天基数过低，未预测"
     if "历史数据不一致" in text or "历史单元格已有" in text or "目标单元格已有" in text:

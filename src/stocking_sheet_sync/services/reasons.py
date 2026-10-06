@@ -9,7 +9,7 @@ WINDOW_NAMES = {
 ISSUE_NAMES = {
     "previous_sales_base_low": "去年同期30天基数过低",
     "previous_sales_zero": "去年同期销量为0",
-    "company_lifecycle_sales_unavailable": "缺少可用的全公司生命周期销量",
+    "company_recent_sales_unavailable": "缺少可用的全公司近30天销量",
     "占比参考销量为零，无法分配需求": "近30天销量合计为0，无法计算SKU占比",
     "missing_rolling_snapshot": "销量快照缺失",
     "duplicate_source_sku_day": "同一SKU同一天存在重复记录",

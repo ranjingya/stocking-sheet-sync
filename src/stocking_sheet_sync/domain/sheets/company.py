@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import logging
-import re
+from datetime import timedelta
 
 from stocking_sheet_sync.domain.products import column_name, normalize_text, units
 
 LOG = logging.getLogger(__name__)
 
 
-def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> dict:
+def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict, *, as_of=None) -> dict:
     """
-    功能说明：按配置识别表内全公司去年生命周期销量列，保留逐SKU数值及来源证据。
+    功能说明：识别带日期的全公司近30天销量列，核对周期并保留逐SKU来源证据。
 
     参数：
         snapshot：补列前的完整需求表快照；空值表示未提供表格。
         rows：已定位的表内商品行，包含SKU和行号。
         rules：包含公司销量表头匹配规则的预测配置。
+        as_of：预测基准日；未提供时不将表内数量用于预测。
     返回值：列位置、周期原文、逐SKU销量和异常；不查询数仓或修改原单元格。
     """
     result = {"status": "missing", "rows": [], "candidates": []}
@@ -28,32 +29,14 @@ def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> 
         group = snapshot["cells"].get(f"{col}{config['group_row']}", {}).get("value", "")
         header = snapshot["cells"].get(f"{col}{config['header_row']}", {}).get("value", "")
         generated = normalize_text(str(header or "")).startswith(
-            normalize_text(config.get("generated_prefix", "全公司出库 "))
+            normalize_text(config.get("generated_prefix", "全公司近30天出库 "))
         )
-        if (
-            generated
-            or re.fullmatch(config["group_pattern"], normalize_text(str(group or "")))
-            or normalize_text(str(header or "")) in {normalize_text(v) for v in config["headers"]}
-        ):
+        if generated:
             candidates.append(
                 {"column": col, "group": group, "period": header, "generated": generated}
             )
     result["candidates"] = candidates
-    manual = [c for c in candidates if not c["generated"]]
-    automatic = [c for c in candidates if c["generated"]]
-    # 完整人工列优先；人工缺失时优先识别唯一的自动补充列。
-    complete_manual = []
-    for candidate in manual:
-        try:
-            for row in rows:
-                raw = snapshot["cells"].get(f"{candidate['column']}{row['row']}", {}).get("value")
-                if isinstance(raw, bool):
-                    raise ValueError("布尔值不是销量")
-                units(raw)
-            complete_manual.append(candidate)
-        except ValueError:
-            pass
-    selected = manual if len(manual) > 1 else complete_manual or automatic or manual
+    selected = candidates
     if len(selected) != 1:
         result["status"] = "ambiguous" if candidates else "missing"
         LOG.debug(
@@ -61,6 +44,16 @@ def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> 
         )
         return result
     result.update(selected[0], status="available")
+    if as_of is None:
+        result.update(status="unavailable", reasons=["全公司：缺少近30天基准日"])
+        return result
+    start, end = as_of - timedelta(days=30), as_of - timedelta(days=1)
+    expected = config["generated_prefix"] + (
+        f"{start:%y}.{start.month}.{start.day}-{end:%y}.{end.month}.{end.day}"
+    )
+    if normalize_text(str(result["period"])) != normalize_text(expected):
+        result.update(status="unavailable", reasons=["全公司：表内近30天日期与基准日不一致"])
+        return result
     for row in rows:
         address = f"{result['column']}{row['row']}"
         raw = snapshot["cells"].get(address, {}).get("value")
@@ -74,7 +67,7 @@ def read_company_sales(snapshot: dict | None, rows: list[dict], rules: dict) -> 
         result["rows"].append(
             {"sku": row["sku"], "cell": address, "quantity": quantity, "issue": issue}
         )
-    LOG.debug("表内全公司生命周期销量读取：column=%s rows=%d", result["column"], len(rows))
+    LOG.debug("表内全公司近30天销量读取：column=%s rows=%d", result["column"], len(rows))
     return result
 
 

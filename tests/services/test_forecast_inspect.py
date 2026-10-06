@@ -98,7 +98,7 @@ def test_company_pending_blocks_only_fallback_platform():
     result = inspect_forecast(reader, ["KQ25001"], date(2026, 9, 12), *config())
     assert result["summary"]["ready"] == 4
     pdd = next(p for p in result["groups"][0]["platforms"] if p["platform"] == "pdd")
-    assert pdd["issues"] == ["company_lifecycle_sales_unavailable"]
+    assert pdd["issues"] == ["company_recent_sales_unavailable"]
     assert pdd["status"] == "manual"
     assert "forecast" not in pdd
     assert pdd["inputs"]["current"] == {"001": 2, "002": 2}
@@ -374,7 +374,7 @@ def test_platform_log_uses_names_and_does_not_claim_written(caplog):
                     "previous": {"a": 30},
                     "historical_future": {"a": 100},
                 },
-                "issues": ["company_lifecycle_sales_unavailable"],
+                "issues": ["company_recent_sales_unavailable"],
             },
         )
         log_platform_result(
@@ -403,8 +403,8 @@ def test_platform_log_uses_names_and_does_not_claim_written(caplog):
             },
         )
     assert "拼多多：历史数据可用（近30天18件）" in caplog.text
-    assert "缺少可用的全公司生命周期销量" in caplog.text
+    assert "缺少可用的全公司近30天销量" in caplog.text
     assert "预估2100件，待写入" in caplog.text
     assert "原因：近30天销量快照不可用" in caplog.text
-    assert "company_lifecycle_sales_unavailable" not in caplog.text
+    assert "company_recent_sales_unavailable" not in caplog.text
     assert "needs_review" not in caplog.text

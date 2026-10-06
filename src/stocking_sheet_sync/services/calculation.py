@@ -164,7 +164,7 @@ def inspect_forecast(
         rules：季节和分配计算规则。
         layout_rules：款号年份分类规则，新品与未知款不参与自动预测。
         requested_rows：可选需求表商品行，仅按其中SKU查询主数据、标签及销量。
-        snapshot：可选原始表格快照，用于读取全公司生命周期销量。
+        snapshot：可选原始表格快照，用于读取全公司近30天销量。
         company_window：可选公司出库查询函数，用于补齐表内缺失的公司销量。
     返回值：款式主数据、日期、来源查询证据、各平台结果及汇总；不写飞书或Redis。
     """
@@ -185,7 +185,7 @@ def inspect_forecast(
         catalog = [record for record in catalog if record["sku"] in wanted]
         match_catalog({"rows": requested}, catalog)
         LOG.debug("按需求表读取主数据：rows=%d skus=%d", len(requested), len(wanted))
-    company_source = read_company_sales(snapshot, requested or [], rules)
+    company_source = read_company_sales(snapshot, requested or [], rules, as_of=as_of)
     if company_window is not None and snapshot is not None and requested:
         from stocking_sheet_sync.services.company import resolve_company_sales
 
@@ -375,7 +375,7 @@ def inspect_forecast(
                             company = {r["sku"]: r["quantity"] for r in company_rows}
                         if company is None or sum(company.values()) == 0:
                             item["status"] = "manual"
-                            item["issues"].append("company_lifecycle_sales_unavailable")
+                            item["issues"].append("company_recent_sales_unavailable")
                     if item["status"] != "manual":
                         try:
                             item["forecast"] = allocate_forecast(

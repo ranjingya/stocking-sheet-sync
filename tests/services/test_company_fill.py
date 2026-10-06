@@ -22,19 +22,23 @@ from tests.services.test_forecast_sheet import config, filled, rules, setup_shee
 
 
 def loader(skus, start, stop):
-    assert start == date(2025, 9, 12)
-    assert stop == date(2026, 2, 1)
+    assert start == date(2026, 8, 13)
+    assert stop == date(2026, 9, 12)
     return [{"sku": sku, "quantity": 10 + i * 20, "issues": []} for i, sku in enumerate(skus)]
 
 
-def test_existing_manual_company_keeps_period_and_never_queries():
-    load = Mock(side_effect=AssertionError("已有完整人工列不能查询"))
+def test_old_lifecycle_column_is_preserved_but_queries_recent_sales():
+    sheet = company_sheet()
+    sheet["cells"]["C3"] = {"value": "25.9.1-26.1.31"}
+    before = deepcopy(sheet)
+    load = Mock(side_effect=loader)
     result = resolve_company_sales(
-        company_sheet(), requested(), [], date(2026, 9, 12), configs()[2], load
+        sheet, requested(), fake_reader().styles.return_value, date(2026, 9, 12), configs()[2], load
     )
-    assert result["period"] == "25.9.1-26.1.31"
-    assert not result.get("automatic")
-    load.assert_not_called()
+    assert result["header"] == "全公司近30天出库 26.8.13-26.9.11"
+    assert result["automatic"]
+    load.assert_called_once()
+    assert sheet == before
 
 
 @pytest.mark.parametrize("history_only", [False, True])
@@ -49,7 +53,7 @@ def test_company_fill_pipeline_inserts_first_preserves_formulas_and_isolates_fai
     def load(skus, start, stop):
         result = loader(skus, start, stop)
         if failure:
-            result[0].update(quantity=None, issues=["京东自营后续周期出库缺失或不完整"])
+            result[0].update(quantity=None, issues=["京东自营近30天出库缺失或不完整"])
         return result
 
     if history_only:
@@ -88,7 +92,7 @@ def test_company_fill_pipeline_inserts_first_preserves_formulas_and_isolates_fai
     # 内存投影不执行电子表格引擎，模拟插列后公式引用自动右移。
     prepared["cells"]["E7"]["formula"] = "=SUM(H4:H6)"
     assert layout["report"]["target_fields"][0]["platform"] == "company"
-    assert prepared["cells"]["F3"]["value"] == "全公司出库 25.9.12-26.1.31"
+    assert prepared["cells"]["F3"]["value"] == "全公司近30天出库 26.8.13-26.9.11"
     assert verify_update(before, prepared, layout, config(), custom_rules)["verified"]
     if history_only:
         from stocking_sheet_sync.domain.sheets.values import build_sales_update
@@ -133,10 +137,10 @@ def test_company_fill_pipeline_inserts_first_preserves_formulas_and_isolates_fai
     assert apply.call_count == write.call_count == 1
 
 
-def generated_sheet(values=(10, 30), period="25.9.12-26.1.31"):
+def generated_sheet(values=(10, 30), period="26.8.13-26.9.11"):
     snapshot = company_sheet(values)
     snapshot["cells"]["C1"] = {}
-    snapshot["cells"]["C3"] = {"value": "全公司出库 " + period}
+    snapshot["cells"]["C3"] = {"value": "全公司近30天出库 " + period}
     return snapshot
 
 
@@ -173,6 +177,7 @@ def test_partial_existing_generated_values_conflict_does_not_sneak_into_forecast
 
 def test_partial_manual_gets_separate_column_without_mixing_periods():
     sheet = company_sheet((10, None))
+    sheet["cells"]["C3"] = {"value": "25.9.1-26.1.31"}
     original = deepcopy(sheet)
     result = resolve_company_sales(
         sheet,
@@ -182,7 +187,7 @@ def test_partial_manual_gets_separate_column_without_mixing_periods():
         configs()[2],
         loader,
     )
-    assert result["automatic"] and result["header"] == "全公司出库 25.9.12-26.1.31"
+    assert result["automatic"] and result["header"] == "全公司近30天出库 26.8.13-26.9.11"
     assert [r["quantity"] for r in result["rows"]] == [10, 30]
     assert sheet == original
 
@@ -216,9 +221,40 @@ def test_fallback_uses_auto_company_share_and_missing_company_only_blocks_fallba
         assert len(platforms["pdd"]["inputs"]) == 3
         if expected == "ready":
             assert platforms["pdd"]["forecast"]["share_source"] == "company"
+            forecast = platforms["pdd"]["forecast"]
+            from decimal import Decimal
+
+            assert Decimal(forecast["unrounded_total"]) == (
+                Decimal(forecast["historical_future"])
+                * forecast["current_total"]
+                / forecast["previous_total"]
+            )
             assert {
                 sku: r["quantity"] for sku, r in platforms["pdd"]["forecast"]["rows"].items()
             } == {row["sku"]: row["quantity"] for row in report["company_source"]["rows"]}
+
+
+@pytest.mark.parametrize(
+    "as_of,start",
+    [
+        (date(2026, 10, 6), date(2026, 9, 6)),
+        (date(2026, 1, 10), date(2025, 12, 11)),
+        (date(2024, 3, 1), date(2024, 1, 31)),
+    ],
+)
+def test_recent_window_is_thirty_complete_days_independent_of_season(as_of, start):
+    """跨月、跨年及闰年的公司窗口均不含基准日，且不依赖季节。"""
+    sheet = company_sheet()
+    sheet["cells"]["C3"] = {"value": "全公司出库 25.9.1-26.1.31"}
+    catalog = deepcopy(fake_reader().styles.return_value)
+    for item in catalog:
+        item["labels"] = []
+    load = Mock(
+        return_value=[{"sku": row["sku"], "quantity": 10, "issues": []} for row in requested()]
+    )
+    result = resolve_company_sales(sheet, requested(), catalog, as_of, configs()[2], load)
+    assert result["status"] == "available"
+    load.assert_called_once_with(sorted(row["sku"] for row in requested()), start, as_of)
 
 
 def test_force_date_change_requires_all_rows_before_relabel():
@@ -241,8 +277,10 @@ def test_force_date_change_requires_all_rows_before_relabel():
 
 def test_company_source_error_does_not_raise_and_provides_reason():
     load = Mock(side_effect=RuntimeError("店铺读取无权限"))
+    sheet = company_sheet((None, None))
+    sheet["cells"]["C3"] = {"value": "25.9.1-26.1.31"}
     result = resolve_company_sales(
-        company_sheet((None, None)),
+        sheet,
         requested(),
         fake_reader().styles.return_value,
         date(2026, 9, 12),

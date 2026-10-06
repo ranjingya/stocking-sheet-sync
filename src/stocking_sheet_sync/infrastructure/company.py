@@ -228,7 +228,7 @@ class CompanyReader:
             )
             issues = list(company["issues"])
             if not valid:
-                issues.append("京东自营后续周期出库缺失或不完整")
+                issues.append("京东自营近30天出库缺失或不完整")
             jd_qty = units(candidates[0]["quantity"]) if valid else None
             result.append(
                 {

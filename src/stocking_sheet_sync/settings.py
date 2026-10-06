@@ -308,14 +308,14 @@ def business_view(path: Path, section: str) -> dict:
         result = data["forecast"]
         if "company_sheet" in result:
             result["company_sheet"]["generated_prefix"] = data.get("company_sales", {}).get(
-                "header_prefix", "全公司出库 "
+                "header_prefix", "全公司近30天出库 "
             )
         return result
     platforms = data["platforms"]
     if section == "layout":
         result = {**data["sheet"], "platforms": {pid: p["layout"] for pid, p in platforms.items()}}
         result["forecast"]["company_prefix"] = data.get("company_sales", {}).get(
-            "header_prefix", "全公司出库 "
+            "header_prefix", "全公司近30天出库 "
         )
         return result
     if section == "sales":

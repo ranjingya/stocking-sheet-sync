@@ -5,7 +5,6 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import timedelta
 
-from stocking_sheet_sync.domain.periods import forecast_window
 from stocking_sheet_sync.domain.products import normalize_text, units
 from stocking_sheet_sync.domain.sheets.company import read_company_sales
 from stocking_sheet_sync.infrastructure.company import CompanyReader
@@ -23,35 +22,26 @@ def company_loader(reader, client, path, sources):
 
 def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *, overwrite=False):
     """
-    功能说明：优先读取表内公司销量，缺失时按去年后续周期自动补齐查询证据。
+    功能说明：读取与基准日一致的全公司近30天销量，缺失时查询并生成补充计划。
 
     参数：
         snapshot：原始表格快照。
         rows：已核实身份的需求商品行。
-        catalog：包含季节标签的商品主数据。
+        catalog：用于核对款式身份的商品主数据。
         as_of：本次基准日。
-        rules：公司标题、季节与日期规则。
+        rules：公司销量列标题和日期规则。
         load_window：接收SKU、包含起日、不含止日的只读查询函数。
         overwrite：是否允许替换自动生成列中的已有数量。
     返回值：逐SKU数量、目标标题和原因；不会修改表格或覆盖人工公司列。
     """
-    existing = read_company_sales(snapshot, rows, rules)
-    if (
-        existing["status"] == "available"
-        and not existing.get("generated")
-        and existing["rows"]
-        and all(r["quantity"] is not None for r in existing["rows"])
-    ):
-        LOG.info("全公司出库使用表内已有销量：列=%s", existing["column"])
-        return existing
+    existing = read_company_sales(snapshot, rows, rules, as_of=as_of)
     windows, errors = {}, {}
     for style in sorted({r["style"] for r in rows}):
         records = [record for record in catalog if record["style"] == style]
         try:
             if not records or any(r.get("issues") for r in rows if r["style"] == style):
                 raise ValueError("商品身份未确认")
-            window = forecast_window(as_of, [r.get("labels") for r in records], rules)
-            windows[style] = (window["history_start"], window["history_end"])
+            windows[style] = (as_of - timedelta(days=30), as_of)
         except ValueError as error:
             errors[style] = str(error)
     prefix = rules["company_sheet"]["generated_prefix"]
@@ -75,10 +65,10 @@ def resolve_company_sales(snapshot, rows, catalog, as_of, rules, load_window, *,
             **existing,
             "status": "unavailable",
             "rows": [],
-            "reasons": ["全公司：已有出库列日期与本次去年后续周期不一致，未覆盖"],
+            "reasons": ["全公司：已有出库列日期与本次近30天不一致，未覆盖"],
         }
     if not periods:
-        return {"status": "unavailable", "rows": [], "reasons": ["全公司：无法确定去年后续周期"]}
+        return {"status": "unavailable", "rows": [], "reasons": ["全公司：无法确定近30天查询范围"]}
     if (
         old
         and existing.get("generated")

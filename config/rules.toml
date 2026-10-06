@@ -62,8 +62,6 @@ sales_below = 20
 [forecast.company_sheet]
 group_row = 1
 header_row = 3
-group_pattern = "(?:[0-9Xx]{2,4}年)?销售总数"
-headers = ["全公司去年生命周期销量", "全公司生命周期销量"]
 
 [platforms]
 
@@ -232,10 +230,10 @@ row_id = "__id"
 current = "sales_out_qty_30d"
 previous = "ly_sales_out_qty_30d"
 
-# 全公司去年后续周期：公司分组销售出库 + 京东自营终端出库。
+# 全公司近30天：公司分组销售出库 + 京东自营终端出库。
 [company_sales]
 jd_platform = "jd_self"
-header_prefix = "全公司出库 "
+header_prefix = "全公司近30天出库 "
 
 [company_sales.shops]
 app_token = "MBLabV2ulaRnVisLfNRcIGejn3d"

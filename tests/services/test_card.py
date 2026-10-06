@@ -87,7 +87,7 @@ def test_multi_style_platform_is_complete_only_when_all_styles_are_ready():
                     {
                         "platform": "a",
                         "status": "manual",
-                        "issues": ["company_lifecycle_sales_unavailable"],
+                        "issues": ["company_recent_sales_unavailable"],
                     }
                 ],
             },
@@ -96,7 +96,7 @@ def test_multi_style_platform_is_complete_only_when_all_styles_are_ready():
     result = summarize_forecast(report, {"platforms": [{"id": "a", "name": "甲"}]})["forecast"]
     assert result["status"] == "partial" and result["completed"] == 0
     assert "甲（s2）" in result["reasons"][0]
-    assert "全公司生命周期销量" in result["reasons"][0]
+    assert "全公司近30天销量" in result["reasons"][0]
 
 
 def test_low_previous_sales_reason_contains_only_base_warning():
