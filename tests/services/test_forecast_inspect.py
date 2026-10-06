@@ -62,8 +62,8 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
     assert group["window"]["history_start"] == "2025-09-12"
     assert group["window"]["history_end"] == "2026-02-01"
     for platform in group["platforms"]:
-        assert platform["forecast"]["total"] == 800
-        assert platform["forecast"]["rows"]["001"]["quantity"] == 400
+        assert platform["forecast"]["total"] == 300
+        assert platform["forecast"]["rows"]["001"]["quantity"] == 150
         assert len(platform["sources"]) == 3
     assert reader.daily_window.call_count == 3
     assert reader.sales_window.call_count == 12
@@ -80,7 +80,7 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
     with (tmp_path / "forecast.csv").open(encoding="utf-8-sig") as stream:
         rows = list(csv.DictReader(stream))
     assert len(rows) == 10 and rows[0]["sku"] == "001"
-    assert {row["forecast"] for row in rows} == {"400"}
+    assert {row["forecast"] for row in rows} == {"150"}
 
 
 def test_company_pending_blocks_only_fallback_platform():

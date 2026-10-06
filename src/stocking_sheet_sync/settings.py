@@ -502,8 +502,11 @@ def load_sales_config(path: Path) -> dict[str, Any]:
 
 
 def load_forecast_config(path: Path = Path("config/config.toml")) -> dict:
-    """读取并校验 path 指定的季节及兜底规则，返回配置字典。"""
+    """读取并校验 path 指定的季节、倍率上限及兜底规则，返回配置字典。"""
     rules = business_view(path, "forecast")
+    cap = rules.setdefault("growth_multiplier_cap", 1.5)
+    if type(cap) not in (int, float) or not math.isfinite(cap) or cap < 1:
+        raise ValueError("预测增长倍率上限必须为大于等于1的有限数值")
     unit = rules.setdefault("rounding_unit", 10)
     if type(unit) is not int or unit <= 0:
         raise ValueError("预测取整单位必须为正整数")

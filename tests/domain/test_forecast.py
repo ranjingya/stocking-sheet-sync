@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,53 @@ def test_platform_growth_and_decline():
     assert r["rows"]["a"]["quantity"] == 40
     assert r["rows"]["b"]["quantity"] == 10
     assert r["rounding_difference"] == "0"
+
+
+@pytest.mark.parametrize(
+    "current,cap,expected",
+    [
+        (120, 1.5, 120),
+        (150, 1.5, 150),
+        (400, 1.5, 150),
+        (400, 2, 200),
+        (400, 1, 100),
+        (20, 1.5, 20),
+    ],
+)
+def test_growth_cap_only_limits_upside(current, cap, expected):
+    rules = load_forecast_config(Path("config/config.example.toml"))
+    rules["growth_multiplier_cap"] = cap
+    result = allocate_forecast({"a": current}, 100, 100, None, rules)
+    assert Decimal(result["unrounded_total"]) == expected
+    assert result["total"] == expected
+
+
+def test_growth_cap_preserves_platform_shares():
+    rules = load_forecast_config(Path("config/config.example.toml"))
+    result = allocate_forecast({"a": 300, "b": 100}, 100, 1000, None, rules)
+    assert Decimal(result["unrounded_total"]) == 1500
+    assert result["total"] == 1510
+    assert result["rows"]["a"]["share"] == "0.75"
+    assert result["rows"]["b"]["share"] == "0.25"
+    assert result["rows"]["a"]["quantity"] == 1130
+    assert result["rows"]["b"]["quantity"] == 380
+
+
+@pytest.mark.parametrize("value", ['"1.5"', "true", "0", "0.5", "-1", "nan", "inf"])
+def test_growth_cap_config_rejects_invalid_values(tmp_path, value):
+    text = Path("config/rules.toml").read_text()
+    (tmp_path / "rules.toml").write_text(
+        text.replace("growth_multiplier_cap = 1.5", f"growth_multiplier_cap = {value}")
+    )
+    with pytest.raises(ValueError, match="倍率上限"):
+        load_forecast_config(tmp_path / "config.toml")
+
+
+def test_growth_cap_config_defaults_to_one_point_five(tmp_path):
+    text = Path("config/rules.toml").read_text()
+    (tmp_path / "rules.toml").write_text(text.replace("growth_multiplier_cap = 1.5", ""))
+    rules = load_forecast_config(tmp_path / "config.toml")
+    assert rules["growth_multiplier_cap"] == 1.5
 
 
 def test_company_fallback_only_changes_shares():

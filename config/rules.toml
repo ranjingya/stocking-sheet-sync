@@ -50,6 +50,8 @@ forecast_aliases = ["{platform}公式预估"]
 [forecast]
 rounding_unit = 10
 previous_sales_below = 20
+# 今年与去年同期销量倍率的上限，仅限制上涨，不设置下降下限。
+growth_multiplier_cap = 1.5
 
 [forecast.seasons]
 summer_labels = ["夏款"]

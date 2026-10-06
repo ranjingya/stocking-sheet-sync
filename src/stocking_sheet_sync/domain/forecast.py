@@ -21,7 +21,7 @@ def allocate_forecast(
         previous：该平台该款去年同期30天实发总量，必须大于零。
         historical_future：该平台该款去年对应后续周期实发总量。
         company：可选表内全公司同款相同SKU范围的近30天销量，仅用于占比兜底。
-        rules：经过校验的预测规则，包含严格小于阈值和取整单位rounding_unit。
+        rules：经过校验的预测规则，包含倍率上限、严格小于阈值和取整单位。
     返回值：款式总量、占比来源、逐SKU四舍五入证据；无效输入抛错。
     """
     if not current or any(not isinstance(k, str) or not k for k in current):
@@ -46,7 +46,23 @@ def allocate_forecast(
     denominator = sum(weights.values())
     if denominator == 0:
         raise ValueError("占比参考销量为零，无法分配需求")
-    exact_total = Decimal(historical_future) * total_sales / previous
+    cap = Decimal(str(rules.get("growth_multiplier_cap", 1.5)))
+    if not cap.is_finite() or cap < 1:
+        raise ValueError("预测增长倍率上限必须为大于等于1的有限数值")
+    # 仅限制同比放大幅度，未触及上限时保持原计算精度及下降比例。
+    capped = Decimal(total_sales) > Decimal(previous) * cap
+    exact_total = (
+        Decimal(historical_future) * cap
+        if capped
+        else Decimal(historical_future) * total_sales / previous
+    )
+    LOG.debug(
+        "预测倍率校验完成：current=%d previous=%d cap=%s capped=%s",
+        total_sales,
+        previous,
+        cap,
+        capped,
+    )
     unit = rules.get("rounding_unit", 10)
     if type(unit) is not int or unit <= 0:
         raise ValueError("预测取整单位必须为正整数")

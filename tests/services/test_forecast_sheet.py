@@ -187,7 +187,7 @@ def test_missing_future_window_uses_only_matching_dated_sheet_history():
     vip = next(p for p in recovered["groups"][0]["platforms"] if p["platform"] == "vip")
     assert vip["status"] == "ready"
     assert vip["input_origins"] == {"historical_future": "sheet"}
-    assert vip["forecast"]["total"] == 800
+    assert vip["forecast"]["total"] == 300
     future_column = next(
         f["target_column"]
         for f in layout["report"]["target_fields"]
