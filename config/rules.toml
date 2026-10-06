@@ -21,6 +21,9 @@ name_headers = ["商品名称"]
 spec_headers = ["颜色规格", "规格名称"]
 market_headers = ["市场部"]
 combined_headers = ["市场部其它", "市场部其他"]
+summary_headers = ["需求汇总"]
+# 各平台人工需求栏；市场部平台名称另取下方 demand_headers。
+other_demand_headers = ["天猫", "淘宝", "淘宝部", "抖音", "批发", "达人店", "私域", "字节", "字节部"]
 
 [sheet]
 

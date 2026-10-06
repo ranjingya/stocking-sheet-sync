@@ -12,7 +12,11 @@ from stocking_sheet_sync.domain.products import (
 )
 from stocking_sheet_sync.domain.sheets.layout import plan_market_layout
 from stocking_sheet_sync.domain.sheets.platforms import compact_ranges
-from stocking_sheet_sync.domain.sheets.totals import column_total_rows, supplement_demand_totals
+from stocking_sheet_sync.domain.sheets.totals import (
+    column_total_rows,
+    supplement_demand_totals,
+    supplement_row_summaries,
+)
 
 LOG = logging.getLogger(__name__)
 INPUT_METRICS = {"sales": "current", "previous": "previous", "future": "historical_future"}
@@ -369,4 +373,5 @@ def build_forecast_values(
         },
         [r["row"] for r in checked["rows"]],
     )
+    supplement_row_summaries(result, snapshot, config, [r["row"] for r in checked["rows"]])
     return result

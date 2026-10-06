@@ -4,7 +4,11 @@ import logging
 from collections import Counter, defaultdict
 
 from stocking_sheet_sync.domain.products import column_number, inspect_sheet, units
-from stocking_sheet_sync.domain.sheets.totals import column_total_rows, supplement_demand_totals
+from stocking_sheet_sync.domain.sheets.totals import (
+    column_total_rows,
+    supplement_demand_totals,
+    supplement_row_summaries,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -181,4 +185,5 @@ def build_sales_update(
         },
         [r["row"] for r in layout["rows"]],
     )
+    supplement_row_summaries(result, snapshot, config, [r["row"] for r in layout["rows"]])
     return result

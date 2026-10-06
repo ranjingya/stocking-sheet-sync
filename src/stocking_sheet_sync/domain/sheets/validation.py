@@ -179,10 +179,14 @@ def verify_sales_update(before: dict, after: dict, update: dict) -> dict:
             new_rest.pop("value", None)
         elif address in total_cells:
             total = total_cells[address]
-            if (
-                new.get("formula") != total["formula"]
-                or new.get("value") != total["expected_quantity"]
-            ):
+            expected_quantity = total["expected_quantity"]
+            if total.get("source_cells"):
+                # 人工栏自身可含公式，按本次回读的重算值核验需求汇总。
+                values = [after["cells"][ref].get("value") for ref in total["source_cells"]]
+                if any(isinstance(v, str) and v.startswith("#") for v in values):
+                    raise ValueError(f"需求汇总来源存在错误值：{address}")
+                expected_quantity = sum(v for v in values if type(v) in (int, float))
+            if new.get("formula") != total["formula"] or new.get("value") != expected_quantity:
                 raise ValueError(f"平台合计公式或计算值不符合预期：{address}")
             if type(new.get("value")) not in (int, float):
                 raise ValueError(f"平台合计没有返回数值：{address}")

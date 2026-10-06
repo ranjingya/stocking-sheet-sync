@@ -1,8 +1,95 @@
 from __future__ import annotations
 
+import logging
 import re
 
+from stocking_sheet_sync.domain.products import column_name, column_number, normalize_text
+
+LOG = logging.getLogger(__name__)
+
 SUM_RANGE = re.compile(r"=SUM\(\$?([A-Z]+)\$?(\d+):\$?\1\$?(\d+)\)", re.I)
+
+
+def supplement_row_summaries(update: dict, snapshot: dict, config: dict, rows: list[int]) -> None:
+    """
+    功能说明：将商品行需求汇总限定为配置匹配的人工需求列，保留销量和预估数据。
+
+    参数：
+        update：待补充的写入计划，原地追加公式与核验信息。
+        snapshot：包含表头、合并区域及单元格值的完整快照。
+        config：需求汇总标题、人工需求标题及平台别名配置。
+        rows：需要汇总的商品行号。
+    返回值：无；汇总列歧义或来源错误时拒绝生成计划。
+    """
+    matching = config["matching"]
+    aliases = {normalize_text(v) for v in matching.get("summary_headers", [])}
+    if not aliases or update["summary"]["needs_review"] or not rows:
+        return
+    header_rows = matching["header_rows"]
+    headers = {a: c.get("value") for a, c in snapshot["cells"].items()}
+    for area in snapshot.get("merges", []):
+        left, top, right, bottom = re.fullmatch(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", area).groups()
+        for row in range(int(top), min(int(bottom), header_rows) + 1):
+            for col in range(column_number(left), column_number(right) + 1):
+                headers[f"{column_name(col)}{row}"] = headers.get(f"{left}{top}")
+    labels = {}
+    for index in range(1, snapshot["column_count"] + 1):
+        col = column_name(index)
+        # 只匹配最底层标题，避免将平台分组下的销量或预估列当成人工需求。
+        values = [normalize_text(headers.get(f"{col}{r}")) for r in range(1, header_rows + 1)]
+        labels[col] = next((v for v in reversed(values) if v), "")
+    summaries = [col for col, label in labels.items() if label in aliases]
+    if not summaries:
+        return
+    if len(summaries) != 1:
+        raise ValueError("需求汇总列不唯一，请核对表头")
+    target_col = summaries[0]
+    demands = {normalize_text(v) for v in matching.get("other_demand_headers", [])}
+    demands.update(normalize_text(v) for p in config["platforms"] for v in p["demand_headers"])
+    columns = [col for col, label in labels.items() if label in demands]
+    if not columns or any(column_number(c) >= column_number(target_col) for c in columns):
+        raise ValueError("需求汇总的人工需求列缺失或位置异常，请核对表头")
+    count = 0
+    for row in rows:
+        address = f"{target_col}{row}"
+        formula = "=SUM(" + ",".join(f"{col}{row}" for col in columns) + ")"
+        cell = snapshot["cells"].get(address, {})
+        if cell.get("formula") == formula:
+            continue
+        values = [snapshot["cells"].get(f"{col}{row}", {}).get("value") for col in columns]
+        if any(isinstance(v, str) and v.startswith("#") for v in values):
+            raise ValueError(f"需求汇总来源存在错误值：{address}")
+        update.setdefault("summary_replacements", {})[address] = cell.get("formula") or cell.get(
+            "value"
+        )
+        update["total_entries"].append(
+            {
+                "target_cell": address,
+                "formula": formula,
+                "platform": "demand_summary",
+                "source_cells": [f"{col}{row}" for col in columns],
+                "status": "write",
+                "expected_quantity": sum(v for v in values if type(v) in (int, float)),
+            }
+        )
+        update["operations"].append(
+            {
+                "range": f"{snapshot['sheet_id']}!{address}:{address}",
+                "values": [[{"type": "formula", "text": formula}]],
+            }
+        )
+        count += 1
+    if count:
+        update["status"] = "changes_proposed"
+        update["summary"]["total_formulas_to_write"] = (
+            update["summary"].get("total_formulas_to_write", 0) + count
+        )
+        LOG.info(
+            "需求汇总核对完成：sheet_id=%s demand_columns=%s formulas=%d",
+            snapshot["sheet_id"],
+            columns,
+            count,
+        )
 
 
 def column_total_rows(

@@ -110,6 +110,11 @@ def run(argv: list[str] | None = None) -> int:
                 args.sheet_id,
                 update["operations"],
                 expected_revision=before["revision"],
+                **(
+                    {"summary_replacements": update["summary_replacements"]}
+                    if update.get("summary_replacements")
+                    else {}
+                ),
             ),
         )
         after = read_sheet(

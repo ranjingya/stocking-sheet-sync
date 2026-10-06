@@ -14,7 +14,7 @@ import httpx
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import to_excel
 
-from stocking_sheet_sync.domain.products import column_name
+from stocking_sheet_sync.domain.products import column_name, column_number
 from stocking_sheet_sync.infrastructure.feishu.client import FeishuClient
 from stocking_sheet_sync.settings import load_config
 
@@ -277,6 +277,7 @@ def write_sales_ranges(
     *,
     expected_revision: int,
     overwrite_cells: set[str] | None = None,
+    summary_replacements: dict[str, object] | None = None,
     client: FeishuClient | None = None,
 ) -> dict:
     """
@@ -288,6 +289,7 @@ def write_sales_ranges(
         operations：原生 valueRanges 数组，包含整数或单平台 SUM 合计公式。
         expected_revision：读取并核对过的工作簿版本。
         overwrite_cells：允许覆盖已有非公式值的单元格集合；默认不覆盖。
+        summary_replacements：需求汇总单元格及预览时的原值或公式；仅允许同行逐列 SUM。
         client：可选数据应用客户端；传入时由调用方关闭。
 
     返回值：服务端批量写入结果；写请求仅发送一次，异常时必须回读确认。
@@ -295,6 +297,7 @@ def write_sales_ranges(
     if not operations:
         raise ValueError("不能提交空写入请求")
     claimed = set()
+    summaries = summary_replacements or {}
     for item in operations:
         if not item["range"].startswith(sheet_id + "!"):
             raise ValueError("写入范围不属于目标工作表")
@@ -314,6 +317,23 @@ def write_sales_ranges(
         claimed.update(addresses)
         for offset, row in enumerate(item["values"]):
             value = row[0]
+            address = f"{col}{int(first) + offset}"
+            if address in summaries:
+                formula = value.get("text", "") if isinstance(value, dict) else ""
+                match = re.fullmatch(r"=SUM\(([A-Z]+[1-9][0-9]*(?:,[A-Z]+[1-9][0-9]*)*)\)", formula)
+                refs = match.group(1).split(",") if match else []
+                if (
+                    not refs
+                    or value.get("type") != "formula"
+                    or len(set(refs)) != len(refs)
+                    or any(
+                        int(re.search(r"\d+", ref).group()) != int(first) + offset
+                        or column_number(ref.rstrip("0123456789")) >= column_number(col)
+                        for ref in refs
+                    )
+                ):
+                    raise ValueError("需求汇总仅允许引用同行左侧人工需求单元格的SUM公式")
+                continue
             if type(value) is int and value >= 0:
                 continue
             match = (
@@ -330,6 +350,8 @@ def write_sales_ranges(
                 or not 1 <= int(match.group(2)) <= int(match.group(3)) < int(first) + offset
             ):
                 raise ValueError("仅支持非负整件数或引用本列上方范围的SUM合计公式")
+    if summaries.keys() - claimed:
+        raise ValueError("需求汇总覆盖范围不在本次写入计划中")
     owned = client is None
     client = client or create_client()
     try:
@@ -346,12 +368,20 @@ def write_sales_ranges(
             raise ValueError("提交前表格版本发生变化，请重新预览")
         if [r["range"] for r in current["valueRanges"]] != [o["range"] for o in operations]:
             raise ValueError("写入前目标范围回读不完整")
+        observed_summaries = {}
         for block in current["valueRanges"]:
             area = block["range"].split("!", 1)[1]
             col, first = re.match(r"([A-Z]+)([0-9]+)", area).groups()
             for offset, row in enumerate(block.get("values", [])):
                 for value in row:
                     address = f"{col}{int(first) + offset}"
+                    if address in summaries:
+                        observed_summaries[address] = value
+                        if value != summaries[address] and not (
+                            value in (None, "") and summaries[address] in (None, "")
+                        ):
+                            raise ValueError("需求汇总原值发生变化，请重新预览")
+                        continue
                     if value not in (None, "") and (
                         address not in (overwrite_cells or set())
                         or isinstance(value, (dict, list))
@@ -359,6 +389,9 @@ def write_sales_ranges(
                         and value.startswith("=")
                     ):
                         raise ValueError("写入前目标单元格已有内容，请重新核对")
+        for address, expected in summaries.items():
+            if address not in observed_summaries and expected not in (None, ""):
+                raise ValueError("需求汇总原值回读缺失，请重新预览")
         LOG.debug("开始服务端销量写入：ranges=%d revision=%d", len(operations), expected_revision)
         return client._request(
             "POST",

@@ -277,6 +277,11 @@ class HistoryFiller:
                     expected_revision=prepared["revision"],
                     client=self.client,
                     **(
+                        {"summary_replacements": update["summary_replacements"]}
+                        if update.get("summary_replacements")
+                        else {}
+                    ),
+                    **(
                         {
                             "overwrite_cells": {
                                 e["target_cell"]
