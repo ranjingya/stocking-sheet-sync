@@ -79,6 +79,22 @@ def test_missing_and_duplicate_snapshots_are_not_zero(kind):
 def test_company_rejects_special_period_without_reading_source():
     p = provider()
     with pytest.raises(ValueError, match="30天"):
-        p.window(["A"], date(2025, 9, 28), date(2026, 2, 1))
+        p.summary_window(["A"], date(2025, 9, 28), date(2026, 2, 1))
     p.reader._read.assert_not_called()
     p.reader.daily_window.assert_not_called()
+
+
+@pytest.mark.parametrize("days,mode", [(30, "period"), (7, "auto"), (126, "auto")])
+def test_specified_period_uses_details_even_when_length_matches_rolling(days, mode):
+    """显式指定周期及非30天周期均累计明细，不读取滚动字段。"""
+    from datetime import timedelta
+
+    p = provider()
+    p.detail_window = Mock(return_value=[{"sku": "A", "quantity": 12, "issues": []}])
+    start = date(2025, 9, 28)
+    rows = p.window(["A"], start, start + timedelta(days=days), mode=mode)
+    assert rows[0]["quantity"] == 15
+    p.detail_window.assert_called_once_with(["A"], start, start + timedelta(days=days))
+    p.reader._read.assert_not_called()
+    assert p.reader.daily_window.call_args.args[0]["rolling_fields"] == {}
+    assert p.jd_source["rolling_fields"]["30"] == "outbound_30d"

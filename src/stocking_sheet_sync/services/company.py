@@ -13,10 +13,10 @@ from stocking_sheet_sync.settings import business_view
 LOG = logging.getLogger(__name__)
 
 
-def company_loader(reader, path, sources):
-    """按path规则组装公司ADS与京东只读来源；reader读取数据，sources提供京东配置。"""
+def company_loader(reader, client, path, sources):
+    """按path规则组装公司ADS与京东只读来源；reader读取数据，client查询周期店铺分组，sources提供京东配置。"""
     config = business_view(path, "company")
-    provider = CompanyReader(reader, config, sources["daily"][config["jd_platform"]])
+    provider = CompanyReader(reader, config, sources["daily"][config["jd_platform"]], client=client)
     return provider.window
 
 

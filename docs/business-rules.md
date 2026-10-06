@@ -53,6 +53,7 @@ SKU全公司近30天出库 = ADS的sales_out_qty_30d + MySQL京东自营的outbo
 - 周期为基准日前30个完整自然日，不含基准日；所有款式使用同一窗口，与季节无关。例如2026年10月6日统计2026年9月6日至10月5日。表内数量必须有匹配的日期标题才可复用。
 - 公司部分：`ads_whs_outstock_gs_base_sku_window` 按 `spec_code` 匹配SKU，读取基准日前一天 `stat_date` 快照的 `sales_out_qty_30d`。该表为公司分组汇总，不含京东自营终端出库。
 - 京东部分：`jd_inventory_product_detail` 按 `barcode` 和配置的自营店铺读取；读取基准日前一天快照的 `outbound_30d`，限定配置的自营店铺。
+- 指定日期周期：公司部分使用 `dwd_whs_outstock_detail_f` 的 `spec_code`、`shop_id`、`outstock_time`、`outstock_num`，按店铺“销售出库分组-全公司＝公司”筛选，限定销售出库且单据与出库状态已出库，按业务明细去重求和；京东部分累计对应日期的 `outbound_yesterday`。显式周期查询即使恰好30天也按明细统计；预测兜底的近30天查询使用ADS与京东滚动值。
 - 来源表及字段位于 `config/rules.toml` 的 `company_sales.summary`；京东复用 `jd_platform` 指定的MySQL配置。ADS缺记录、重复或数量无效时留空，0值有效。
 - 表内生命周期列及无日期的人工列保持原内容；全公司近30天使用独立带日期的列。自动列同周期完整时复用，有空缺则补齐，普通模式下数值不同的SKU跳过。
 - 自动列日期不一致时标明原因并保留原列；强制覆盖时，须新周期所有SKU均可用才更换日期及数量。商品行公式始终保留。

@@ -299,7 +299,7 @@ class HistoryFiller:
 
     def company_window(self, reader, sources):
         """使用reader及sources组装全公司只读查询，按执行批次缓存店铺分组。"""
-        return company_loader(reader, self.config_path, sources)
+        return company_loader(reader, self.client, self.config_path, sources)
 
     def notification_config(self, config: dict) -> dict:
         """按config中的平台选择范围返回结果统计配置。"""
