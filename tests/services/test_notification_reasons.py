@@ -59,3 +59,42 @@ def test_card_keeps_plain_reasons_above_button_and_limits_unrecognized_errors():
     assert len(note["content"]) < 200
     assert "**" not in note["content"]
     assert card["body"]["elements"][-1]["tag"] == "column_set"
+
+
+def test_generic_permission_advice_is_not_a_permission_failure():
+    result = compact_reasons(
+        ["天猫超市：去年后续周期：数据来源读取失败，请检查连接、权限或字段配置（错误码 1064）"]
+    )
+    assert result == ["天猫超市：数据库查询失败，相关数据未填充"]
+    assert compact_reasons(
+        ["天猫超市：数据来源读取失败，请检查连接、权限或字段配置（错误码 2013）"]
+    ) == ["天猫超市：数据读取失败"]
+
+
+def test_missing_ads_skus_are_business_reason_not_unknown_exception():
+    result = compact_reasons(
+        [
+            "唯品会：近30天：SKU销量缺失或不唯一：6941716574314；去年同期近30天：SKU销量缺失或不唯一：6941716574314，该平台未填充"
+        ]
+    )
+    assert result == ["唯品会：近30天、去年同期数据缺失或不完整，相关数据未填充"]
+
+
+def test_history_windows_and_forecast_share_one_missing_data_reason():
+    reasons = [
+        "唯品会（款一）：近30天：SKU销量缺失或不唯一：001，该项未填充",
+        "唯品会（款一）：去年同期近30天：SKU销量缺失或不唯一：001，该项未填充",
+        "唯品会（款一）：近30天：SKU销量缺失或不唯一：001；去年同期近30天：SKU销量缺失或不唯一：001，本次未计算预测",
+    ]
+    assert compact_reasons(reasons) == [
+        "唯品会：近30天、去年同期数据缺失或不完整，相关历史未填充，未预测（款一）"
+    ]
+
+
+def test_company_keeps_incomplete_style_and_omits_duplicate_source_warning():
+    assert compact_reasons(
+        [
+            "全公司：款一：全公司出库数据不完整，整款未填充",
+            "全公司：公司ADS近30天快照缺失",
+        ]
+    ) == ["全公司：全公司出库数据不完整，整款未填充（款一）"]

@@ -30,14 +30,30 @@ def _brief(text: str) -> str:
         return "无法确定符合要求的下单工作表"
     if any(word in text for word in ("商品身份", "主数据", "款号与", "规格与", "表内SKU重复")):
         return "商品信息匹配异常，相关数据未填充"
-    if any(word in text for word in ("读取失败", "无权限", "没有访问权限")):
-        return "没有访问权限" if "权限" in text else "数据读取失败"
+    if any(
+        word in text
+        for word in (
+            "无权限",
+            "没有访问权限",
+            "权限不足",
+            "错误码 1044",
+            "错误码 1045",
+            "错误码 1142",
+        )
+    ):
+        return "没有访问权限"
+    if "错误码 1064" in text:
+        return "数据库查询失败，相关数据未填充"
+    if "读取失败" in text:
+        return "数据读取失败"
     if any(word in text for word in ("Traceback", "SQL", "Connection", "HTTP", "Timeout")):
         return "服务请求失败，详情见日志"
     if any(
         word in text
         for word in (
             "快照",
+            "SKU销量缺失或不唯一",
+            "quantity_unavailable",
             "每日数据",
             "每日出库",
             "来源校验",
@@ -84,6 +100,10 @@ def compact_reasons(reasons: list[str]) -> list[str]:
             if re.search(r"[A-Za-z_]{4,}|SKU|第\d+行", label) and not label.endswith("平台"):
                 # 技术异常、行号及条码不作为平台标题。
                 label, style, body = "", None, line
+            if label == "全公司":
+                company_style = re.match(r"^([^：]{1,32})：全公司出库数据不完整", body)
+                if company_style:
+                    style = company_style[1]
             brief = _brief(body)
             bucket = grouped.setdefault(label, OrderedDict())
             scope = bucket.setdefault(brief, {"styles": set(), "unscoped": False})
@@ -93,6 +113,32 @@ def compact_reasons(reasons: list[str]) -> list[str]:
                 scope["unscoped"] = True
     lines = []
     for label, bucket in grouped.items():
+        # 相同款式范围的多个历史窗口与预测失败合并，避免一项问题重复展示。
+        merged = OrderedDict()
+        for brief, scope in list(bucket.items()):
+            match = re.fullmatch(r"(.+)数据缺失或不完整，(相关数据未填充|未预测)", brief)
+            if not match:
+                continue
+            key = (tuple(sorted(scope["styles"])), scope["unscoped"])
+            group = merged.setdefault(
+                key, {"periods": [], "impacts": [], "scope": scope, "briefs": []}
+            )
+            group["periods"].extend(match[1].split("、"))
+            group["impacts"].append(match[2])
+            group["briefs"].append(brief)
+        for group in merged.values():
+            if len(group["briefs"]) < 2:
+                continue
+            for brief in group["briefs"]:
+                bucket.pop(brief)
+            periods = "、".join(dict.fromkeys(group["periods"]))
+            impacts = set(group["impacts"])
+            effect = "相关历史未填充，未预测" if len(impacts) > 1 else group["impacts"][0]
+            bucket[periods + "数据缺失或不完整，" + effect] = group["scope"]
+        if label == "全公司" and "全公司出库数据不完整，整款未填充" in bucket:
+            bucket = OrderedDict(
+                (brief, scope) for brief, scope in bucket.items() if "数据缺失或不完整" not in brief
+            )
         parts = []
         for brief, scope in bucket.items():
             styles = sorted(scope["styles"])

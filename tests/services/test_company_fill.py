@@ -329,7 +329,7 @@ def test_company_can_fill_when_all_platforms_are_blocked():
     assert update["summary"]["needs_review"]
     update = append_company_values(prepared, update, company, config())
     assert not update["summary"]["needs_review"]
-    assert len(update["blocked_platforms"]) == 5
+    assert len({s["platform"] for s in update["blocked_scopes"]}) == 5
     assert {e["platform"] for e in update["entries"]} == {"company:sales"}
     assert verify_sales_update(prepared, filled(prepared, update), update)["verified"]
 

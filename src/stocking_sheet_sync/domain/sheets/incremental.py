@@ -45,22 +45,40 @@ def fill_state(snapshot, rows, columns, *, forecast, overwrite):
     return "补预估" if all(present) else "补历史并检查预估" if forecast else "补历史"
 
 
-def isolate_scopes(update, snapshot, *, blocked=None):
+def isolate_scopes(update, snapshot, *, blocked=None, metric_scoped=False):
     """
     功能说明：隔离同款同平台历史冲突，保留其他款的写入，并核对整列合计。
 
     参数：update：未经平台隔离的写入计划；snapshot：当前表格快照；
         blocked：已识别的(款号,平台)历史问题。
+        metric_scoped：是否进一步按历史指标隔离，供自动填充使用。
     返回值：按款平台隔离后的写入计划，包含逐款阻断原因。
     """
     if update.get("target_issues"):
         return update
     failures = {key: list(value) for key, value in (blocked or {}).items()}
     forecast_failures = set()
+
+    def scope_key(entry):
+        key = (entry["style"], entry["platform"].split(":")[0])
+        return (*key, entry["platform"].split(":")[-1]) if metric_scoped else key
+
     for entry in update["entries"]:
         if entry["status"] == "needs_review":
-            key = (entry["style"], entry["platform"].split(":")[0])
+            key = scope_key(entry)
             failures.setdefault(key, []).extend(entry.get("issues") or ["数据不完整"])
+    if metric_scoped:
+        for entry in update["entries"]:
+            if "target_conflict" not in entry.get("issues", []):
+                continue
+            pair = scope_key(entry)[:2]
+            reason = (
+                f"历史数据不一致（{entry['target_cell']}：表内{entry.get('existing_quantity')}，"
+                f"来源{entry.get('quantity')}）"
+            )
+            for other in update["entries"]:
+                if scope_key(other)[:2] == pair:
+                    failures.setdefault(scope_key(other), []).append(reason)
     for total in update.get("total_entries", []):
         if total["status"] != "needs_review":
             continue
@@ -69,11 +87,22 @@ def isolate_scopes(update, snapshot, *, blocked=None):
             forecast_failures.add(pid)
         else:
             for entry in update["entries"]:
-                if entry["platform"].split(":")[0] == pid:
-                    failures.setdefault((entry["style"], pid), []).append("历史合计已有不同内容")
+                if (
+                    entry["platform"] == total["platform"]
+                    if metric_scoped
+                    else entry["platform"].split(":")[0] == pid
+                ):
+                    failures.setdefault(scope_key(entry), []).append("历史合计已有不同内容")
 
     def active(entry):
-        return (entry["style"], entry["platform"].split(":")[0]) not in failures and not (
+        key = scope_key(entry)
+        if (
+            metric_scoped
+            and entry["platform"].endswith(":forecast")
+            and any(failed[:2] == key[:2] for failed in failures)
+        ):
+            return False
+        return key not in failures and not (
             entry["platform"].endswith(":forecast")
             and entry["platform"].split(":")[0] in forecast_failures
         )
@@ -94,7 +123,9 @@ def isolate_scopes(update, snapshot, *, blocked=None):
     targets = {e["target_cell"]: e["quantity"] for e in entries}
     totals = []
     for total in update.get("total_entries", []):
-        if total["status"] == "needs_review":
+        if total["status"] == "needs_review" or not any(
+            e["platform"] == total["platform"] for e in entries
+        ):
             continue
         match = SUM_RANGE.fullmatch(total["formula"].replace(" ", ""))
         if not match:
@@ -115,6 +146,8 @@ def isolate_scopes(update, snapshot, *, blocked=None):
                     "values": [[{"type": "formula", "text": total["formula"]}]],
                 }
             )
+    if metric_scoped and not entries:
+        operations, totals = [], []
     counts = Counter(e["status"] for e in entries)
     return {
         **update,
@@ -122,14 +155,21 @@ def isolate_scopes(update, snapshot, *, blocked=None):
         "total_entries": totals,
         "skipped_entries": [e for e in update["entries"] if not active(e)],
         "blocked_scopes": [
-            {"style": style, "platform": pid, "issues": sorted(set(issues))}
-            for (style, pid), issues in failures.items()
+            {
+                "style": key[0],
+                "platform": key[1],
+                "issues": sorted(set(issues)),
+                **({"metric": key[2]} if metric_scoped else {}),
+            }
+            for key, issues in failures.items()
         ],
         "blocked_forecasts": {pid: ["预测合计已有不同内容"] for pid in forecast_failures},
         "operations": compact_ranges(operations),
         "summary": {
             **update["summary"],
-            "needs_review": 0,
+            "needs_review": len(failures) + len(forecast_failures)
+            if metric_scoped and not entries
+            else 0,
             "write": counts["write"],
             "unchanged": counts["unchanged"],
             "platform_totals": dict(quantities),

@@ -311,7 +311,7 @@ def test_partial_history_preserves_failed_platform_and_verifies_others(failure):
     assert update["status"] == "partial"
     assert update["summary"]["needs_review"] == 0
     assert len(update["entries"]) == 8
-    assert len(update["blocked_platforms"]) == 1
+    assert len({s["platform"] for s in update["blocked_scopes"]}) == 1
     assert all(not e["target_cell"].startswith("E") for e in update["entries"])
     assert all(not e["target_cell"].startswith("E") for e in update["total_entries"])
     after = applied(before, update)

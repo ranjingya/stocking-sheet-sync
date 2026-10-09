@@ -320,15 +320,6 @@ def build_forecast_values(
     }
 
     if partial:
-        from stocking_sheet_sync.domain.sheets.platforms import isolate_platforms
-
-        blocked = {}
-        for group in report["groups"]:
-            for platform in group["platforms"]:
-                if history and any(
-                    key not in platform.get("inputs", {}) for key in INPUT_METRICS.values()
-                ):
-                    blocked.setdefault(platform["platform"], []).extend(platform["issues"])
         if config.get("incremental"):
             from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
 
@@ -362,7 +353,20 @@ def build_forecast_values(
                         scope_blocked[(group["style"], pid)] = reasons
             result = isolate_scopes(result, snapshot, blocked=scope_blocked)
         else:
-            result = isolate_platforms(result, snapshot["sheet_id"], blocked=blocked)
+            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
+
+            scope_blocked = {}
+            if history:
+                for group in report["groups"]:
+                    for platform in group["platforms"]:
+                        if platform.get("preserved"):
+                            continue
+                        for metric, key in INPUT_METRICS.items():
+                            if key not in platform.get("inputs", {}):
+                                scope_blocked[(group["style"], platform["platform"], metric)] = [
+                                    i for i in platform.get("issues", []) if i.startswith(key + ":")
+                                ] or ["历史来源缺失"]
+            result = isolate_scopes(result, snapshot, blocked=scope_blocked, metric_scoped=True)
     supplement_demand_totals(
         result,
         snapshot,

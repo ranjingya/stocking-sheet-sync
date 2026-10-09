@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 
@@ -56,33 +57,39 @@ class SalesReader:
         """按指定连接执行 SELECT 查询，失败时隐藏连接细节。"""
         if not sql.lstrip().upper().startswith("SELECT "):
             raise ValueError("数据读取器只接受 SELECT 查询")
-        connection = None
-        try:
-            connection = pymysql.connect(
-                host=config.host,
-                port=config.port,
-                user=config.user,
-                password=config.password,
-                database=config.database,
-                connect_timeout=config.connect_timeout,
-                read_timeout=config.read_timeout,
-                write_timeout=config.read_timeout,
-                charset="utf8mb4",
-                autocommit=True,
-                cursorclass=pymysql.cursors.DictCursor,
-            )
-            with connection.cursor() as cursor:
-                cursor.execute(sql, params)
-                return list(cursor.fetchall())
-        except pymysql.MySQLError as error:
-            code = error.args[0] if error.args and isinstance(error.args[0], int) else None
-            LOG.error("数据来源读取失败：error_code=%s", code)
-            raise RuntimeError(
-                f"数据来源读取失败，请检查连接、权限或字段配置（错误码 {code}）"
-            ) from None
-        finally:
-            if connection is not None:
-                connection.close()
+        for attempt in range(2):
+            if attempt:
+                time.sleep(0.2)
+            connection = None
+            try:
+                connection = pymysql.connect(
+                    host=config.host,
+                    port=config.port,
+                    user=config.user,
+                    password=config.password,
+                    database=config.database,
+                    connect_timeout=config.connect_timeout,
+                    read_timeout=config.read_timeout,
+                    write_timeout=config.read_timeout,
+                    charset="utf8mb4",
+                    autocommit=True,
+                    cursorclass=pymysql.cursors.DictCursor,
+                )
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    return list(cursor.fetchall())
+            except pymysql.MySQLError as error:
+                code = error.args[0] if error.args and isinstance(error.args[0], int) else None
+                if attempt == 0 and code in {1064, 1205, 1213, 2006, 2013}:
+                    LOG.warning("只读查询失败，重试一次：error_code=%s", code)
+                    continue
+                LOG.error("数据来源读取失败：error_code=%s", code)
+                raise RuntimeError(
+                    f"数据来源读取失败，请检查连接、权限或字段配置（错误码 {code}）"
+                ) from None
+            finally:
+                if connection is not None:
+                    connection.close()
 
     def catalog(self, source: dict, skus: list[str]) -> list[dict]:
         """

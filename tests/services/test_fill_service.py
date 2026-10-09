@@ -98,7 +98,7 @@ def test_missing_history_blocks_layout_and_sales_before_any_mutation(tmp_path, m
     )
     result = filler(copy, claim)
     assert result["status"] == "retryable"
-    assert "唯品会：近30天：每日数据不完整" in result["reason"]
+    assert "唯品会" in result["reason"] and "每日数据不完整" in result["reason"]
     assert writes == []
 
 
@@ -303,7 +303,7 @@ def test_history_service_writes_healthy_platforms_and_reports_partial(tmp_path, 
     assert result["status"] == "completed"
     assert writes == ["layout", "sales"]
     details = result["notification_details"]
-    assert details["blocked_platforms"] == ["jd_self"]
+    assert {s["platform"] for s in details["blocked_scopes"]} == {"jd_self"}
     assert details["history"]["status"] == "partial"
     assert details["history"]["completed"] == 4
     assert "快照不可用" in details["history"]["reasons"][0]

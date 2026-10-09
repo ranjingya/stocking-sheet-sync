@@ -85,7 +85,9 @@ def append_company_values(snapshot, update, source, config):
     if not source or not source.get("automatic") or update.get("target_issues"):
         return update
     if update["summary"].get("needs_review") and not (
-        update.get("blocked_platforms") or update.get("blocked_forecasts")
+        update.get("blocked_platforms")
+        or update.get("blocked_forecasts")
+        or update.get("blocked_scopes")
     ):
         return update
     initial_count = len(update["entries"])

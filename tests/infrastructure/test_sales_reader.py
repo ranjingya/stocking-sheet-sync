@@ -378,3 +378,34 @@ def test_summary_fallback_with_incomplete_detail_coverage_stays_unavailable(monk
     result = client.sales(source, ["001"], date(2026, 9, 23))
     assert result["issues"] == ["incomplete_daily_coverage"]
     assert result["fallback"]["reason"] == "ads_snapshot_day_empty"
+
+
+@pytest.mark.parametrize("code", [1064, 1205, 1213, 2006, 2013])
+def test_read_retry_reconnects_and_preserves_query(monkeypatch, code):
+    """可重试的只读错误重连一次，并保持查询与参数不变。"""
+    first, second = MagicMock(), MagicMock()
+    first.cursor.return_value.__enter__.return_value.execute.side_effect = pymysql.OperationalError(
+        code, "private-secret"
+    )
+    second.cursor.return_value.__enter__.return_value.fetchall.return_value = [{"quantity": 12}]
+    connect = Mock(side_effect=[first, second])
+    monkeypatch.setattr(pymysql, "connect", connect)
+    monkeypatch.setattr("stocking_sheet_sync.infrastructure.warehouse.time.sleep", lambda _: None)
+    assert reader()._read("SELECT %s", (12,)) == [{"quantity": 12}]
+    for connection in (first, second):
+        connection.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
+            "SELECT %s", (12,)
+        )
+        connection.close.assert_called_once()
+
+
+@pytest.mark.parametrize("code,attempts", [(1064, 2), (1045, 1)])
+def test_read_retry_is_bounded_and_error_stays_sanitized(monkeypatch, code, attempts):
+    """持续失败有限退出；权限错误不重试，异常内容保持脱敏。"""
+    connect = Mock(side_effect=pymysql.OperationalError(code, "private-secret"))
+    monkeypatch.setattr(pymysql, "connect", connect)
+    monkeypatch.setattr("stocking_sheet_sync.infrastructure.warehouse.time.sleep", lambda _: None)
+    with pytest.raises(RuntimeError) as error:
+        reader()._read("SELECT %s", (1,))
+    assert connect.call_count == attempts
+    assert "private-secret" not in str(error.value)

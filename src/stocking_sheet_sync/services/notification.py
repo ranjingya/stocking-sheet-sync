@@ -221,13 +221,34 @@ def summarize_platform_fill(
                 if conflicts
                 else describe_issues(item["issues"])
             )
-            scope_reasons.append(
-                f"{names[item['platform']]}（{item['style']}）：{explanation}，该款该平台跳过"
-            )
+            metric = item.get("metric")
+            metric_name = {
+                "sales": "近30天",
+                "previous": "去年同期近30天",
+                "future": "去年后续周期",
+                "forecast": "预测",
+            }.get(metric)
+            if metric_name:
+                explanation = explanation.removeprefix(metric_name + "：").strip()
+                scope_reasons.append(
+                    f"{names[item['platform']]}（{item['style']}）：{metric_name}：{explanation}，该项未填充"
+                )
+            else:
+                scope_reasons.append(
+                    f"{names[item['platform']]}（{item['style']}）：{explanation}，该款该平台跳过"
+                )
         failed = {item["platform"] for item in scoped}
         for key in ("history", "forecast"):
             if key not in details:
                 continue
+            relevant = [
+                (item, reason)
+                for item, reason in zip(scoped, scope_reasons, strict=True)
+                if key == "forecast" or item.get("metric") != "forecast"
+            ]
+            if not relevant:
+                continue
+            failed = {item["platform"] for item, _ in relevant}
             info = details[key]
             if key == "history":
                 done = len(config["platforms"]) - len(failed)
@@ -246,7 +267,7 @@ def summarize_platform_fill(
                 }
                 done = len(ready)
             info.update(completed=done, status="partial" if update["entries"] else "manual")
-            info["reasons"].extend(scope_reasons)
+            info["reasons"].extend(reason for _, reason in relevant)
         details["blocked_scopes"] = scoped
         for reason in scope_reasons:
             logging.getLogger(__name__).warning(reason)

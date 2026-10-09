@@ -181,3 +181,42 @@ def test_zero_is_complete_and_history_gap_is_supplement(caplog):
     assert fill_state(snapshot, rows, columns, forecast=True, overwrite=False) == "补预估"
     snapshot["cells"][columns["previous"] + "4"] = {}
     assert fill_state(snapshot, rows, columns, forecast=True, overwrite=False) == "补历史并检查预估"
+
+
+def test_automatic_fill_isolates_style_and_history_metric():
+    """自动填充保留失败款可用历史、其他款全部指标，并准确汇总通知。"""
+    snapshot, reader, cfg, fields = scenario()
+    sales, sources, forecast, layout = cfg
+    sales["incremental"] = False
+    for (_pid, metric), col in fields.items():
+        if metric != "demand":
+            for row in (4, 6):
+                snapshot["cells"][f"{col}{row}"] = {}
+    report = calculate(snapshot, reader, cfg)
+    affected = next(
+        p for p in report["groups"][0]["platforms"] if p["platform"] == "tmall_supermarket"
+    )
+    affected["inputs"].pop("historical_future")
+    affected.update(
+        status="needs_review", issues=["historical_future: 数据来源读取失败（错误码 1064）"]
+    )
+    update = build_forecast_values(
+        snapshot, report, sales, layout, history=True, forecast=True, partial=True
+    )
+    style = report["groups"][0]["style"]
+    entries = [e for e in update["entries"] if e["platform"].startswith("tmall_supermarket:")]
+    assert {e["metric"] for e in entries if e["style"] == style} == {"sales", "previous"}
+    assert {e["metric"] for e in entries if e["style"] != style} == {
+        "sales",
+        "previous",
+        "future",
+        "forecast",
+    }
+    after = filled(snapshot, update)
+    assert verify_sales_update(snapshot, after, update)["verified"]
+    details = summarize_platform_fill(update, sales, history=True, report=report)
+    assert details["history"]["completed"] == 4
+    assert details["forecast"]["completed"] == 4
+    assert any(
+        "去年后续周期" in reason and "1064" in reason for reason in details["history"]["reasons"]
+    )

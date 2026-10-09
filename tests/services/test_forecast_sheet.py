@@ -153,10 +153,12 @@ def test_missing_recent_window_does_not_use_undated_sheet_history():
     update = build_forecast_values(
         prepared, recovered, config(), dated, history=True, forecast=True, partial=True
     )
-    assert "vip" in update["blocked_platforms"]
-    assert all(not entry["platform"].startswith("vip:") for entry in update["entries"])
+    assert "vip" in {s["platform"] for s in update["blocked_scopes"]}
+    assert {e["platform"] for e in update["entries"] if e["platform"].startswith("vip:")} == {
+        "vip:future"
+    }
     details = summarize_platform_fill(update, config(), history=True, report=recovered)
-    assert "表内历史值缺少日期证据" in details["history"]["reasons"][0]
+    assert "缺少日期证据" in details["history"]["reasons"][0]
 
 
 def test_missing_future_window_uses_only_matching_dated_sheet_history():
@@ -235,7 +237,7 @@ def test_existing_history_mismatch_blocks_its_platform_with_cell_detail():
     update = build_forecast_values(
         prepared, report, config(), rules(), history=True, forecast=True, partial=True
     )
-    assert "vip" in update["blocked_platforms"]
+    assert "vip" in {s["platform"] for s in update["blocked_scopes"]}
     details = summarize_platform_fill(update, config(), history=True, report=report)
     assert any(target in reason and "表内99" in reason for reason in details["history"]["reasons"])
 
@@ -321,9 +323,13 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
     assert result["notification_details"]["forecast"]["total"] == 5
     if manual_platform == "missing":
         assert result["notification_details"]["history"]["completed"] == 4
-        assert result["notification_details"]["blocked_platforms"] == ["jd_self"]
-        assert len(update["entries"]) == 32
-        assert all(not e["platform"].startswith("jd_self:") for e in update["entries"])
+        assert {s["platform"] for s in result["notification_details"]["blocked_scopes"]} == {
+            "jd_self"
+        }
+        assert len(update["entries"]) == 36
+        assert {
+            e["platform"] for e in update["entries"] if e["platform"].startswith("jd_self:")
+        } == {"jd_self:previous", "jd_self:future"}
         for e in update["skipped_entries"]:
             assert after["cells"][e["target_cell"]] == prepared["cells"][e["target_cell"]]
     reader.styles.assert_not_called()
