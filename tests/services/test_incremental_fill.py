@@ -71,7 +71,7 @@ def test_conflict_in_old_style_does_not_block_new_style_same_platform():
     )
     assert {(e["style"], e["platform"]) for e in update["blocked_scopes"]} == {("KQ25001", "pdd")}
     assert any(e["platform"] == "pdd:forecast" and e["row"] == 6 for e in update["entries"])
-    assert not any(e["row"] == 4 for e in update["entries"])
+    assert {e["metric"] for e in update["entries"] if e["row"] == 4} == {"previous", "future"}
     assert verify_sales_update(snapshot, filled(snapshot, update), update)["verified"]
     details = summarize_platform_fill(update, cfg[0], history=True, report=report)
     assert details["history"]["status"] == "partial"
@@ -103,7 +103,7 @@ def test_history_conflict_blocks_forecast_even_when_only_requesting_forecast(for
     update = build_forecast_values(
         snapshot, report, cfg[0], cfg[3], history=not forecast_only, forecast=True, partial=True
     )
-    assert not any(e["platform"].startswith("vip:") for e in update["entries"])
+    assert not any(e["platform"] in {"vip:sales", "vip:forecast"} for e in update["entries"])
     assert any(e["platform"] == "pdd:forecast" for e in update["entries"])
 
 
@@ -183,11 +183,13 @@ def test_zero_is_complete_and_history_gap_is_supplement(caplog):
     assert fill_state(snapshot, rows, columns, forecast=True, overwrite=False) == "补历史并检查预估"
 
 
-def test_automatic_fill_isolates_style_and_history_metric():
+@pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.parametrize("missing_key", ["current", "previous", "historical_future"])
+def test_automatic_fill_isolates_style_and_history_metric(incremental, missing_key):
     """自动填充保留失败款可用历史、其他款全部指标，并准确汇总通知。"""
     snapshot, reader, cfg, fields = scenario()
     sales, sources, forecast, layout = cfg
-    sales["incremental"] = False
+    sales["incremental"] = incremental
     for (_pid, metric), col in fields.items():
         if metric != "demand":
             for row in (4, 6):
@@ -196,16 +198,19 @@ def test_automatic_fill_isolates_style_and_history_metric():
     affected = next(
         p for p in report["groups"][0]["platforms"] if p["platform"] == "tmall_supermarket"
     )
-    affected["inputs"].pop("historical_future")
+    affected["inputs"].pop(missing_key)
     affected.update(
-        status="needs_review", issues=["historical_future: 数据来源读取失败（错误码 1064）"]
+        status="needs_review", issues=[f"{missing_key}: 数据来源读取失败（错误码 1064）"]
     )
     update = build_forecast_values(
         snapshot, report, sales, layout, history=True, forecast=True, partial=True
     )
     style = report["groups"][0]["style"]
     entries = [e for e in update["entries"] if e["platform"].startswith("tmall_supermarket:")]
-    assert {e["metric"] for e in entries if e["style"] == style} == {"sales", "previous"}
+    assert {e["metric"] for e in entries if e["style"] == style} == (
+        {"sales", "previous", "future"}
+        - {{"current": "sales", "previous": "previous", "historical_future": "future"}[missing_key]}
+    )
     assert {e["metric"] for e in entries if e["style"] != style} == {
         "sales",
         "previous",
@@ -217,6 +222,4 @@ def test_automatic_fill_isolates_style_and_history_metric():
     details = summarize_platform_fill(update, sales, history=True, report=report)
     assert details["history"]["completed"] == 4
     assert details["forecast"]["completed"] == 4
-    assert any(
-        "去年后续周期" in reason and "1064" in reason for reason in details["history"]["reasons"]
-    )
+    assert any("1064" in reason for reason in details["history"]["reasons"])

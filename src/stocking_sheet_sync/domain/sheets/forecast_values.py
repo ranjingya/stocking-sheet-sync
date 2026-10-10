@@ -320,25 +320,27 @@ def build_forecast_values(
     }
 
     if partial:
-        if config.get("incremental"):
-            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
+        from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
 
-            scope_blocked = {}
-            for group in report["groups"]:
-                for platform in group["platforms"]:
-                    if platform.get("preserved"):
-                        continue
-                    pid = platform["platform"]
-                    reasons = list(platform.get("history_conflicts", []))
-                    for metric, key in INPUT_METRICS.items():
-                        if key not in platform.get("inputs", {}):
-                            reasons.extend(platform.get("issues") or ["历史来源缺失"])
-                            continue
+        scope_blocked = {}
+        for group in report["groups"]:
+            for platform in group["platforms"]:
+                if platform.get("preserved"):
+                    continue
+                pid = platform["platform"]
+                for metric, key in INPUT_METRICS.items():
+                    reasons = []
+                    if key not in platform.get("inputs", {}):
+                        if history:
+                            reasons = [
+                                i for i in platform.get("issues", []) if i.startswith(key + ":")
+                            ] or ["历史来源缺失"]
+                    elif config.get("incremental"):
                         for row in checked["rows"]:
                             if row["style"] != group["style"]:
                                 continue
                             address = f"{fields[(pid, metric)]}{row['row']}"
-                            cell = snapshot["cells"][address]
+                            cell = snapshot["cells"].get(address, {})
                             value = cell.get("value")
                             quantity = platform["inputs"][key].get(row["sku"])
                             if cell.get("formula") or (
@@ -350,23 +352,10 @@ def build_forecast_values(
                                     f"历史数据不一致（{address}：表内{value}，来源{quantity}）"
                                 )
                     if reasons:
-                        scope_blocked[(group["style"], pid)] = reasons
-            result = isolate_scopes(result, snapshot, blocked=scope_blocked)
-        else:
-            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
-
-            scope_blocked = {}
-            if history:
-                for group in report["groups"]:
-                    for platform in group["platforms"]:
-                        if platform.get("preserved"):
-                            continue
-                        for metric, key in INPUT_METRICS.items():
-                            if key not in platform.get("inputs", {}):
-                                scope_blocked[(group["style"], platform["platform"], metric)] = [
-                                    i for i in platform.get("issues", []) if i.startswith(key + ":")
-                                ] or ["历史来源缺失"]
-            result = isolate_scopes(result, snapshot, blocked=scope_blocked, metric_scoped=True)
+                        scope_blocked[(group["style"], pid, metric)] = reasons
+                if platform.get("history_conflicts"):
+                    scope_blocked[(group["style"], pid, "forecast")] = platform["history_conflicts"]
+        result = isolate_scopes(result, snapshot, blocked=scope_blocked, metric_scoped=True)
     supplement_demand_totals(
         result,
         snapshot,

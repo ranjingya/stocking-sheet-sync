@@ -137,14 +137,14 @@ class SalesReader:
 
     def summary_window(self, source: dict, skus: list[str], start: date, stop: date) -> dict:
         """
-        功能说明：读取基准日对应ADS快照；整天无记录时使用明细统计同一窗口。
+        功能说明：读取基准日对应ADS快照；整天或指定SKU无记录时使用明细统计同一窗口。
 
         参数：
             source：平台配置，含summary字段映射、summary_metric指标和summary_as_of基准日。
             skus：需求表SKU集合。
             start：指标包含的起始日期。
             stop：指标不包含的结束日期。
-        返回值：逐SKU数量及来源证据；ADS存在但缺SKU时保持未知，不记零。
+        返回值：逐SKU数量及来源证据；缺失SKU由明细补齐，明细覆盖不完整时保持未知。
         """
         if (stop - start).days != 30:
             raise ValueError("ADS汇总只支持30天窗口")
@@ -195,11 +195,38 @@ class SalesReader:
         }
         result = self.sales_window(selected, skus, as_of - timedelta(days=30), as_of)
         found = {r["sku"] for r in result["rows"]}
-        result["rows"].extend(
-            {"sku": sku, "quantity": None, "status": "missing_summary_sku"}
-            for sku in skus
-            if sku not in found
-        )
+        missing = [sku for sku in skus if sku not in found]
+        if missing:
+            detail = {
+                key: value
+                for key, value in source.items()
+                if key not in {"summary", "summary_metric", "summary_as_of"}
+            }
+            fallback = self.sales_window(detail, missing, start, stop)
+            by_sku = {row["sku"]: row for row in fallback["rows"]}
+            for sku in missing:
+                row = by_sku.get(sku, {"sku": sku, "quantity": 0, "status": "matched"})
+                if fallback["issues"]:
+                    row = {**row, "quantity": None, "status": "incomplete_detail_coverage"}
+                result["rows"].append({**row, "source_table": detail["table"]})
+            result["issues"] = [
+                issue for issue in result["issues"] if issue != "snapshot_or_skus_missing"
+            ] + fallback["issues"]
+            result["fallback"] = {
+                "reason": "ads_skus_missing",
+                "source_table": summary["table"],
+                "snapshot_date": snapshot_day.isoformat(),
+                "skus": missing,
+                "detail": fallback,
+            }
+            LOG.warning(
+                "ADS 缺少SKU，使用出库明细兜底：platform=%s count=%d window=%s~%s issues=%s",
+                source["id"],
+                len(missing),
+                start,
+                stop - timedelta(days=1),
+                fallback["issues"],
+            )
         result.update(
             start=start.isoformat(),
             end=(stop - timedelta(days=1)).isoformat(),

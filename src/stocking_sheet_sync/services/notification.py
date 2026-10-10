@@ -187,12 +187,13 @@ def summarize_platform_fill(
     fallback_platforms = {
         source["platform"]
         for source in source_results
-        if source.get("fallback", {}).get("reason") == "ads_snapshot_day_empty"
+        if source.get("fallback", {}).get("reason")
+        in {"ads_snapshot_day_empty", "ads_skus_missing"}
         and not source.get("issues")
         and source["platform"] not in blocked
     }
     fallback_reasons = [
-        f"{platform['name']}：ADS 表周期无数据，使用 DWD 明细表填充"
+        f"{platform['name']}：ADS 表周期或SKU无数据，使用 DWD 明细表填充"
         for platform in config["platforms"]
         if platform["id"] in fallback_platforms
     ]

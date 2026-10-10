@@ -211,7 +211,7 @@ def test_ads_detail_fallback_is_reported_under_the_platform():
         {}, config, history=True, history_report={"sources": [source]}
     )
     assert details["history"]["status"] == "completed"
-    assert details["history"]["reasons"] == ["拼多多：ADS 表周期无数据，使用 DWD 明细表填充"]
+    assert details["history"]["reasons"] == ["拼多多：ADS 表周期或SKU无数据，使用 DWD 明细表填充"]
     card = build_sync_card(
         original_name="测试",
         record_url="https://example.com/record",
@@ -222,7 +222,8 @@ def test_ads_detail_fallback_is_reported_under_the_platform():
         details=details,
     )
     assert (
-        "拼多多：ADS 表周期无数据，使用 DWD 明细表填充" in (card["body"]["elements"][-2]["content"])
+        "拼多多：ADS 表周期或SKU无数据，使用 DWD 明细表填充"
+        in (card["body"]["elements"][-2]["content"])
     )
 
 
@@ -253,7 +254,7 @@ def test_forecast_only_notification_reports_valid_ads_detail_fallback():
     }
     details = summarize_platform_fill({}, config, history=False, report=report)
     assert details["forecast"]["status"] == "completed"
-    assert details["forecast"]["reasons"] == ["唯品会：ADS 表周期无数据，使用 DWD 明细表填充"]
+    assert details["forecast"]["reasons"] == ["唯品会：ADS 表周期或SKU无数据，使用 DWD 明细表填充"]
 
 
 def test_source_reason_identifies_window_date_and_sku():

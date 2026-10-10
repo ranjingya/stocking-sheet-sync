@@ -51,7 +51,7 @@ def isolate_scopes(update, snapshot, *, blocked=None, metric_scoped=False):
 
     参数：update：未经平台隔离的写入计划；snapshot：当前表格快照；
         blocked：已识别的(款号,平台)历史问题。
-        metric_scoped：是否进一步按历史指标隔离，供自动填充使用。
+        metric_scoped：是否进一步按历史指标隔离，自动填充和手动填充共用。
     返回值：按款平台隔离后的写入计划，包含逐款阻断原因。
     """
     if update.get("target_issues"):
@@ -67,18 +67,11 @@ def isolate_scopes(update, snapshot, *, blocked=None, metric_scoped=False):
         if entry["status"] == "needs_review":
             key = scope_key(entry)
             failures.setdefault(key, []).extend(entry.get("issues") or ["数据不完整"])
-    if metric_scoped:
-        for entry in update["entries"]:
-            if "target_conflict" not in entry.get("issues", []):
-                continue
-            pair = scope_key(entry)[:2]
-            reason = (
-                f"历史数据不一致（{entry['target_cell']}：表内{entry.get('existing_quantity')}，"
-                f"来源{entry.get('quantity')}）"
-            )
-            for other in update["entries"]:
-                if scope_key(other)[:2] == pair:
-                    failures.setdefault(scope_key(other), []).append(reason)
+            if "target_conflict" in entry.get("issues", []):
+                failures[key].append(
+                    f"历史数据不一致（{entry['target_cell']}：表内{entry.get('existing_quantity')}，"
+                    f"来源{entry.get('quantity')}）"
+                )
     for total in update.get("total_entries", []):
         if total["status"] != "needs_review":
             continue

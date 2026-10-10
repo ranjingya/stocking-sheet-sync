@@ -166,14 +166,9 @@ def build_sales_update(
     }
 
     if partial:
-        if config.get("incremental"):
-            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
+        from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
 
-            result = isolate_scopes(result, snapshot)
-        else:
-            from stocking_sheet_sync.domain.sheets.incremental import isolate_scopes
-
-            result = isolate_scopes(result, snapshot, metric_scoped=True)
+        result = isolate_scopes(result, snapshot, metric_scoped=True)
     supplement_demand_totals(
         result,
         snapshot,

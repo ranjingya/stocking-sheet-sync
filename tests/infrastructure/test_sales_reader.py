@@ -260,54 +260,57 @@ def test_unrelated_database_environment_cannot_supply_warehouse_credentials(tmp_
         )
 
 
-def test_summary_previous_uses_current_snapshot_date_and_ly_field(monkeypatch):
+@pytest.mark.parametrize("platform_id", ["pdd", "vip"])
+@pytest.mark.parametrize("metric", ["current", "previous"])
+@pytest.mark.parametrize("coverage", [True, False])
+@pytest.mark.parametrize("ads_present", [True, False])
+def test_summary_missing_skus_use_detail_without_replacing_ads(
+    monkeypatch, platform_id, metric, coverage, ads_present
+):
+    """缺失SKU单独兜底，保留ADS有效值，并验证覆盖不足不能记零。"""
     client = reader()
-    source = next(p for p in config()["platforms"] if p["id"] == "vip")
-    source = {**source, "summary_metric": "previous", "summary_as_of": date(2026, 9, 23)}
+    source = next(p for p in config()["platforms"] if p["id"] == platform_id)
+    source = {**source, "summary_metric": metric, "summary_as_of": date(2026, 9, 23)}
+    start = date(2026 if metric == "current" else 2025, 8, 24)
+    stop = date(2026 if metric == "current" else 2025, 9, 23)
     calls = []
 
     def read(sql, params):
         calls.append((sql, params))
-        return (
-            [{"present": 1}]
-            if "SELECT 1 AS present" in sql
-            else [{"latest": "2026-09-22"}]
-            if "MAX(" in sql
-            else [{"sku": "001", "row_id": 1, "quantity": 0}]
-        )
+        if "SELECT 1 AS present" in sql:
+            return [{"present": 1}]
+        if sql.startswith("SELECT MAX("):
+            return [{"latest": "2026-09-22"}]
+        if "GROUP BY DATE(" in sql:
+            return [
+                {"day": str(start + timedelta(days=n)), "n": 1}
+                for n in range(30 if coverage else 1)
+            ]
+        if "FROM (SELECT" in sql:
+            assert params[-2:] == ("002", "003")
+            assert ("001" in params) is not ads_present
+            assert start.isoformat() in params and stop.isoformat() in params
+            return [
+                {
+                    "sku": "002",
+                    "quantity": 7,
+                    "n": 1,
+                    "fact_count": 1,
+                    "invalid_count": 0,
+                    "conflicts": 0,
+                }
+            ]
+        assert ("ly_sales_out_qty_30d" if metric == "previous" else "sales_out_qty_30d") in sql
+        assert params[:2] == ("2026-09-22", "2026-09-23")
+        return [{"sku": "001", "row_id": 1, "quantity": 3}] if ads_present else []
 
     monkeypatch.setattr(client, "_read", read)
-    result = client.sales_window(source, ["001", "002"], date(2025, 8, 24), date(2025, 9, 23))
-    assert "ly_sales_out_qty_30d" in calls[-1][0]
-    assert "ads_whs_outstock_wp_base_sku_window" in calls[-1][0]
-    assert calls[-1][1][:2] == ("2026-09-22", "2026-09-23")
-    assert result["start"] == "2025-08-24" and result["end"] == "2025-09-22"
-    assert result["snapshot_date"] == "2026-09-22"
-    assert result["rows"][0]["quantity"] == 0
-    assert result["rows"][1]["quantity"] is None
-    assert result["rows"][1]["status"] == "missing_summary_sku"
-
-
-def test_summary_day_present_but_sku_missing_never_falls_back_to_detail(monkeypatch):
-    client = reader()
-    source = next(p for p in config()["platforms"] if p["id"] == "pdd")
-    calls = []
-
-    def read(sql, params):
-        calls.append(sql)
-        return (
-            [{"present": 1}]
-            if "SELECT 1 AS present" in sql
-            else [{"latest": "2026-09-22"}]
-            if "MAX(" in sql
-            else []
-        )
-
-    monkeypatch.setattr(client, "_read", read)
-    result = client.sales(source, ["001"], date(2026, 9, 23))
-    assert result["issues"] == ["snapshot_or_skus_missing"]
-    assert result["rows"][0]["status"] == "missing_summary_sku"
-    assert all("ads_whs_outstock_pdd_base_sku_window" in sql for sql in calls)
+    result = client.sales_window(source, ["001", "002", "003"], start, stop)
+    assert [r["quantity"] for r in result["rows"]] == (
+        [3 if ads_present else 0, 7, 0] if coverage else [3 if ads_present else None, None, None]
+    )
+    assert result["fallback"]["reason"] == "ads_skus_missing"
+    assert bool(result["issues"]) is not coverage
 
 
 @pytest.mark.parametrize("platform_id", ["pdd", "vip"])

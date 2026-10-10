@@ -453,7 +453,7 @@ def test_forecast_partial_respects_platform_conflicts_and_global_blockers(failur
     )
     if failure == "target":
         assert update["status"] == "partial"
-        assert len(update["entries"]) == 32
+        assert len(update["entries"]) == 36
         assert verify_sales_update(prepared, filled(prepared, update), update)["verified"]
     else:
         assert update["summary"]["needs_review"]
