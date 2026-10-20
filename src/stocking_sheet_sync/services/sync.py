@@ -22,6 +22,7 @@ from stocking_sheet_sync.infrastructure.feishu.client import CopyRejected
 from stocking_sheet_sync.infrastructure.lease import RunLease, assert_run_lock
 from stocking_sheet_sync.infrastructure.redis import RedisStateStore
 from stocking_sheet_sync.services.notification import build_sync_card
+from stocking_sheet_sync.services.source_filter import exclusive_source_reason
 from stocking_sheet_sync.settings import AppConfig
 
 
@@ -132,6 +133,14 @@ class SyncService:
                 record_id,
                 " ".join(source_name.split()),
             )
+            excluded = exclusive_source_reason(
+                self.data_client, source_token, source_name, self.config.config_path
+            )
+            if excluded:
+                summary.skipped = 1
+                summary.result, summary.reason = "skipped", excluded
+                self.logger.info("跳过搬运：%s", excluded)
+                return summary
             current = (
                 self.store.get_state(record_id, source_token, request_id=request_id)
                 if force

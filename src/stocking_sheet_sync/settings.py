@@ -302,6 +302,8 @@ def business_view(path: Path, section: str) -> dict:
     rules_path = path.parent / "rules.toml"
     with rules_path.open("rb") as stream:
         data = tomllib.load(stream)
+    if section == "source_filter":
+        return {**data.get("source_filter", {}), "matching": data["matching"]}
     if section == "company":
         return data["company_sales"]
     if section == "forecast":
