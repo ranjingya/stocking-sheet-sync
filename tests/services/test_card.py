@@ -17,6 +17,10 @@ def test_build_success_card_contains_record_and_target_links() -> None:
     content = card["body"]["elements"][0]["content"]
     assert "备货测试表" in content
     assert "record-token" in content
+    assert content.splitlines()[1] == (
+        "**搬运表格：** [市场部-备货测试表](https://example.feishu.cn/sheets/target-token)"
+    )
+    assert content.splitlines()[2].startswith("**历史数据：**")
     assert "\n\n" not in content
     actions = card["body"]["elements"][-1]["columns"]
     assert len(actions) == 1
@@ -36,6 +40,26 @@ def test_build_failure_card_contains_reason() -> None:
     assert "没有访问权限" in card["body"]["elements"][-2]["content"]
 
     assert "未生成" not in card["body"]["elements"][0]["content"]
+    assert "搬运表格" not in card["body"]["elements"][0]["content"]
+
+
+def test_target_link_escapes_title_and_preserves_result_button():
+    card = build_sync_card(
+        original_name="原记录",
+        record_url="https://example.com/record",
+        target_name="搬运[秋冬]*表",
+        target_url="https://example.com/result",
+        status="success",
+        history_status="completed",
+        forecast_status="completed",
+    )
+    text = card["body"]["elements"][0]["content"]
+    assert "搬运[秋冬]*表" not in text
+    assert text.splitlines()[1].endswith("](https://example.com/result)")
+    assert card["header"]["title"]["content"] == "下单需求 · 处理完成"
+    button = card["body"]["elements"][-1]["columns"][0]["elements"][0]
+    assert button["text"]["content"] == "查看结果表格"
+    assert button["behaviors"][0]["default_url"] == "https://example.com/result"
 
 
 def test_partial_forecast_and_reason_are_displayed_without_blank_lines():

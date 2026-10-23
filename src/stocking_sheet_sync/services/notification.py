@@ -297,14 +297,14 @@ def build_sync_card(
     filled_backup_url: str = "",
 ) -> dict[str, Any]:
     """
-    功能说明：生成紧凑通知，保留原始记录、实际填充状态、原因和结果按钮。
+    功能说明：生成紧凑通知，展示原始记录、搬运表格、实际填充状态、原因和结果按钮。
 
     参数：
         original_name：原记录名称。
         record_url：原记录链接。
         status：搬运成功或失败。
         target_folder_token：调用方提供的目录上下文，不在卡片显示。
-        target_name：调用方提供的交付名称，不在卡片重复显示。
+        target_name：搬运后的表格标题，用作结果链接的显示文字。
         target_url：已确认的结果链接。
         reason：失败或降级原因。
         history_status：历史阶段状态，unknown表示未核验。
@@ -376,7 +376,11 @@ def build_sync_card(
         title, color = "处理完成", "green"
     else:
         title, color = "搬运完成", "green"
-    content = f"**原始记录：** [{name}]({record_url})\n" + "\n".join(texts)
+    links = [f"**原始记录：** [{name}]({record_url})"]
+    if target_url:
+        target_label = _escape_markdown(_clean_text(target_name)) or "查看结果表格"
+        links.append(f"**搬运表格：** [{target_label}]({target_url})")
+    content = "\n".join([*links, *texts])
     title = "下单需求 · " + title
     card = {
         "schema": "2.0",
