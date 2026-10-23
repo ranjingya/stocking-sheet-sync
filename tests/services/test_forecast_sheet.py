@@ -172,7 +172,7 @@ def test_missing_future_window_uses_only_matching_dated_sheet_history():
 
     def source_with_missing_future(source, skus, start, stop):
         result = original(source, skus, start, stop)
-        if source["id"] == "vip" and (stop - start).days != 30:
+        if source["id"] == "vip" and (stop - start).days > 30:
             result["issues"] = ["incomplete_daily_coverage"]
         return result
 
@@ -334,7 +334,8 @@ def test_filler_real_orchestration_uses_one_report_and_no_second_warehouse_read(
             assert after["cells"][e["target_cell"]] == prepared["cells"][e["target_cell"]]
     reader.styles.assert_not_called()
     reader.catalog.assert_called_once()
-    assert reader.daily_window.call_count == 3 and reader.sales_window.call_count == 12
+    assert reader.daily_window.call_count == (3 if manual_platform == "missing" else 7)
+    assert reader.sales_window.call_count == (24 if manual_platform is True else 28)
     apply.assert_called_once()
     write.assert_called_once()
     assert (Path(claim.report_path) / "values-verification.json").is_file()

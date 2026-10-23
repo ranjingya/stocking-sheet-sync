@@ -40,7 +40,7 @@ def fake_reader():
     ]
 
     def window(source, skus, start, stop):
-        value = 40 if start.year == 2026 else 10 if (stop - start).days == 30 else 100
+        value = 40 if start.year == 2026 else 10 if (stop - start).days <= 30 else 100
         return {
             "issues": [],
             "rows": [{"sku": sku, "quantity": value, "status": "matched"} for sku in skus],
@@ -64,9 +64,9 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
     for platform in group["platforms"]:
         assert platform["forecast"]["total"] == 300
         assert platform["forecast"]["rows"]["001"]["quantity"] == 150
-        assert len(platform["sources"]) == 3
-    assert reader.daily_window.call_count == 3
-    assert reader.sales_window.call_count == 12
+        assert len(platform["sources"]) == 7
+    assert reader.daily_window.call_count == 7
+    assert reader.sales_window.call_count == 28
     jd_calls = [call for call in reader.daily_window.call_args_list]
     assert all(
         call.args[0]["table"] == "jd_inventory_product_detail"
@@ -81,6 +81,31 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
         rows = list(csv.DictReader(stream))
     assert len(rows) == 10 and rows[0]["sku"] == "001"
     assert {row["forecast"] for row in rows} == {"150"}
+
+
+def test_trend_uses_short_daily_windows_and_isolates_missing_data():
+    reader = fake_reader()
+    original = reader.sales_window.side_effect
+
+    def window(source, skus, start, stop):
+        result = original(source, skus, start, stop)
+        if source["id"] == "pdd" and (stop - start).days == 7:
+            result["issues"] = ["incomplete_daily_coverage"]
+        return result
+
+    reader.sales_window.side_effect = window
+    report = inspect_forecast(reader, ["KQ25001"], date(2026, 9, 12), *config())
+    assert report["summary"]["ready"] == 4
+    pdd = next(p for p in report["groups"][0]["platforms"] if p["platform"] == "pdd")
+    assert pdd["status"] == "needs_review"
+    assert pdd["issues"]
+    for method in (reader.sales_window, reader.daily_window):
+        short = [c for c in method.call_args_list if (c.args[3] - c.args[2]).days in (7, 15)]
+        assert short
+        assert all("summary" not in c.args[0] and "rolling_fields" not in c.args[0] for c in short)
+        assert {(c.args[3], (c.args[3] - c.args[2]).days) for c in short} == {
+            (date(year, 9, 12), days) for year in (2025, 2026) for days in (7, 15)
+        }
 
 
 def test_company_pending_blocks_only_fallback_platform():

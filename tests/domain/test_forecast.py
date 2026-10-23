@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from stocking_sheet_sync.domain.forecast import allocate_forecast
+from stocking_sheet_sync.domain.forecast import allocate_forecast, trend_factor
 from stocking_sheet_sync.domain.periods import forecast_window
 from stocking_sheet_sync.settings import load_forecast_config
 
@@ -68,6 +68,53 @@ def test_platform_growth_and_decline():
     assert r["rows"]["a"]["quantity"] == 40
     assert r["rows"]["b"]["quantity"] == 10
     assert r["rounding_difference"] == "0"
+
+
+@pytest.mark.parametrize(
+    "total,d15,d7,expected",
+    [
+        (300, 150, 70, "1"),
+        (300, 0, 0, "0.8"),
+        (300, 300, 300, "1.2"),
+        (300, 150, 105, "1.05"),
+        (0, 0, 0, "1"),
+    ],
+)
+def test_weighted_trend_limits(total, d15, d7, expected):
+    assert trend_factor(total, d15, d7) == Decimal(expected)
+
+
+@pytest.mark.parametrize("values", [(30, 31, 7), (30, 10, 11), (30, -1, 0), (30, True, 0)])
+def test_invalid_trend_windows(values):
+    with pytest.raises(ValueError):
+        trend_factor(*values)
+
+
+@pytest.mark.parametrize(
+    "current,short_current,short_previous,expected",
+    [
+        (180, 0, 100, "1.2"),
+        (140, 140, 0, "1.5"),
+        (30, 0, 100, "0.2"),
+    ],
+)
+def test_final_cap_is_applied_after_trend(current, short_current, short_previous, expected):
+    rules = load_forecast_config(Path("config/config.example.toml"))
+    result = allocate_forecast(
+        {"a": current},
+        100,
+        1000,
+        None,
+        rules,
+        {
+            "current_15": short_current,
+            "current_7": short_current,
+            "previous_15": short_previous,
+            "previous_7": short_previous,
+        },
+    )
+    assert Decimal(result["final_multiplier"]) == Decimal(expected)
+    assert Decimal(result["unrounded_total"]) == Decimal(expected) * 1000
 
 
 @pytest.mark.parametrize(

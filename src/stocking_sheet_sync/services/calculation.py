@@ -378,15 +378,62 @@ def inspect_forecast(
                             item["issues"].append("company_recent_sales_unavailable")
                     if item["status"] != "manual":
                         try:
+                            trend = {}
+                            daily = sources.get("daily", {}).get(pid)
+                            selected = {
+                                k: v
+                                for k, v in (daily or platform).items()
+                                if k
+                                not in {
+                                    "summary",
+                                    "summary_metric",
+                                    "summary_as_of",
+                                    "rolling_fields",
+                                }
+                            }
+                            for period, end in (
+                                ("current", window["current_end"]),
+                                ("previous", window["previous_end"]),
+                            ):
+                                for days in (15, 7):
+                                    key = f"{period}_{days}"
+                                    source = (
+                                        reader.daily_window(
+                                            selected, skus, end - timedelta(days=days), end
+                                        )
+                                        if daily
+                                        else reader.sales_window(
+                                            selected, skus, end - timedelta(days=days), end
+                                        )
+                                    )
+                                    item["sources"][key] = source
+                                    trend[key] = sum(
+                                        quantities(
+                                            source,
+                                            skus,
+                                            absent_is_zero=not daily
+                                            and platform["kind"] == "detail",
+                                        ).values()
+                                    )
                             item["forecast"] = allocate_forecast(
                                 data["current"],
                                 previous_total,
                                 sum(data["historical_future"].values()),
                                 company,
                                 rules,
+                                trend,
                             )
                             item["status"] = "ready"
-                        except ValueError as error:
+                            LOG.info(
+                                "趋势预测完成：style=%s platform=%s "
+                                "current_trend=%s previous_trend=%s multiplier=%s",
+                                style,
+                                pid,
+                                item["forecast"]["current_trend"],
+                                item["forecast"]["previous_trend"],
+                                item["forecast"]["final_multiplier"],
+                            )
+                        except (ValueError, RuntimeError) as error:
                             item["issues"].append(str(error))
             log_platform_result(style, platform.get("name", pid), item)
         statuses = {p["status"] for p in group["platforms"]}
