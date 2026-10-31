@@ -26,11 +26,14 @@ def client_for_headers(headers):
 
 
 @pytest.mark.parametrize("keyword", ["抖音专供", "天猫专供", "淘宝专供"])
+@pytest.mark.parametrize(
+    "pattern", ["{platform}专供款", "{platform}27年速干t专供款备料需求", "专供款-{platform}"]
+)
 @pytest.mark.parametrize("force", [False, True])
-def test_exclusive_source_skips_before_copy_and_notification(tmp_path, keyword, force):
+def test_exclusive_source_skips_before_copy_and_notification(tmp_path, keyword, pattern, force):
     service, client, _, _ = make_service(tmp_path)
     record = client.get_base_record("rec_test")
-    record.fields["下单表格"]["text"] = f"测试商品 {keyword}款"
+    record.fields["下单表格"]["text"] = pattern.format(platform=keyword.removesuffix("专供"))
     client.get_base_record = Mock(return_value=record)
     client._request = client_for_headers([["抖音部"]])._request
     result = service.run_record("rec_test", force=force, request_id="batch" if force else "")
@@ -40,7 +43,7 @@ def test_exclusive_source_skips_before_copy_and_notification(tmp_path, keyword, 
     assert service.store.get_state("rec_test", client.source_token) is None
 
 
-@pytest.mark.parametrize("title", ["普通需求", "直播间专供", "抖音下单"])
+@pytest.mark.parametrize("title", ["普通需求", "直播间专供", "抖音下单", "专供款备料需求"])
 def test_other_titles_do_not_request_headers(title):
     client = Mock()
     assert exclusive_source_reason(client, "token", title, "config/config.toml") == ""
@@ -49,7 +52,12 @@ def test_other_titles_do_not_request_headers(title):
 
 def test_market_header_in_any_sheet_preserves_source():
     client = client_for_headers([["抖音部"], ["市 场 部"]])
-    assert exclusive_source_reason(client, "token", "抖音专供款", "config/config.toml") == ""
+    assert (
+        exclusive_source_reason(
+            client, "token", "抖音27年速干t专供款备料需求", "config/config.toml"
+        )
+        == ""
+    )
 
 
 @pytest.mark.parametrize(

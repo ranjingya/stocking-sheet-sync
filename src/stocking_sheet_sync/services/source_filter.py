@@ -30,7 +30,11 @@ def exclusive_source_reason(client, token: str, title: str, config_path: str) ->
         """忽略标题与表头中的空白字符。"""
         return "".join(str(value or "").split())
 
-    matched = next((k for k in keywords if clean(k) in clean(title)), None)
+    title = clean(title)
+    matched = next(
+        (k for k in keywords if "专供" in title and clean(k).removesuffix("专供") in title),
+        None,
+    )
     if matched is None:
         return ""
     token = quote(token, safe="")
