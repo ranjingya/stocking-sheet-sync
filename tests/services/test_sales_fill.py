@@ -289,10 +289,10 @@ def test_numeric_total_is_not_overwritten_and_partial_subtotals_are_not_copied()
 
 def test_sheet_format_change_blocks_fill():
     before, report = ready()
-    before["layout"]["sheet_format"] = {"baseColWidth": 8}
+    before["layout"]["sheet_format"] = {"zeroHeight": False}
     update = build_sales_update(before, report, config())
     after = applied(before, update)
-    after["layout"]["sheet_format"] = {"baseColWidth": 9}
+    after["layout"]["sheet_format"] = {"zeroHeight": True}
     with pytest.raises(ValueError, match="sheet_format"):
         verify_sales_update(before, after, update)
 

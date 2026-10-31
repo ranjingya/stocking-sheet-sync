@@ -37,7 +37,7 @@ def verify_update(before: dict, after: dict, update: dict, config: dict, rules: 
     if "column_dimensions" in before["layout"]:
         for old, new in update["column_mapping"].items():
             if _column_dimension(before, old) != _column_dimension(after, new):
-                raise ValueError(f"原列宽、隐藏状态或列样式发生变化：{old}")
+                raise ValueError(f"原列隐藏状态或列样式发生变化：{old}")
     plan = plan_market_layout(
         after, config, rules, recent_only=True, forecast=update.get("forecast", False)
     )

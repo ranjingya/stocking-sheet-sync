@@ -81,6 +81,8 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
     sheet["B1"] = "=1+1"
     sheet["A1"].border = Border(left=Side(style="thin", color="001F2329"))
     sheet.row_dimensions[1].hidden = True
+    sheet.sheet_format.baseColWidth = 8
+    sheet.sheet_format.defaultColWidth = 15.383333333333333
     if missing_value:
         sheet["A3"] = "服务端遗漏的内容"
     stream = BytesIO()
@@ -128,6 +130,8 @@ def test_native_read_retains_formulas_styles_and_all_empty_coordinates(
             read_sheet("token", "test")
         return
     data = read_sheet("token", "test")
+    assert "defaultColWidth" not in data["layout"]["sheet_format"]
+    assert "baseColWidth" not in data["layout"]["sheet_format"]
     assert len(data["cells"]) == 6
     assert data["cells"]["A1"]["value"] == "00123"
     if rich_text:
@@ -197,3 +201,17 @@ def test_overwrite_requires_explicit_cell_and_matching_revision(monkeypatch, all
         with pytest.raises(ValueError):
             write_sales_ranges("token", "test", operations, **args)
         assert len(calls) == 1
+
+
+def test_column_snapshot_ignores_width_but_retains_visibility_and_style():
+    from stocking_sheet_sync.infrastructure.feishu.sheets import dimension_snapshot
+
+    book = Workbook()
+    left = book.active.column_dimensions["A"]
+    right = book.active.column_dimensions["B"]
+    left.width, right.width = 15.383333333333333, 13
+    left.bestFit = True
+    assert dimension_snapshot(left) == dimension_snapshot(right)
+    right.hidden = True
+    assert dimension_snapshot(left) != dimension_snapshot(right)
+    book.close()
