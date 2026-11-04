@@ -133,9 +133,7 @@ class SyncService:
                 record_id,
                 " ".join(source_name.split()),
             )
-            excluded = exclusive_source_reason(
-                self.data_client, source_token, source_name, self.config.config_path
-            )
+            excluded = exclusive_source_reason(source_name, self.config.config_path)
             if excluded:
                 summary.skipped = 1
                 summary.result, summary.reason = "skipped", excluded
