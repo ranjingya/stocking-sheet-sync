@@ -3,14 +3,57 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import re
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 
-from stocking_sheet_sync.domain.products import inspect_sheet, match_catalog
+from stocking_sheet_sync.domain.products import inspect_sheet, match_catalog, normalize_text
 from stocking_sheet_sync.infrastructure.warehouse import SalesReader
 
 LOG = logging.getLogger(__name__)
+
+
+def resolve_sheet_styles(reader: SalesReader, snapshot: dict, config: dict) -> None:
+    """
+    功能说明：按唯一69码及名称规格确认不规范款号，保存本次内部款号映射。
+
+    参数：
+        reader：只读商品主数据读取器。
+        snapshot：原始工作表快照，仅用于读取，不修改单元格。
+        config：本次运行配置，resolved_styles保存按SKU识别的真实款号及原填写值。
+    返回值：无；无法确认的商品行保留原款号，交由身份核验阻断。
+    """
+    rows = [
+        row
+        for row in inspect_sheet(snapshot, config)["rows"]
+        if not re.fullmatch(r"kq\d+", normalize_text(row["style"]))
+        and re.fullmatch(r"69\d{11}", row["sku"] or "")
+        and not row["issues"]
+    ]
+    if not rows:
+        return
+    catalog = reader.catalog(config["catalog"], sorted({r["sku"] for r in rows}))
+    by_sku = defaultdict(list)
+    for record in catalog:
+        by_sku[record["sku"]].append(record)
+    for row in rows:
+        candidates = by_sku[row["sku"]]
+        if len(candidates) != 1:
+            continue
+        record = candidates[0]
+        if not re.fullmatch(r"kq\d+", normalize_text(record["style"])):
+            continue
+        if any(
+            not normalize_text(row[key]) or normalize_text(row[key]) != normalize_text(record[key])
+            for key in ("name", "spec")
+        ):
+            continue
+        config.setdefault("resolved_styles", {})[row["sku"]] = {
+            "original": normalize_text(row["style"]),
+            "style": record["style"],
+        }
+        LOG.info("第%s行：按SKU %s识别款号为%s", row["row"], row["sku"], record["style"])
 
 
 def inspect_sales(reader: SalesReader, snapshot: dict, config: dict, as_of: date) -> dict:

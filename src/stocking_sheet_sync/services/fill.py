@@ -30,7 +30,7 @@ from stocking_sheet_sync.infrastructure.feishu.sheets import (
 from stocking_sheet_sync.infrastructure.warehouse import ForecastReader
 from stocking_sheet_sync.services.calculation import inspect_forecast, write_forecast_report
 from stocking_sheet_sync.services.company import company_loader, resolve_company_sales
-from stocking_sheet_sync.services.sales import inspect_sales, write_report
+from stocking_sheet_sync.services.sales import inspect_sales, resolve_sheet_styles, write_report
 from stocking_sheet_sync.settings import (
     WarehouseSettings,
     load_forecast_config,
@@ -116,6 +116,8 @@ class HistoryFiller:
                 )
             sid = before["sheet_id"]
             save("before.json", before)
+            reader = self.reader_factory()
+            resolve_sheet_styles(reader, before, config)
             category = plan_market_layout(before, config, rules, recent_only=True)["category"]
             if (category == "new" and not self.new_history) or (
                 category == "legacy" and not self.legacy_history
@@ -125,7 +127,6 @@ class HistoryFiller:
                 result["history_status"] = "disabled"
                 save("result.json", result)
                 return result
-            reader = self.reader_factory()
             report = inspect_sales(reader, before, config, date.fromisoformat(claim.as_of))
             write_report(output / "inspection", report, before)
             if report["summary"]["catalog_matched"] != report["summary"]["sku_rows"]:
@@ -484,6 +485,8 @@ class ForecastFiller(HistoryFiller):
                 copy.target_token, sid, client=self.client, archive_path=output / "before.xlsx"
             )
             save("before.json", before)
+            reader = self.reader_factory()
+            resolve_sheet_styles(reader, before, config)
             category = plan_market_layout(before, config, rules, recent_only=True)["category"]
             if category == "new":
                 LOG.info("新品跳过预测：history=%s", self.new_history)
@@ -504,7 +507,6 @@ class ForecastFiller(HistoryFiller):
                 save("result.json", result)
                 return result
             product = inspect_sheet(before, config)
-            reader = self.reader_factory()
             sources = load_forecast_sources(self.config_path)
             report = inspect_forecast(
                 reader,

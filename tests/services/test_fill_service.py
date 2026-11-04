@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -30,8 +31,11 @@ class Reader:
         }
 
 
-def setup_fill(tmp_path, monkeypatch, issues=(), failed_platform=None):
+def setup_fill(tmp_path, monkeypatch, issues=(), failed_platform=None, fallback=False):
     before = incoming()
+    if fallback:
+        for i, row in enumerate((4, 6)):
+            before["cells"][f"B{row}"]["value"] = f"694264942235{i}"
     layout_update = build_update(before, config(), rules())
     prepared = completed(before, layout_update)
     after = deepcopy(prepared)
@@ -41,6 +45,10 @@ def setup_fill(tmp_path, monkeypatch, issues=(), failed_platform=None):
         for row in (4, 6):
             after["cells"][f"{cols['sales']}{row}"] = {"value": 10}
     reader = Reader(before, issues)
+    if fallback:
+        for snapshot in (before, prepared, after):
+            for row in (4, 6):
+                snapshot["cells"][f"A{row}"]["value"] = snapshot["cells"][f"B{row}"]["value"]
     if failed_platform:
         original_sales = reader.sales
 
@@ -307,3 +315,25 @@ def test_history_service_writes_healthy_platforms_and_reports_partial(tmp_path, 
     assert details["history"]["status"] == "partial"
     assert details["history"]["completed"] == 4
     assert "快照不可用" in details["history"]["reasons"][0]
+
+
+@pytest.mark.parametrize("forecast", [False, True])
+def test_barcode_style_fill_keeps_operator_cells(tmp_path, monkeypatch, forecast):
+    from stocking_sheet_sync.services.fill import ForecastFiller
+
+    filler, copy, claim, reader, writes = setup_fill(tmp_path, monkeypatch, fallback=True)
+    if forecast:
+        filler = ForecastFiller(
+            object(),
+            history=True,
+            reader_factory=lambda: reader,
+            config_path=Path("config/config.example.toml"),
+        )
+        monkeypatch.setattr(filler, "find_sheet", lambda *a: "test")
+    result = filler(copy, claim)
+    assert result["status"] == "completed"
+    assert writes == ["layout", "sales"]
+    after = json.loads((tmp_path / "after.json").read_text())
+    for row in (4, 6):
+        assert after["cells"][f"A{row}"]["value"] == after["cells"][f"B{row}"]["value"]
+    assert all(row["style"].startswith("KQ") for row in reader.rows)

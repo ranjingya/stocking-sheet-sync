@@ -168,6 +168,9 @@ def inspect_sheet(snapshot: dict, config: dict) -> dict:
         except ValueError as error:
             row["sku"] = None
             row["issues"].append(str(error))
+        resolved = config.get("resolved_styles", {}).get(row["sku"])
+        if resolved and normalize_text(row["style"]) == resolved["original"]:
+            row["style"] = resolved["style"]
         rows.append(row)
     duplicates = Counter(row["sku"] for row in rows if row["sku"])
     for row in rows:
