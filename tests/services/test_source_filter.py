@@ -8,7 +8,7 @@ from stocking_sheet_sync.services.source_filter import exclusive_source_reason
 from tests.services.test_sync_service import make_service
 
 
-@pytest.mark.parametrize("keyword", ["抖音专供", "天猫专供", "淘宝专供"])
+@pytest.mark.parametrize("keyword", ["抖音专供", "天猫专供", "淘宝专供", "渠道专供"])
 @pytest.mark.parametrize(
     "pattern",
     [
