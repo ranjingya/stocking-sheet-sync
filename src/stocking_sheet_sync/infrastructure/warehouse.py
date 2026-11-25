@@ -54,13 +54,22 @@ class SalesReader:
 
     @staticmethod
     def _execute(config: WarehouseSettings, sql: str, params: tuple) -> list[dict]:
-        """按指定连接执行 SELECT 查询，失败时隐藏连接细节。"""
+        """
+        功能说明：执行只读查询，记录查询失败详情，对调用方返回简短错误。
+
+        参数：
+            config：数据库连接配置。
+            sql：待执行的参数化 SELECT 语句。
+            params：传给查询的绑定参数。
+        返回值：查询结果行；失败时抛出运行错误。
+        """
         if not sql.lstrip().upper().startswith("SELECT "):
             raise ValueError("数据读取器只接受 SELECT 查询")
         for attempt in range(2):
             if attempt:
                 time.sleep(0.2)
             connection = None
+            query_started = False
             try:
                 connection = pymysql.connect(
                     host=config.host,
@@ -76,14 +85,28 @@ class SalesReader:
                     cursorclass=pymysql.cursors.DictCursor,
                 )
                 with connection.cursor() as cursor:
+                    query_started = True
                     cursor.execute(sql, params)
                     return list(cursor.fetchall())
             except pymysql.MySQLError as error:
                 code = error.args[0] if error.args and isinstance(error.args[0], int) else None
-                if attempt == 0 and code in {1064, 1205, 1213, 2006, 2013}:
-                    LOG.warning("只读查询失败，重试一次：error_code=%s", code)
+                retry = attempt == 0 and code in {1064, 1205, 1213, 2006, 2013}
+                level = logging.WARNING if retry else logging.ERROR
+                message = "只读查询失败，重试一次" if retry else "数据来源读取失败"
+                if query_started:
+                    LOG.log(
+                        level,
+                        "%s：error_code=%s sql=%r params=%r db_error=%r",
+                        message,
+                        code,
+                        sql,
+                        params,
+                        error.args,
+                    )
+                else:
+                    LOG.log(level, "%s：error_code=%s", message, code)
+                if retry:
                     continue
-                LOG.error("数据来源读取失败：error_code=%s", code)
                 raise RuntimeError(
                     f"数据来源读取失败，请检查连接、权限或字段配置（错误码 {code}）"
                 ) from None
