@@ -384,7 +384,7 @@ def test_summary_fallback_with_incomplete_detail_coverage_stays_unavailable(monk
 
 
 @pytest.mark.parametrize("code", [1064, 1205, 1213, 2006, 2013])
-def test_read_retry_reconnects_and_preserves_query(monkeypatch, caplog, code):
+def test_read_retry_reconnects_and_preserves_query(monkeypatch, code):
     """可重试的查询错误记录原文并重连一次，查询和参数不变。"""
     first, second = MagicMock(), MagicMock()
     first.cursor.return_value.__enter__.return_value.execute.side_effect = pymysql.OperationalError(
@@ -393,10 +393,14 @@ def test_read_retry_reconnects_and_preserves_query(monkeypatch, caplog, code):
     second.cursor.return_value.__enter__.return_value.fetchall.return_value = [{"quantity": 12}]
     connect = Mock(side_effect=[first, second])
     monkeypatch.setattr(pymysql, "connect", connect)
+    sql_log = Mock()
+    monkeypatch.setattr("stocking_sheet_sync.infrastructure.warehouse.SQL_ERROR_LOG", sql_log)
     monkeypatch.setattr("stocking_sheet_sync.infrastructure.warehouse.time.sleep", lambda _: None)
     assert reader()._read("SELECT %s", (12,)) == [{"quantity": 12}]
-    assert "sql='SELECT %s' params=(12,)" in caplog.text
-    assert f"db_error=({code}, '数据库原始错误')" in caplog.text
+    _, template, *values = sql_log.log.call_args.args
+    message = template % tuple(values)
+    assert "sql='SELECT %s' params=(12,)" in message
+    assert f"db_error=({code}, '数据库原始错误')" in message
     for connection in (first, second):
         connection.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
             "SELECT %s", (12,)

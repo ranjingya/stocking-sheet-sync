@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import pymysql
 
 from stocking_sheet_sync.domain.products import units
+from stocking_sheet_sync.logging import SQL_ERROR_LOG
 from stocking_sheet_sync.settings import MySQLSettings, WarehouseSettings, identifier
 
 LOG = logging.getLogger(__name__)
@@ -93,8 +94,9 @@ class SalesReader:
                 retry = attempt == 0 and code in {1064, 1205, 1213, 2006, 2013}
                 level = logging.WARNING if retry else logging.ERROR
                 message = "只读查询失败，重试一次" if retry else "数据来源读取失败"
+                LOG.log(level, "%s：error_code=%s", message, code)
                 if query_started:
-                    LOG.log(
+                    SQL_ERROR_LOG.log(
                         level,
                         "%s：error_code=%s sql=%r params=%r db_error=%r",
                         message,
@@ -103,8 +105,6 @@ class SalesReader:
                         params,
                         error.args,
                     )
-                else:
-                    LOG.log(level, "%s：error_code=%s", message, code)
                 if retry:
                     continue
                 raise RuntimeError(

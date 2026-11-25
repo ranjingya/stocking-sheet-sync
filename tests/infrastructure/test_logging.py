@@ -5,12 +5,12 @@ import sys
 
 
 def test_logs_are_written_once_and_rotated_with_retention(tmp_path):
-    script = '''
+    script = """
 import logging
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from stocking_sheet_sync.logging import configure_logging
+from stocking_sheet_sync.logging import SQL_ERROR_LOG, configure_logging
 
 path = Path(sys.argv[1])
 configure_logging(log_dir=path)
@@ -24,11 +24,17 @@ assert handler.backupCount == 5
 logging.info("只记录一次")
 handler.flush()
 assert (path / "app.log").read_text().count("只记录一次") == 1
+SQL_ERROR_LOG.warning("查询详情测试")
+assert (path / "sql-errors.log").read_text().count("查询详情测试") == 1
+assert "查询详情测试" not in (path / "app.log").read_text()
 handler.maxBytes = 150
 for n in range(20):
     logging.info("滚动测试-%d-%s", n, "内容" * 20)
 handler.flush()
 assert len(list(path.glob("app.log*"))) == 6
 assert "滚动测试-19" in (path / "app.log").read_text()
-'''
-    subprocess.run([sys.executable, "-c", script, str(tmp_path)], check=True, capture_output=True)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)], check=True, capture_output=True, text=True
+    )
+    assert "查询详情测试" not in result.stdout + result.stderr
