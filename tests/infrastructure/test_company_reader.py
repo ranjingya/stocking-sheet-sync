@@ -36,7 +36,7 @@ def test_company_combines_same_day_rolling_totals_and_keeps_zero():
     assert p.reader._read.call_count == 1
     source, skus, start, stop = p.reader.daily_window.call_args.args
     assert source["table"] == "jd_inventory_product_detail"
-    assert source["connection"] == "mysql"
+    assert source["connection"] == "postgres"
     assert source["rolling_fields"]["30"] == "outbound_30d"
     assert source["business_date_offset_days"] == 0
     assert skus == ["A", "B"] and (stop - start).days == 30

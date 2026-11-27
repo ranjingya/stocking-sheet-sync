@@ -15,17 +15,17 @@
 | 数据 | 来源及条件 |
 | --- | --- |
 | 商品主数据、季节标签 | `std_api_jstbz_product_spec_info_f`，聚水潭标准API、公司 |
-| 京东自营近30天、去年同期近30天 | 源 MySQL 的 `jd_inventory_product_detail`，分别读取基准日前一日和去年对应日期的 `outbound_30d` |
+| 京东自营近30天、去年同期近30天 | 源 PostgreSQL 的 `jd_inventory_product_detail`，分别读取基准日前一日和去年对应日期的 `outbound_30d` |
 | 拼多多近30天、去年同期近30天 | `ads_whs_outstock_pdd_base_sku_window`，分别读取 `sales_out_qty_30d`、`ly_sales_out_qty_30d` |
 | 唯品会近30天、去年同期近30天 | `ads_whs_outstock_wp_base_sku_window`，字段同拼多多 |
-| 京东自营特殊历史区间 | 源 MySQL 的 `jd_inventory_product_detail`，配置的自营店铺 |
+| 京东自营特殊历史区间 | 源 PostgreSQL 的 `jd_inventory_product_detail`，配置的自营店铺 |
 | 拼多多、唯品会特殊历史区间及POP、猫超全部区间 | `dwd_whs_outstock_detail_f`，销售出库且单据/出库状态已出库 |
 | POP与猫超 | 市场部其他部门下，通过配置的店铺ID区分 |
-| 全公司占比 | 使用基准日前30个完整自然日销量；ADS公司分组近30天汇总 + MySQL京东自营近30天汇总 |
+| 全公司占比 | 使用基准日前30个完整自然日销量；ADS公司分组近30天汇总 + PostgreSQL京东自营近30天汇总 |
 
 拼多多和唯品会的 ADS 按 SKU 匹配，查询基准日前一天的 `stat_date`；去年同期指标也读取这个快照上的去年同期字段。原值为0时按0读取。若目标快照日整天无记录或缺少所需SKU，使用 `dwd_whs_outstock_detail_f` 按相应30天区间统计，并在通知中标明来源；明细数据仍需通过出库日期覆盖及去重校验。ADS已有有效值保持不变，仅对缺失SKU查询明细；明细覆盖正常且无该SKU出库记录时记0。ADS记录重复或数值无效时交由人工核对。
 
-京东自营按 `barcode` 和配置的店铺查询源 MySQL；7/14/28/30/60/90天使用截止日现成滚动字段，其他长度累加 `outbound_yesterday`，要求逐SKU日覆盖完整。`dt` 日期偏移由配置指定，当前为0。
+京东自营按 `barcode` 和配置的店铺查询源 PostgreSQL；7/14/28/30/60/90天使用截止日现成滚动字段，其他长度累加 `outbound_yesterday`，要求逐SKU日覆盖完整。`dt` 日期偏移由配置指定，当前为0。
 
 明细按发货/出库时间查询，按来源、公司、出库单、明细和SKU去重。来源正常且无该SKU记录时可记零；平台日期缺失、重复冲突不能当零。拼多多和唯品会的两个30天指标使用ADS。
 
@@ -47,14 +47,14 @@
 老款开启历史填充或预测时，优先使用表内带日期且与基准日近30天窗口一致的完整全公司销量。表内缺少该数据或存在空缺，且至少一款的全部需求SKU全公司出库均可用时，在市场部分组最前面补充一列，标题如 `全公司近30天出库 26.8.29-26.9.27`，按需求表中的SKU填数量，供公司占比兜底使用。全公司出库按款填写：某款任一需求SKU缺失时整款留空，所有款均不完整时不新增列，已有列保留；有效的0值属于可填数量。新品只处理近30天历史。
 
 ```text
-SKU全公司近30天出库 = ADS的sales_out_qty_30d + MySQL京东自营的outbound_30d
+SKU全公司近30天出库 = ADS的sales_out_qty_30d + PostgreSQL京东自营的outbound_30d
 ```
 
 - 周期为基准日前30个完整自然日，不含基准日；所有款式使用同一窗口，与季节无关。例如2026年10月6日统计2026年9月6日至10月5日。表内数量必须有匹配的日期标题才可复用。
 - 公司部分：`ads_whs_outstock_gs_base_sku_window` 按 `spec_code` 匹配SKU，读取基准日前一天 `stat_date` 快照的 `sales_out_qty_30d`。该表为公司分组汇总，不含京东自营终端出库。
 - 京东部分：`jd_inventory_product_detail` 按 `barcode` 和配置的自营店铺读取；读取基准日前一天快照的 `outbound_30d`，限定配置的自营店铺。
 - 指定日期周期：公司部分使用 `dwd_whs_outstock_detail_f` 的 `spec_code`、`shop_id`、`outstock_time`、`outstock_num`，按店铺“销售出库分组-全公司＝公司”筛选，限定销售出库且单据与出库状态已出库，按业务明细去重求和；京东部分累计对应日期的 `outbound_yesterday`。显式周期查询即使恰好30天也按明细统计；预测兜底的近30天查询使用ADS与京东滚动值。
-- 来源表及字段位于 `config/rules.toml` 的 `company_sales.summary`；京东复用 `jd_platform` 指定的MySQL配置。ADS缺记录、重复或数量无效时留空，0值有效。
+- 来源表及字段位于 `config/rules.toml` 的 `company_sales.summary`；京东复用 `jd_platform` 指定的PostgreSQL配置。ADS缺记录、重复或数量无效时留空，0值有效。
 - 表内生命周期列及无日期的人工列保持原内容；全公司近30天使用独立带日期的列。自动列同周期完整时复用，有空缺则补齐，普通模式下数值不同的SKU跳过。
 - 自动列日期不一致时标明原因并保留原列；强制覆盖时，须新周期所有SKU均可用才更换日期及数量。商品行公式始终保留。
 - 任一来源缺失、重复或数量无效时，该款所有需求SKU公司数量留空，通知原因以“全公司：”说明。数据完整的其他款、各平台历史及不依赖公司占比的预测正常处理；需要公司占比的款式须全部需求SKU公司数量有效且合计大于零。

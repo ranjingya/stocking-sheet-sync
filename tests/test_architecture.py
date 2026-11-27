@@ -20,6 +20,7 @@ def test_domain_has_no_external_or_application_dependencies():
                         "stocking_sheet_sync.entrypoints",
                         "stocking_sheet_sync.settings",
                         "httpx",
+                        "psycopg",
                         "pymysql",
                         "redis",
                     )

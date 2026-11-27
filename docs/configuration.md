@@ -13,8 +13,8 @@
 | `WAREHOUSE_HOST`、`WAREHOUSE_PORT`、`WAREHOUSE_DATABASE` | 数仓地址、端口和库名 |
 | `WAREHOUSE_USER`、`WAREHOUSE_PASSWORD` | 数仓只读凭证 |
 | `WAREHOUSE_CONNECT_TIMEOUT`、`WAREHOUSE_READ_TIMEOUT` | 数仓连接和读取超时 |
-| `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DB_NAME` | 京东自营源 MySQL 地址、端口和库名 |
-| `MYSQL_USER`、`MYSQL_PASSWORD` | 京东自营源 MySQL 只读凭证 |
+| `PG_HOST`、`PG_PORT`、`RPA_PG_DB_NAME` | 京东自营源 PostgreSQL 地址、端口和库名 |
+| `PG_USER`、`PG_PASSWORD` | 京东自营源 PostgreSQL 只读凭证 |
 
 数据库凭证仅从当前项目 `.env` 与环境变量读取，环境变量优先。
 

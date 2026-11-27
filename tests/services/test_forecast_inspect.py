@@ -70,7 +70,7 @@ def test_read_only_trial_partitions_platforms_and_preserves_evidence(tmp_path):
     jd_calls = [call for call in reader.daily_window.call_args_list]
     assert all(
         call.args[0]["table"] == "jd_inventory_product_detail"
-        and call.args[0]["connection"] == "mysql"
+        and call.args[0]["connection"] == "postgres"
         and "summary" not in call.args[0]
         for call in jd_calls
     )
@@ -181,7 +181,7 @@ def daily_reader():
         for n in range(30)
     ]
     reader._read = Mock(return_value=rows)
-    reader._read_mysql = reader._read
+    reader._read_postgres = reader._read
     return reader, source, start, rows
 
 

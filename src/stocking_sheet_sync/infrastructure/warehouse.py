@@ -5,11 +5,13 @@ import time
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 
+import psycopg
 import pymysql
+from psycopg.rows import dict_row
 
 from stocking_sheet_sync.domain.products import units
 from stocking_sheet_sync.logging import SQL_ERROR_LOG
-from stocking_sheet_sync.settings import MySQLSettings, WarehouseSettings, identifier
+from stocking_sheet_sync.settings import PostgresSettings, WarehouseSettings, identifier
 
 LOG = logging.getLogger(__name__)
 
@@ -23,9 +25,11 @@ def _filters(source: dict) -> tuple[str, list]:
 
 
 class SalesReader:
-    def __init__(self, settings: WarehouseSettings, mysql_settings: MySQLSettings | None = None):
+    def __init__(
+        self, settings: WarehouseSettings, postgres_settings: PostgresSettings | None = None
+    ):
         self.settings = settings
-        self.mysql_settings = mysql_settings
+        self.postgres_settings = postgres_settings
 
     def _read(self, sql: str, params: tuple) -> list[dict]:
         """
@@ -41,16 +45,56 @@ class SalesReader:
             raise ValueError("数仓读取器只接受 SELECT 查询")
         return self._execute(self.settings, sql, params)
 
-    def _read_mysql(self, sql: str, params: tuple) -> list[dict]:
-        """使用源 MySQL 只读连接执行参数化查询，返回结果行。"""
-        if self.mysql_settings is None:
-            self.mysql_settings = MySQLSettings.load()
-        return self._execute(self.mysql_settings, sql, params)
+    def _read_postgres(self, sql: str, params: tuple) -> list[dict]:
+        """
+        功能说明：从 PostgreSQL 源库执行只读查询。
+
+        参数：
+            sql：内部构造的 SELECT 语句。
+            params：查询绑定参数。
+        返回值：查询结果行，读取失败时抛出简短异常。
+        """
+        if not sql.lstrip().upper().startswith("SELECT "):
+            raise ValueError("数据读取器只接受 SELECT 查询")
+        if self.postgres_settings is None:
+            self.postgres_settings = PostgresSettings.load()
+        config = self.postgres_settings
+        # 查询模板中的反引号只用于已校验的标识符，两种数据库共用查询结构。
+        sql = sql.replace("`", '"')
+        query_started = False
+        try:
+            with psycopg.connect(
+                host=config.host,
+                port=config.port,
+                dbname=config.database,
+                user=config.user,
+                password=config.password,
+                connect_timeout=config.connect_timeout,
+                options=(
+                    "-c default_transaction_read_only=on -c search_path=public "
+                    f"-c statement_timeout={config.read_timeout * 1000}"
+                ),
+                autocommit=True,
+                row_factory=dict_row,
+            ) as connection:
+                query_started = True
+                return connection.execute(sql, params).fetchall()
+        except psycopg.Error as error:
+            LOG.error("京东自营源库读取失败：sqlstate=%s", error.sqlstate)
+            if query_started:
+                SQL_ERROR_LOG.error(
+                    "京东自营源库读取失败：sqlstate=%s sql=%r params=%r db_error=%r",
+                    error.sqlstate,
+                    sql,
+                    params,
+                    str(error),
+                )
+            raise RuntimeError("京东自营 PostgreSQL 数据来源读取失败") from None
 
     def _source_read(self, source: dict, sql: str, params: tuple) -> list[dict]:
-        """根据来源配置读取数仓或源 MySQL，返回结果行。"""
-        if source.get("connection") == "mysql":
-            return self._read_mysql(sql, params)
+        """根据来源配置读取数仓或源 PostgreSQL，返回结果行。"""
+        if source.get("connection") == "postgres":
+            return self._read_postgres(sql, params)
         return self._read(sql, params)
 
     @staticmethod
@@ -294,7 +338,7 @@ class SalesReader:
         fields = {key: identifier(value) for key, value in source["fields"].items()}
         table = identifier(source["table"])
         condition, params = _filters(source)
-        sku_scoped = source.get("connection") == "mysql" and source["kind"] == "snapshot"
+        sku_scoped = source.get("connection") == "postgres" and source["kind"] == "snapshot"
         if sku_scoped:
             condition += f" AND {fields['sku']} IN ({','.join(['%s'] * len(skus))})"
             params += skus

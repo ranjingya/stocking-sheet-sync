@@ -1,11 +1,12 @@
 from datetime import date, timedelta
 from unittest.mock import MagicMock, Mock
 
+import psycopg
 import pymysql
 import pytest
 
 from stocking_sheet_sync.infrastructure.warehouse import SalesReader, units
-from stocking_sheet_sync.settings import MySQLSettings, WarehouseSettings, identifier
+from stocking_sheet_sync.settings import PostgresSettings, WarehouseSettings, identifier
 from tests.domain.test_sales_matching import config
 
 
@@ -60,7 +61,7 @@ def test_snapshot_requires_exact_requested_end_date(monkeypatch):
         calls.append((sql, params))
         return responses.pop(0)
 
-    monkeypatch.setattr(client, "_read_mysql", read)
+    monkeypatch.setattr(client, "_read_postgres", read)
     monkeypatch.setattr(client, "_read", lambda *args: pytest.fail("京东不得读取数仓"))
     result = client.sales(config()["platforms"][0], ["00123"], date(2026, 9, 14))
     assert result["issues"] == ["snapshot_or_skus_missing"]
@@ -70,28 +71,35 @@ def test_snapshot_requires_exact_requested_end_date(monkeypatch):
     assert "jd_inventory_product_detail" in calls[-1][0]
 
 
-def test_source_mysql_connection_is_independent_and_read_only(monkeypatch):
+def test_source_postgres_connection_is_independent_and_read_only(monkeypatch):
     warehouse = WarehouseSettings("warehouse.invalid", 3306, "warehouse", "warehouse", "hidden")
-    mysql = MySQLSettings("mysql.invalid", 13306, "source", "source", "private")
-    client = SalesReader(warehouse, mysql)
+    postgres = PostgresSettings("postgres.invalid", 13306, "source", "source", "private")
+    client = SalesReader(warehouse, postgres)
     connection = MagicMock()
-    cursor = connection.cursor.return_value.__enter__.return_value
-    cursor.fetchall.return_value = [{"quantity": 3}]
+    session = connection.__enter__.return_value
+    session.execute.return_value.fetchall.return_value = [{"quantity": 3}]
     requests = []
 
     def connect(**kwargs):
         requests.append(kwargs)
         return connection
 
-    monkeypatch.setattr(pymysql, "connect", connect)
-    assert client._source_read({"connection": "mysql"}, "SELECT %s", (3,)) == [{"quantity": 3}]
-    assert requests[0]["host"] == "mysql.invalid"
-    assert requests[0]["database"] == "source"
+    monkeypatch.setattr(psycopg, "connect", connect)
+    assert client._source_read(
+        {"connection": "postgres"},
+        "SELECT `outbound_30d` FROM `jd_inventory_product_detail` WHERE `barcode` = %s",
+        (3,),
+    ) == [{"quantity": 3}]
+    assert requests[0]["host"] == "postgres.invalid"
+    assert requests[0]["dbname"] == "source"
     assert requests[0]["autocommit"] is True
-    cursor.execute.assert_called_once_with("SELECT %s", (3,))
-    connection.close.assert_called_once()
+    assert "default_transaction_read_only=on" in requests[0]["options"]
+    session.execute.assert_called_once_with(
+        'SELECT "outbound_30d" FROM "jd_inventory_product_detail" WHERE "barcode" = %s', (3,)
+    )
+    connection.__exit__.assert_called_once()
     with pytest.raises(ValueError, match="SELECT"):
-        client._source_read({"connection": "mysql"}, "UPDATE anything SET x=1", ())
+        client._source_read({"connection": "postgres"}, "UPDATE anything SET x=1", ())
     assert len(requests) == 1
 
 
@@ -167,17 +175,20 @@ def test_settings_file_is_read_only_and_env_takes_precedence(tmp_path):
     assert file.read_text() == text
 
 
-def test_mysql_settings_read_project_env_without_warehouse_credentials(tmp_path):
+def test_postgres_settings_read_project_env_without_warehouse_credentials(tmp_path):
     file = tmp_path / "source.env"
     file.write_text(
-        "MYSQL_HOST=mysql.invalid\nMYSQL_DB_NAME=source\n"
-        "MYSQL_USER=reader\nMYSQL_PASSWORD=private\n"
+        "PG_HOST=postgres.invalid\nRPA_PG_DB_NAME=source\nPG_USER=reader\nPG_PASSWORD=private\n"
     )
-    settings = MySQLSettings.load(file, {"MYSQL_PORT": "13306"})
-    assert (settings.host, settings.port, settings.database) == ("mysql.invalid", 13306, "source")
+    settings = PostgresSettings.load(file, {"PG_PORT": "13306"})
+    assert (settings.host, settings.port, settings.database) == (
+        "postgres.invalid",
+        13306,
+        "source",
+    )
     assert "private" not in repr(settings)
     with pytest.raises(ValueError, match="配置不完整"):
-        MySQLSettings.load(file, {"MYSQL_PASSWORD": ""})
+        PostgresSettings.load(file, {"PG_PASSWORD": ""})
 
 
 def test_detail_deduplication_executes_against_real_sql_engine(monkeypatch):

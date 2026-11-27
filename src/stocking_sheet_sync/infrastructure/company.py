@@ -29,7 +29,7 @@ def field_texts(value):
 
 
 class CompanyReader:
-    """读取ADS公司分组近30天出库，并合并MySQL京东自营近30天出库。"""
+    """读取ADS公司分组近30天出库，并合并PostgreSQL京东自营近30天出库。"""
 
     def __init__(self, reader, config, jd_source, client=None):
         """reader负责查询，config定义双来源，jd_source定义京东来源，client读取周期店铺分组。"""
